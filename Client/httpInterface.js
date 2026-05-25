@@ -999,6 +999,32 @@ exports.newHttpInterface = function newHttpInterface(WEB_SERVER, DATA_FILE_SERVE
                 }
                 break
 
+            case 'HADashboard':
+                {
+                    let fs = require('fs')
+                    let path = require('path')
+                    // requestParameters: ['', 'HADashboard', subdir-or-file, filename]
+                    let safeParts = requestParameters.slice(2).filter(p => p && !p.includes('..'))
+                    let filePath
+                    if (safeParts.length === 0) {
+                        filePath = global.env.PATH_TO_CLIENT + 'WebServer/HADashboard/index.html'
+                    } else {
+                        filePath = global.env.PATH_TO_CLIENT + 'WebServer/HADashboard/' + safeParts.join('/')
+                    }
+                    let ext = path.extname(filePath).toLowerCase()
+                    let contentType = ext === '.css' ? 'text/css'
+                        : ext === '.js' ? 'text/javascript'
+                        : 'text/html'
+                    fs.readFile(filePath, function(err, file) {
+                        if (!err) {
+                            respondWithContent(file.toString(), httpResponse, contentType)
+                        } else {
+                            respondWithContent(undefined, httpResponse)
+                        }
+                    })
+                }
+                break
+
             case 'Plotters': // This means the plotter folder, not to be confused with the Plotters script!
                 {
                     let project = requestParameters[2]

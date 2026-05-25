@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Home Assistant Dashboard</title>
+    <link rel="stylesheet" href="css/ha-dashboard.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>">
+</head>
+<body>
+<div id="app">
+
+    <!-- Header -->
+    <header class="ha-header">
+        <button class="icon-btn" id="btn-menu" title="Menu" style="display:none">
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                <path d="M2 3h12M2 8h12M2 13h12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+        </button>
+
+        <div class="logo">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+            </svg>
+            HA Dashboard
+        </div>
+
+        <div class="status-dot" id="status-dot"></div>
+        <span class="status-text" id="status-text"></span>
+
+        <div class="spacer"></div>
+
+        <div class="header-actions">
+            <button class="icon-btn" id="btn-customize" title="Customise dashboard">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+                    <line x1="12" y1="2" x2="12" y2="5"/>
+                    <line x1="12" y1="19" x2="12" y2="22"/>
+                </svg>
+            </button>
+            <button class="icon-btn" id="btn-disconnect" title="Disconnect">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+            </button>
+        </div>
+    </header>
+
+    <!-- Body -->
+    <div class="ha-body">
+
+        <!-- Sidebar -->
+        <nav class="ha-sidebar hidden" id="ha-sidebar">
+            <div class="sidebar-section">
+                <div class="sidebar-label">Filter by type</div>
+                <div id="sidebar-domains"></div>
+            </div>
+
+            <div class="sidebar-section">
+                <div class="sidebar-label">Jump to area</div>
+                <div id="sidebar-areas"></div>
+            </div>
+        </nav>
+
+        <!-- Setup screen (shown when not configured) -->
+        <div id="setup-screen" class="setup-screen" style="display:flex; flex:1">
+            <div class="setup-card">
+                <h2>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color:var(--accent)">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                        <polyline points="9 22 9 12 15 12 15 22"/>
+                    </svg>
+                    Connect to Home Assistant
+                </h2>
+                <p>Enter your Home Assistant URL and a long-lived access token to get started. Your token is stored in your browser only.</p>
+
+                <div id="setup-error" class="form-error"></div>
+
+                <form id="setup-form">
+                    <div class="form-group">
+                        <label>Host / IP Address</label>
+                        <input id="input-host" type="text" placeholder="homeassistant.local" value="homeassistant.local" autocomplete="off">
+                        <div class="form-hint">Hostname or IP of your HA instance (no http://)</div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Port</label>
+                        <input id="input-port" type="number" value="8123" min="1" max="65535">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Protocol</label>
+                        <select id="input-ssl">
+                            <option value="false">HTTP (ws://)</option>
+                            <option value="true">HTTPS (wss://)</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Long-Lived Access Token</label>
+                        <input id="input-token" type="password" placeholder="Paste your token here" autocomplete="off">
+                        <div class="form-hint">
+                            In HA: Profile → Security → Long-lived access tokens → Create token
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary">Connect</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main dashboard (shown when connected) -->
+        <div id="main-dashboard" class="ha-body" style="display:none; flex:1; flex-direction:column; overflow:hidden">
+
+            <!-- Filter bar -->
+            <div style="padding: 12px 20px 0; border-bottom: 1px solid var(--border); background: var(--bg-primary);">
+                <div class="filter-bar">
+                    <div class="search-box">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+                        </svg>
+                        <input id="search-input" type="text" placeholder="Search entities…">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Scrollable content area -->
+            <div class="ha-main" id="ha-main-content">
+                <div class="loading-spinner"><div class="spinner"></div></div>
+            </div>
+        </div>
+
+    </div><!-- .ha-body -->
+
+</div><!-- #app -->
+
+<!-- Customize drawer -->
+<div class="customize-overlay" id="customize-overlay"></div>
+<div class="customize-drawer" id="customize-drawer">
+    <div class="drawer-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/>
+            <line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/>
+        </svg>
+        <h3>Customise Dashboard</h3>
+        <button class="icon-btn" id="btn-close-drawer" title="Close">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+    </div>
+
+    <div class="drawer-body" id="customize-body">
+        <!-- rendered by JS -->
+    </div>
+
+    <div class="drawer-footer">
+        <button class="btn btn-secondary" id="btn-reset-customize" style="flex:1">Reset Visibility</button>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container" class="toast-container"></div>
+
+<!-- Scripts (order matters — dependencies first) -->
+<script src="js/ha-websocket-client.js"></script>
+<script src="js/ha-entity-registry.js"></script>
+<script src="js/ha-entity-cards.js"></script>
+<script src="js/ha-config.js"></script>
+<script src="js/ha-dashboard-main.js"></script>
+
+<script>
+    // Show menu button on mobile
+    if (window.innerWidth <= 768) {
+        document.getElementById('btn-menu').style.display = 'flex';
+    }
+    window.addEventListener('resize', () => {
+        const btn = document.getElementById('btn-menu');
+        if (btn) btn.style.display = window.innerWidth <= 768 ? 'flex' : 'none';
+    });
+</script>
+
+</body>
+</html>
