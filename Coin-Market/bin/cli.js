@@ -404,6 +404,31 @@ COMMANDS.doctor = {
                     : '')
         })
 
+        await check('Coin condition descriptors present on UK listings', async () => {
+            /* eBay's mandatory-condition-detail phase-in was announced for
+               May 2026; the UK timing is not confirmed. This reports what
+               is actually arriving rather than assuming. */
+            const browse = BROWSE.newBrowseClient(auth, { marketplaceId: settings.ebay.marketplaceId })
+            const payload = await browse.search({
+                q: 'gold sovereign',
+                filter: BROWSE.buildFilter({ buyingOptions: ['AUCTION', 'FIXED_PRICE'] }),
+                limit: 50
+            })
+            const items = payload.itemSummaries || []
+            const withDescriptors = items.filter(i => Array.isArray(i.conditionDescriptors) && i.conditionDescriptors.length > 0)
+            const names = new Set()
+            for (const item of withDescriptors) {
+                for (const descriptor of item.conditionDescriptors) {
+                    if (descriptor && descriptor.name) { names.add(descriptor.name) }
+                }
+            }
+            return withDescriptors.length + '/' + items.length + ' listings carry descriptors' +
+                (names.size > 0 ? '; fields seen: ' + Array.from(names).join(', ') : '') +
+                (withDescriptors.length === 0
+                    ? '  <-- not yet live on EBAY_GB, or absent from search results (try getItem)'
+                    : '')
+        })
+
         await check('Trading GetItem on a listing you do not own', async () => {
             if (!settings.ebay.refreshToken) { throw new Error('needs a user token - run "coin-market auth-url" first') }
             const trading = TRADING.newTradingClient(auth, settings.ebay, { siteId: settings.ebay.siteId })
@@ -419,9 +444,14 @@ COMMANDS.doctor = {
             console.log('        ' + result.detail)
         }
         console.log('')
-        console.log('The third check is the load-bearing one: if Trading GetItem does not work')
-        console.log('for listings you do not own, outcome resolution falls back to the last')
-        console.log('snapshot before close, which is less exact. Everything else still works.')
+        console.log('The GetItem check is the load-bearing one: if Trading GetItem does not')
+        console.log('work for listings you do not own, outcome resolution falls back to the')
+        console.log('last snapshot before close, which is less exact. Everything else still works.')
+        console.log('')
+        console.log('The condition-descriptor check is informational. Descriptors give structured')
+        console.log('grade data and, for slabbed coins, a certification number that identifies')
+        console.log('one physical coin across relistings. Absent them, grade falls back to')
+        console.log('parsing the title, which is what the tool did before they existed.')
     }
 }
 

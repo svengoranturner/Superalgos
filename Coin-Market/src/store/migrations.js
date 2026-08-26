@@ -172,5 +172,41 @@ exports.MIGRATIONS = [
             PRIMARY KEY (key, as_of, window_days)
         ) WITHOUT ROWID;
         `
+    },
+    {
+        name: '002-immutable-seller-id-and-condition-descriptors',
+        sql: `
+        /* ---------------------------------------------------------------
+           eBay replaced usernames with immutable user IDs in May 2026.
+
+           We now hash BOTH identifiers. The account-deletion notification
+           may name the departing user by either one, and a purge that
+           matched only the username would answer eBay 200 while deleting
+           nothing - the exact obligation we subscribed in order to meet.
+           The immutable id is also the better relist key, since a seller
+           who renames themselves is no longer two different people.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN seller_id_hash TEXT;
+        CREATE INDEX idx_listing_seller_id ON listing(seller_id_hash);
+        CREATE INDEX idx_listing_seller    ON listing(seller_hash);
+
+        /* ---------------------------------------------------------------
+           Standardised coin condition descriptors, mandatory on eBay coin
+           listings from May 2026. Grade is the second-largest driver of a
+           sovereign's price after its metal content, and this turns it
+           from a title-regex guess into a structured read.
+
+           The certification number uniquely identifies one physical
+           slabbed coin, which lets us follow the SAME coin across
+           relistings and resales - something the seller+title fingerprint
+           could never do.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN cert_number TEXT;
+        ALTER TABLE listing ADD COLUMN grading_company TEXT;
+        ALTER TABLE listing ADD COLUMN grade_numeric TEXT;
+        ALTER TABLE listing ADD COLUMN grade_letter TEXT;
+        ALTER TABLE listing ADD COLUMN condition_band TEXT;
+        CREATE INDEX idx_listing_cert ON listing(cert_number);
+        `
     }
 ]

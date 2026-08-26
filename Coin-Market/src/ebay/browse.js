@@ -170,9 +170,21 @@ exports.normaliseSummary = function (summary) {
         endTime: summary.itemEndDate || null,
         itemWebUrl: summary.itemWebUrl || null,
         imageUrl: summary.image ? summary.image.imageUrl : null,
-        sellerId: summary.seller ? summary.seller.username : null,
+        /*
+            eBay replaced usernames with immutable user IDs in May 2026.
+            Both are captured because the account-deletion notification may
+            name the departing user by either, and a purge keyed on only
+            one of them would silently match nothing.
+        */
+        sellerUserId: summary.seller
+            ? (summary.seller.userId || summary.seller.userID || null) : null,
+        sellerUsername: summary.seller ? (summary.seller.username || null) : null,
         sellerFeedbackPct: summary.seller ? Number(summary.seller.feedbackPercentage) : null,
-        sellerFeedbackCount: summary.seller ? Number(summary.seller.feedbackScore) : null
+        sellerFeedbackCount: summary.seller ? Number(summary.seller.feedbackScore) : null,
+
+        /* Standardised coin condition detail - grade, and for slabbed
+           coins the certification number identifying that exact coin. */
+        conditionDescriptors: summary.conditionDescriptors || null
     }
 }
 

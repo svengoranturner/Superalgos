@@ -60,6 +60,8 @@ exports.newMarketView = function (repository, spotAt, options) {
                     saleType: row.saleType,
                     censored: row.censored === 1,
                     sellerHash: row.sellerHash,
+                    sellerIdHash: row.sellerIdHash,
+                    certNumber: row.certNumber,
                     title: row.title
                 }
             })

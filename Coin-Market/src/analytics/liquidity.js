@@ -115,19 +115,53 @@ exports.relistRate = function (outcomes) {
     )
 
     for (const outcome of ordered) {
-        if (!outcome.sellerHash || !outcome.title) { continue }
-        const fingerprint = outcome.sellerHash + '|' + normaliseTitle(outcome.title)
+        const fingerprint = exports.fingerprint(outcome)
+        if (fingerprint === null) { continue }
         if (seen.has(fingerprint)) { relists++ } else { seen.set(fingerprint, true) }
     }
 
     return ordered.length > 0 ? relists / ordered.length : null
 }
 
+/*
+    Identifies "the same coin listed again".
+
+    A certification number names one physical slabbed coin, so when eBay's
+    standardised coin condition descriptors supply one it beats every
+    heuristic: it matches the same coin even across different sellers, and
+    so also catches a resale, not merely a relist.
+
+    Without one, fall back to seller plus normalised title - which only
+    catches the same seller relisting, and is defeated by a retitle.
+*/
+exports.fingerprint = function (outcome) {
+    if (outcome.certNumber) { return 'cert|' + String(outcome.certNumber).trim().toUpperCase() }
+    const seller = outcome.sellerIdHash || outcome.sellerHash
+    if (!seller || !outcome.title) { return null }
+    return 'seller|' + seller + '|' + normaliseTitle(outcome.title)
+}
+
+/*
+    Strips the seller theatre so the same coin relisted under a new headline
+    still fingerprints the same.
+
+    Noise phrases are removed BEFORE punctuation, not after: "free p&p"
+    becomes "free p p" once punctuation is stripped, which no longer
+    matches its own pattern. Getting this order wrong made the fallback
+    fingerprint miss the very retitles it exists to catch.
+*/
+const NOISE = [
+    /free\s*p\s*&\s*p/g, /free\s*post(age)?/g, /free\s*(uk\s*)?delivery/g,
+    /\bl@@k\b/g, /\bwow\b/g, /\brare\b/g, /\bstunning\b/g, /\blovely\b/g,
+    /\bsuperb\b/g, /\bgorgeous\b/g, /\bbargain\b/g, /\bmust\s*see\b/g,
+    /[!*~]+/g
+]
+
 function normaliseTitle (title) {
-    return String(title)
-        .toLowerCase()
+    let text = String(title).toLowerCase()
+    for (const pattern of NOISE) { text = text.replace(pattern, ' ') }
+    return text
         .replace(/[^a-z0-9 ]+/g, ' ')
-        .replace(/\b(rare|stunning|lovely|superb|l@@k|look|wow|free\s*p&p|free\s*postage)\b/g, '')
         .replace(/\s+/g, ' ')
         .trim()
 }

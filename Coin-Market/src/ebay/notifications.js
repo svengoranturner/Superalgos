@@ -66,11 +66,28 @@ exports.generateToken = function () {
     eBay broadcasts deletions to every subscriber, not just those holding
     that user's data.
 */
-exports.purgeUser = function (repository, db, username) {
-    const sellerHash = repository.hashSeller(username)
-    if (sellerHash === null) { return 0 }
+exports.purgeUser = function (repository, db, identifiers) {
+    /*
+        eBay replaced usernames with immutable user IDs in May 2026, and a
+        notification may name the departing user by either. Accepts a bare
+        string (legacy callers) or {username, userId}, and matches on ANY
+        hash we hold - a purge keyed on only one of them would answer eBay
+        200 while deleting nothing, which is the precise obligation we
+        subscribed in order to meet.
+    */
+    const spec = typeof identifiers === 'string' ? { username: identifiers } : (identifiers || {})
 
-    const doomed = db.prepare('SELECT browse_id FROM listing WHERE seller_hash = ?').all(sellerHash)
+    const hashes = [spec.username, spec.userId]
+        .filter(value => value !== null && value !== undefined && String(value).length > 0)
+        .map(value => repository.hashSeller(value))
+
+    if (hashes.length === 0) { return 0 }
+
+    const marks = hashes.map(() => '?').join(',')
+    const doomed = db.prepare(
+        'SELECT browse_id FROM listing WHERE seller_hash IN (' + marks + ') ' +
+        'OR seller_id_hash IN (' + marks + ')'
+    ).all(...hashes, ...hashes)
     if (doomed.length === 0) { return 0 }
 
     const ids = doomed.map(row => row.browse_id)
@@ -131,13 +148,14 @@ exports.newHandler = function (options) {
                 try { payload = JSON.parse(bodyText || '{}') } catch (err) { payload = {} }
 
                 const data = (payload.notification && payload.notification.data) || {}
-                const username = data.username || null
+                const identifiers = { username: data.username || null, userId: data.userId || null }
+                const named = identifiers.username !== null || identifiers.userId !== null
 
-                if (username !== null && typeof onDeletion === 'function') {
-                    const removed = onDeletion(username)
-                    note('account deletion for a known seller: purged ' + removed + ' listings')
+                if (named && typeof onDeletion === 'function') {
+                    const removed = onDeletion(identifiers)
+                    note('account deletion: purged ' + removed + ' listings')
                 } else {
-                    note('account deletion received' + (username === null ? ' (no username in payload)' : ' (no data held)'))
+                    note('account deletion received' + (named ? ' (no data held)' : ' (no identifier in payload)'))
                 }
 
                 /*

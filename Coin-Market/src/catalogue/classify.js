@@ -2,6 +2,7 @@
 
 const COINS = require('./coins.js')
 const EXCLUSIONS = require('./exclusions.js')
+const CONDITIONS = require('./conditions.js')
 
 /*
     Turns a free-text eBay listing into a structured attribute vector.
@@ -270,12 +271,41 @@ exports.classify = function (listing) {
     }
 
     attributes = applyAspects(attributes, aspects)
+
+    /*
+        Standardised condition descriptors outrank both the aspects and the
+        title. eBay requires sellers to supply them on coin listings from
+        May 2026, so this is structured seller-entered data against eBay's
+        own schema - strictly better evidence than a regex over a title
+        somebody wrote to attract clicks.
+    */
+    const descriptors = CONDITIONS.parseDescriptors(listing.conditionDescriptors)
+    const fromDescriptors = CONDITIONS.gradeFromDescriptors(descriptors)
+
+    if (fromDescriptors !== null && fromDescriptors.gradeBand !== null) {
+        attributes.gradeBand = fromDescriptors.gradeBand
+        attributes.gradeDetail = fromDescriptors.detail
+        attributes.confidence.grade = 1
+        attributes.gradeSource = 'descriptor'
+        /* A slabbed grade implies the coin is not a raw bullion piece. */
+        if (fromDescriptors.gradeBand === 'SLAB_PROOF') { attributes.finish = 'PROOF' }
+    } else {
+        attributes.gradeSource = 'title'
+    }
+
+    if (descriptors.certNumber !== undefined) { attributes.certNumber = descriptors.certNumber }
+
     attributes.bullionPool = COINS.isBullionPool(attributes)
 
     const reasons = []
     if (attributes.denomination === null) { reasons.push('Denomination not identified') }
     if (attributes.year === null) { reasons.push('Year not identified') }
     if (attributes.portrait === null && attributes.year !== null) { reasons.push('Portrait type ambiguous for that year') }
+    if (fromDescriptors !== null && fromDescriptors.source === 'descriptor_unknown') {
+        /* eBay added or reworded a condition band. Surfaced rather than
+           silently binned, because a wrong grade moves the premium. */
+        reasons.push('Unrecognised eBay condition band: ' + fromDescriptors.detail)
+    }
 
     /*
         Overall confidence is the weakest link, not the average: a listing
@@ -285,11 +315,15 @@ exports.classify = function (listing) {
     const c = attributes.confidence
     const overall = Math.min(c.denomination, Math.max(c.year, 0.5), Math.max(c.portrait, 0.5))
 
+    /* An unrecognised condition band means eBay changed something and our
+       grade mapping is now incomplete - that needs a human, not a default. */
+    const unknownBand = fromDescriptors !== null && fromDescriptors.source === 'descriptor_unknown'
+
     return {
         excluded: null,
         attributes,
         confidence: Number(overall.toFixed(3)),
-        needsReview: overall < 0.7 || attributes.denomination === null,
+        needsReview: overall < 0.7 || attributes.denomination === null || unknownBand,
         reasons
     }
 }

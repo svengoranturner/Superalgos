@@ -187,7 +187,8 @@ exports.parseItem = function (root) {
         quantitySold,
         censored,
         saleType: isAuction ? 'AUCTION' : (bestOfferEnabled ? 'BEST_OFFER' : 'FIXED_PRICE'),
-        aspects: exports.parseAspects(item)
+        aspects: exports.parseAspects(item),
+        conditionDescriptors: exports.parseConditionDescriptors(item)
     }
 }
 
@@ -201,6 +202,26 @@ exports.parseAspects = function (item) {
         if (name !== undefined && value !== undefined) { aspects[name] = value }
     }
     return aspects
+}
+
+/*
+    Trading returns condition descriptors as ConditionDescriptor elements
+    carrying a Name and one or more Value entries. Normalised into the
+    same {name, values:[...]} shape the Browse reader produces, so the
+    classifier has a single format to consume.
+*/
+exports.parseConditionDescriptors = function (item) {
+    const raw = XML.get(item, 'ConditionDescriptors.ConditionDescriptor')
+    const list = asArray(raw)
+    const out = []
+    for (const entry of list) {
+        if (entry === null || typeof entry !== 'object') { continue }
+        const name = entry.Name !== undefined ? entry.Name : entry.name
+        const values = asArray(entry.Value !== undefined ? entry.Value : entry.value)
+        if (name === undefined || values.length === 0) { continue }
+        out.push({ name: String(name), values: values.map(v => (typeof v === 'object' ? v.__text : v)) })
+    }
+    return out.length > 0 ? out : null
 }
 
 exports.SITE_ID_UK = SITE_ID_UK

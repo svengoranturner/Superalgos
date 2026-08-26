@@ -185,3 +185,49 @@ The default is 5,000 Browse calls/day, application-wide. The collector budgets
 because a missed snapshot costs precision on one lot while a missed discovery
 loses the lot entirely. If you approach the ceiling, request a free **Application
 Growth Check**.
+
+---
+
+## Platform changes this tool already handles
+
+Two of the notices on the developer console banner affect buy-side integrations.
+
+**Usernames replaced by immutable user IDs** (live 15 May 2026). The tool stores
+a salted hash of *both* identifiers, and the account-deletion endpoint purges on
+either. This matters more than it sounds: if eBay names a departing user by
+immutable id while your stored hash came from a username, a purge keyed on one
+column alone returns 200 to eBay having deleted nothing — failing the very
+obligation the subscription exists to meet. It also fixes a quieter problem that
+predates the change: a seller who renames their account used to look like two
+different sellers to relist detection.
+
+**Standardised coin condition details** (from 6 May 2026). This is a *seller*
+obligation — you create no listings, so you owe eBay nothing here. But the data
+flows back to buyers in a `conditionDescriptors` array, and the tool now reads
+it in preference to parsing the title:
+
+- graded coins → grading company, numeric grade, letter grade, certification number
+- raw coins → one of *Uncirculated*, *Extremely Fine to About Uncirculated*,
+  *Fine to Very Fine*, *Below Fine*
+
+Grade is the second-largest driver of a sovereign's price after its metal
+content, so this converts a regex guess into a structured read — and eBay is
+making it mandatory, so coverage should approach total.
+
+The **certification number** is the valuable part: it identifies one physical
+slabbed coin, so the tool can follow that exact coin across relistings *and*
+resales by different sellers — something no title-matching heuristic can do.
+
+If eBay adds or rewords a condition band, the listing goes to the review queue
+rather than being filed under "ungraded". A wrong grade moves the premium, so it
+must fail visibly.
+
+`node bin/cli.js doctor` reports how many UK sovereign listings actually carry
+descriptors yet — the phase-in dates were announced for the US and the UK timing
+is unconfirmed.
+
+**Not applicable:** the Authenticity Guarantee expansion for coins (Aug 2026,
+PCGS, $500+) is US-only and this tool is UK-only. Worth watching — the threshold
+sits right around a sovereign's price, so if it reaches the UK it becomes a real
+premium factor. The apparel size and EU return-reason notices are seller-side and
+irrelevant here.

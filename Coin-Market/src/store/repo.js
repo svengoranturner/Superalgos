@@ -48,15 +48,25 @@ exports.newRepository = function (db, options) {
     const statements = {
         upsertListing: db.prepare(`
             INSERT INTO listing (browse_id, legacy_id, marketplace, title, category_id, condition_label,
-                                 buying_options, currency, seller_hash, seller_feedback_pct, seller_feedback_cnt,
-                                 item_web_url, image_url, start_time, end_time, first_seen, last_seen, expires_at)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                 buying_options, currency, seller_hash, seller_id_hash,
+                                 seller_feedback_pct, seller_feedback_cnt,
+                                 item_web_url, image_url, start_time, end_time, first_seen, last_seen, expires_at,
+                                 cert_number, grading_company, grade_numeric, grade_letter, condition_band)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(browse_id) DO UPDATE SET
                 last_seen = excluded.last_seen,
                 end_time = COALESCE(excluded.end_time, listing.end_time),
                 legacy_id = COALESCE(excluded.legacy_id, listing.legacy_id),
                 buying_options = excluded.buying_options,
-                expires_at = excluded.expires_at
+                expires_at = excluded.expires_at,
+                /* Backfill identity and condition detail as eBay starts
+                   supplying them, without clobbering what we already hold. */
+                seller_id_hash = COALESCE(excluded.seller_id_hash, listing.seller_id_hash),
+                cert_number = COALESCE(excluded.cert_number, listing.cert_number),
+                grading_company = COALESCE(excluded.grading_company, listing.grading_company),
+                grade_numeric = COALESCE(excluded.grade_numeric, listing.grade_numeric),
+                grade_letter = COALESCE(excluded.grade_letter, listing.grade_letter),
+                condition_band = COALESCE(excluded.condition_band, listing.condition_band)
         `),
         insertSnapshot: db.prepare(`
             INSERT OR REPLACE INTO listing_snapshot (browse_id, observed_at, price, shipping, bid_count, seconds_to_end)
@@ -90,13 +100,24 @@ exports.newRepository = function (db, options) {
         saveListing (listing, seenAt) {
             const now = seenAt || new Date().toISOString()
             const expires = new Date(Date.now() + config.rawRetentionDays * DAY_MS).toISOString()
+
+            const CONDITIONS = require('../catalogue/conditions.js')
+            const descriptors = CONDITIONS.parseDescriptors(listing.conditionDescriptors)
+
+            /* sellerId is retained as an alias for the username so callers
+               written before the immutable-id change keep working. */
+            const username = listing.sellerUsername !== undefined ? listing.sellerUsername : listing.sellerId
+
             bindAll(statements.upsertListing, [
                 listing.browseId, listing.legacyId, listing.marketplace || 'EBAY_GB',
                 listing.title, listing.categoryId, listing.conditionLabel,
                 listing.buyingOptions, listing.currency || 'GBP',
-                hashSeller(listing.sellerId), listing.sellerFeedbackPct, listing.sellerFeedbackCount,
+                hashSeller(username), hashSeller(listing.sellerUserId),
+                listing.sellerFeedbackPct, listing.sellerFeedbackCount,
                 listing.itemWebUrl, listing.imageUrl, listing.startTime || null, listing.endTime,
-                now, now, expires
+                now, now, expires,
+                descriptors.certNumber, descriptors.gradingCompany,
+                descriptors.gradeNumeric, descriptors.gradeLetter, descriptors.conditionBand
             ])
         },
 
@@ -177,8 +198,9 @@ exports.newRepository = function (db, options) {
             return db.prepare(`
                 SELECT o.browse_id AS browseId, o.ended_at AS endedAt, o.final_price AS finalPrice,
                        o.shipping, o.bid_count AS bidCount, o.sale_type AS saleType,
-                       o.sold, o.censored, l.title, l.seller_hash AS sellerHash, l.start_time AS listedAt,
-                       i.fine_oz AS fineOz
+                       o.sold, o.censored, l.title, l.seller_hash AS sellerHash,
+                       l.seller_id_hash AS sellerIdHash, l.cert_number AS certNumber,
+                       l.start_time AS listedAt, i.fine_oz AS fineOz
                 FROM listing_outcome o
                 JOIN listing_instrument li ON li.browse_id = o.browse_id
                 JOIN listing l ON l.browse_id = o.browse_id
