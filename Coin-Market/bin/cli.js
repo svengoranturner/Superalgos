@@ -268,6 +268,104 @@ COMMANDS['auth-code'] = {
     }
 }
 
+COMMANDS['notify-endpoint'] = {
+    describe: 'Serve the eBay account-deletion endpoint (needed to activate production keys)',
+    async run () {
+        const settings = CONFIG.load()
+        const NOTIFICATIONS = require('../src/ebay/notifications.js')
+        const spec = settings.ebay.accountDeletion || {}
+
+        if (!spec.endpointUrl || !spec.verificationToken) {
+            throw new Error(
+                'Set ebay.accountDeletion.endpointUrl and .verificationToken in config/settings.json.\n' +
+                'Generate a token with:  node bin/cli.js notify-token\n' +
+                'The endpointUrl must match what you register with eBay EXACTLY - a trailing\n' +
+                'slash or an http/https mismatch is the usual cause of "validation failed".')
+        }
+
+        const db = newDatabase(settings.databasePath)
+        const repository = newRepository(db, { sellerSalt: settings.sellerSalt })
+
+        const handle = NOTIFICATIONS.newHandler({
+            verificationToken: spec.verificationToken,
+            endpointUrl: spec.endpointUrl,
+            onDeletion: (username) => NOTIFICATIONS.purgeUser(repository, db, username),
+            log: (message) => console.log(new Date().toISOString().slice(0, 19) + '  ' + message)
+        })
+
+        const port = spec.port || 34261
+        const host = spec.host || '127.0.0.1'
+
+        require('node:http').createServer((request, response) => {
+            const chunks = []
+            request.on('data', chunk => chunks.push(chunk))
+            request.on('end', () => {
+                const url = new URL(request.url, spec.endpointUrl)
+                const result = handle(request.method, url, Buffer.concat(chunks).toString('utf8'))
+                response.writeHead(result.status, { 'Content-Type': result.contentType })
+                response.end(result.body)
+            })
+        }).listen(port, host, () => {
+            console.log('Account-deletion endpoint listening on http://' + host + ':' + port)
+            console.log('Registered URL must be exactly: ' + spec.endpointUrl)
+            console.log('')
+            console.log('Put your reverse proxy in front of this, and make sure the path is')
+            console.log('NOT behind an auth gate - eBay must reach it unauthenticated.')
+        })
+    }
+}
+
+COMMANDS['notify-token'] = {
+    describe: 'Generate a verification token for the account-deletion endpoint',
+    async run () {
+        const NOTIFICATIONS = require('../src/ebay/notifications.js')
+        const token = NOTIFICATIONS.generateToken()
+        console.log(token)
+        console.log('')
+        console.log('Paste this into BOTH eBay\'s subscription form and')
+        console.log('config/settings.json under ebay.accountDeletion.verificationToken.')
+    }
+}
+
+COMMANDS['notify-check'] = {
+    describe: 'Verify your endpoint answers eBay\'s challenge correctly',
+    async run (args) {
+        const settings = CONFIG.load()
+        const NOTIFICATIONS = require('../src/ebay/notifications.js')
+        const spec = settings.ebay.accountDeletion || {}
+        const target = args[0] || spec.endpointUrl
+
+        const challenge = 'test_' + Date.now()
+        const expected = NOTIFICATIONS.challengeResponse(challenge, spec.verificationToken, spec.endpointUrl)
+
+        const url = new URL(target)
+        url.searchParams.set('challenge_code', challenge)
+        console.log('GET ' + url.toString())
+
+        const response = await fetch(url, { headers: { accept: 'application/json' } })
+        const text = await response.text()
+        let actual = null
+        try { actual = JSON.parse(text).challengeResponse } catch (err) { actual = null }
+
+        console.log('')
+        console.log('  HTTP status      : ' + response.status)
+        console.log('  content-type     : ' + (response.headers.get('content-type') || '(none)'))
+        console.log('  expected hash    : ' + expected)
+        console.log('  endpoint returned: ' + (actual === null ? '(not JSON: ' + text.slice(0, 80) + ')' : actual))
+        console.log('')
+        if (actual === expected) {
+            console.log('  MATCH - eBay will accept this endpoint.')
+        } else {
+            console.log('  MISMATCH. Almost always one of:')
+            console.log('   - endpointUrl in settings.json differs from the URL registered with eBay')
+            console.log('     (trailing slash, http vs https, www) - the URL is part of the hash')
+            console.log('   - the verification token differs between eBay and settings.json')
+            console.log('   - an auth gate or CDN is intercepting the request before it reaches you')
+            process.exitCode = 1
+        }
+    }
+}
+
 /* ---------------------------------------------------------- doctor */
 
 COMMANDS.doctor = {
@@ -365,8 +463,9 @@ async function main () {
     if (command === undefined || command === 'help' || command === '--help') {
         console.log('coin-market  -  eBay lot tracking, catalogue grouping, premium and liquidity\n')
         console.log('USAGE: coin-market <command> [args]\n')
+        const width = Math.max(...Object.keys(COMMANDS).map(name => name.length)) + 2
         for (const [name, entry] of Object.entries(COMMANDS)) {
-            console.log('  ' + name.padEnd(12) + entry.describe)
+            console.log('  ' + name.padEnd(width) + entry.describe)
         }
         console.log('')
         console.log('Start with:  node bin/cli.js demo')

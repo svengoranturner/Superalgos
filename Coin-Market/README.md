@@ -98,10 +98,14 @@ Point `spot.path` at the portfolio store and adjust the column names.
 
 ## Setup for live data
 
+**See [SETUP.md](SETUP.md)** for the full walkthrough. The short version:
+
 ```bash
 cp config/settings.example.json config/settings.json   # then fill it in
-node bin/cli.js doctor      # checks credentials and the load-bearing assumptions
-node bin/cli.js run         # the continuous collector
+node bin/cli.js notify-token      # account-deletion gate (blocks production keys)
+node bin/cli.js notify-endpoint   # serve it behind your reverse proxy
+node bin/cli.js doctor            # check credentials and the load-bearing assumptions
+node bin/cli.js run               # the continuous collector
 ```
 
 `doctor` is worth running first. Its third check — whether Trading `GetItem`

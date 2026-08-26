@@ -1,6 +1,5 @@
 {
   "database": "../Data-Storage/Coin-Market/coin-market.db",
-
   "ebay": {
     "environment": "production",
     "marketplaceId": "EBAY_GB",
@@ -11,9 +10,14 @@
     "ruName": "YOUR-RUNAME",
     "refreshToken": null,
     "userScopes": "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/buy.item.feed",
-    "dailyCallLimit": 5000
+    "dailyCallLimit": 5000,
+    "accountDeletion": {
+      "endpointUrl": "https://metalhead.gold/ebay/account-deletion",
+      "verificationToken": "GENERATE-WITH: node bin/cli.js notify-token",
+      "host": "127.0.0.1",
+      "port": 34261
+    }
   },
-
   "_spotComment": [
     "Read the metals.dev feed the portfolio app already collects on this Pi.",
     "We never poll metals.dev directly: two pollers would drift, and the",
@@ -34,14 +38,12 @@
     },
     "toleranceMinutes": 90
   },
-
   "collector": {
     "sweepMinutes": 60,
     "endingSoonMinutes": 5,
     "resolveMinutes": 30,
     "rawRetentionDays": 180
   },
-
   "alerts": {
     "enabled": true,
     "targetQuantile": 0.35,
@@ -50,8 +52,17 @@
     "telegramBotToken": null,
     "telegramChatId": null
   },
-
-  "dashboard": { "port": 34260, "host": "127.0.0.1" },
-
-  "sellerSalt": "CHANGE-ME-to-any-random-string"
+  "dashboard": {
+    "port": 34260,
+    "host": "127.0.0.1"
+  },
+  "sellerSalt": "CHANGE-ME-to-any-random-string",
+  "_accountDeletionComment": [
+    "eBay will not activate a production keyset until you either subscribe to",
+    "Marketplace Account Deletion notifications or are granted an exemption.",
+    "Run 'notify-endpoint' behind your reverse proxy, register endpointUrl with",
+    "eBay, then confirm with 'notify-check'. The endpoint URL is part of the",
+    "challenge hash, so it must match byte for byte - and the path must NOT sit",
+    "behind an auth gate, because eBay calls it unauthenticated."
+  ]
 }
