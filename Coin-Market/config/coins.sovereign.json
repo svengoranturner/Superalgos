@@ -1,0 +1,29 @@
+{
+  "marketplace": "EBAY_GB",
+  "currency": "GBP",
+  "_comment": [
+    "Search partitions for discovery. Two things matter here and both were",
+    "learned the hard way from eBay's API behaviour:",
+    "",
+    "1. buyingOptions is set explicitly on every partition. Browse returns",
+    "   FIXED_PRICE only by default, so omitting it silently produces a",
+    "   Buy-It-Now-only dataset - the exact bias this tool measures.",
+    "2. Sovereigns live in TWO category subtrees (UK gold coins AND the",
+    "   bullion subtree). Category ids below are placeholders until the",
+    "   EBAY_GB tree is enumerated via the Taxonomy API - run",
+    "   'coin-market categories' to fill them in for the UK site."
+  ],
+  "categoryIds": [],
+  "partitions": [
+    { "name": "sovereign-auction",      "q": "gold sovereign",      "buyingOptions": ["AUCTION"] },
+    { "name": "sovereign-bin",          "q": "gold sovereign",      "buyingOptions": ["FIXED_PRICE"] },
+    { "name": "half-sovereign-auction", "q": "half sovereign gold", "buyingOptions": ["AUCTION"] },
+    { "name": "half-sovereign-bin",     "q": "half sovereign gold", "buyingOptions": ["FIXED_PRICE"] }
+  ],
+  "priceBands": [[100, 300], [300, 500], [500, 800], [800, 2000], [2000, 20000]],
+  "watchlist": {
+    "targetQuantile": 0.35,
+    "halfLifeDays": 45,
+    "windowDays": 180
+  }
+}

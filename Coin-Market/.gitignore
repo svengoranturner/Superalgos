@@ -1,0 +1,8 @@
+config/settings.json
+demo.db
+demo.db-*
+*.db
+*.db-shm
+*.db-wal
+report.html
+node_modules/

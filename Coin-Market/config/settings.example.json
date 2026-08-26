@@ -1,0 +1,57 @@
+{
+  "database": "../Data-Storage/Coin-Market/coin-market.db",
+
+  "ebay": {
+    "environment": "production",
+    "marketplaceId": "EBAY_GB",
+    "siteId": 3,
+    "clientId": "YOUR-APP-ID",
+    "clientSecret": "YOUR-CERT-ID",
+    "devId": "YOUR-DEV-ID",
+    "ruName": "YOUR-RUNAME",
+    "refreshToken": null,
+    "userScopes": "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/buy.item.feed",
+    "dailyCallLimit": 5000
+  },
+
+  "_spotComment": [
+    "Read the metals.dev feed the portfolio app already collects on this Pi.",
+    "We never poll metals.dev directly: two pollers would drift, and the",
+    "portfolio and this tool would quote different premiums for the same",
+    "metal on the same day. Point 'path' at the portfolio store and adjust",
+    "table/column names to match its schema."
+  ],
+  "spot": {
+    "type": "sqlite",
+    "path": "/home/pi/metalhead/data/prices.db",
+    "table": "spot_prices",
+    "metalValue": "XAU",
+    "columns": {
+      "observedAt": "timestamp",
+      "gbpPerOz": "gbp_per_oz",
+      "usdPerOz": "usd_per_oz",
+      "metal": "metal"
+    },
+    "toleranceMinutes": 90
+  },
+
+  "collector": {
+    "sweepMinutes": 60,
+    "endingSoonMinutes": 5,
+    "resolveMinutes": 30,
+    "rawRetentionDays": 180
+  },
+
+  "alerts": {
+    "enabled": true,
+    "targetQuantile": 0.35,
+    "channel": "ntfy",
+    "ntfyTopic": "coin-market-CHANGE-ME",
+    "telegramBotToken": null,
+    "telegramChatId": null
+  },
+
+  "dashboard": { "port": 34260, "host": "127.0.0.1" },
+
+  "sellerSalt": "CHANGE-ME-to-any-random-string"
+}

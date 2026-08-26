@@ -1,0 +1,19 @@
+{
+  "name": "coin-market",
+  "version": "0.1.0",
+  "private": true,
+  "description": "eBay lot tracker for collectible coins: catalogue grouping, premium over spot, and market liquidity analytics.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "bin": {
+    "coin-market": "./bin/cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "node bin/cli.js run",
+    "dashboard": "node bin/cli.js dashboard"
+  },
+  "dependencies": {}
+}
