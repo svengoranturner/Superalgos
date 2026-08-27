@@ -33,6 +33,11 @@ premium = total_cost / (gold_price_per_oz × fine_oz) − 1
 A £459 sale at £1,500/oz and a £551 sale at £1,800/oz look 20% apart in price
 and are both a 30% premium. Premium is the stationary quantity worth learning.
 
+## Running it on a Pi
+
+See **[DEPLOY.md](DEPLOY.md)** — sparse-clone this folder (2 MB, not the repo's
+630 MB), check you have Node 22.5+, and run the demo. Nothing to install.
+
 ## Try it now, with no eBay account
 
 ```bash

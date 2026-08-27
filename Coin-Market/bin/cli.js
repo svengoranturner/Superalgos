@@ -1,6 +1,31 @@
 #!/usr/bin/env node
 'use strict'
 
+/*
+    Node version guard.
+
+    The tool has no dependencies because it uses node:sqlite, which landed
+    in Node 22.5.0. Raspberry Pi OS still ships 18 or 20 through apt, so
+    the most likely first-run failure on the target machine is a cryptic
+    "Cannot find module node:sqlite". Fail with something actionable.
+*/
+{
+    const parts = process.versions.node.split('.').map(Number)
+    if (parts[0] < 22 || (parts[0] === 22 && parts[1] < 5)) {
+        console.error('')
+        console.error('coin-market needs Node 22.5 or newer (found ' + process.versions.node + ').')
+        console.error('')
+        console.error('It uses node:sqlite, built into Node since 22.5 - which is why this tool')
+        console.error('has no dependencies and needs no compiler on a Pi.')
+        console.error('')
+        console.error('On Raspberry Pi OS / Debian, apt ships an older Node. Install a current one:')
+        console.error('  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -')
+        console.error('  sudo apt-get install -y nodejs')
+        console.error('')
+        process.exit(1)
+    }
+}
+
 const PATH = require('node:path')
 const FS = require('node:fs')
 
