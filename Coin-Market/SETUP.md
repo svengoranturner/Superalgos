@@ -85,16 +85,25 @@ Write the config from your keys rather than hand-editing JSON:
 Run this **on the Pi** (bash), where the tool will actually live:
 
 ```bash
-node bin/cli.js init --app-id=<App ID> --cert-id=<Cert ID> --dev-id=<Dev ID> --env=sandbox --spot-project=/home/stacker/apps/metal-stack
+node bin/cli.js init
 ```
 
-Kept on one line deliberately: it is the same command whatever shell you type it
-from, with no continuation syntax to get wrong.
+It asks for the App ID, Cert ID and Dev ID in turn. **The Cert ID does not
+echo**, and no key reaches your shell history or `ps` output — which is why
+there is nothing to substitute into that command. A run with placeholder text
+still in it is refused rather than written.
 
-**On the Pi**, though — not from Git Bash on the Windows workstation. Git Bash
-rewrites an absolute Unix path in an argument into a Windows one, so
-`--spot-project=/home/stacker/...` silently becomes
-`C:/Program Files/Git/home/stacker/...` and the setting is quietly wrong.
+The flags (`--app-id=` and friends) still work for scripting. They are the
+worse path for a human: an unsubstituted placeholder writes a `settings.json`
+that looks complete and fails much later, at the first eBay call, with an error
+that names none of this. That has already happened twice here.
+
+Run it **on the Pi**, not from Git Bash on the Windows workstation. Git Bash
+rewrites an absolute Unix path in an argument into a Windows one, so a
+`--spot-project=/home/stacker/...` flag silently becomes
+`C:/Program Files/Git/home/stacker/...` and the setting is quietly wrong. The
+spot block in the committed template already points at the right place, so you
+should not need that flag at all.
 
 That writes `config/settings.json` at mode 0600 (gitignored), and generates two
 values you should not choose by hand: the seller-hash salt, which is what stops

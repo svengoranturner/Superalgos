@@ -145,13 +145,20 @@ tool prices lots it watched close, so the series starts when the collector does.
 
 ### 3. eBay, application token only — **NEXT, and blocked on you**
 
-`node bin/cli.js init --app-id=... --cert-id=... --dev-id=... --env=sandbox`
-then `node bin/cli.js smoke`. This alone gives discovery, classification,
-snapshots and the uplift curve. Sandbox first, then production.
+`node bin/cli.js init` — it asks for the three keys, and the Cert ID does not
+echo — then `node bin/cli.js smoke`. This alone gives discovery,
+classification, snapshots and the uplift curve. Sandbox first, then production.
 
-**The sandbox keys were pasted into the previous session's chat transcript.
-Regenerate them.** Production keys must never travel that way — they go straight
-into `settings.json` on the Pi, which is gitignored and written at mode 0600.
+**Never ask the user to paste keys into the chat, and never put them in the
+command line for them.** Both have already gone wrong here: the original
+sandbox keyset was pasted into a session transcript and had to be regenerated,
+and an `init` line with placeholder text in it was then run verbatim twice,
+writing a `settings.json` that looked complete. `init` prompts for exactly this
+reason — the keys reach `settings.json` (gitignored, mode 0600) without passing
+through a transcript, shell history, or `ps`. `config.looksUnfilled` refuses
+placeholder text on either path.
+
+The flags still exist for scripting. If you use them, you own the consequence.
 
 ### 4. The account-deletion endpoint — the only Cloudflare-facing piece
 
