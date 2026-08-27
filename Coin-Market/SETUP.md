@@ -82,11 +82,14 @@ node bin/cli.js notify-check
 
 Write the config from your keys rather than hand-editing JSON:
 
+Run this **on the Pi** (bash), where the tool will actually live:
+
 ```bash
-node bin/cli.js init \
-  --app-id=<App ID>   --cert-id=<Cert ID>   --dev-id=<Dev ID> \
-  --env=sandbox       --spot-db=/home/pi/metalhead/data/prices.db
+node bin/cli.js init --app-id=<App ID> --cert-id=<Cert ID> --dev-id=<Dev ID> --env=sandbox --spot-db=/home/pi/metalhead/data/prices.db
 ```
+
+Kept on one line deliberately: it is the same command whatever shell you type it
+from, with no continuation syntax to get wrong.
 
 That writes `config/settings.json` at mode 0600 (gitignored), and generates two
 values you should not choose by hand: the seller-hash salt, which is what stops

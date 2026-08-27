@@ -25,7 +25,14 @@ missing-module error.
 ## 2. Clone just this folder
 
 The Superalgos repo is ~630 MB of history and 6,600 files; Coin Market is 47 of
-them. A sparse shallow clone gets you **2 MB**:
+them. A sparse shallow clone gets you **2 MB**.
+
+**A note on shells.** Commands that run *on the Pi* are bash, always. Commands
+you run on your own machine depend on what you use. Both are given below —
+mixing them up is a real trap, because `\` line continuations and `&&` are bash
+constructs that Windows PowerShell 5.1 rejects outright.
+
+### macOS / Linux / WSL (bash)
 
 ```bash
 git clone --depth 1 --filter=blob:none --sparse \
@@ -37,7 +44,23 @@ git sparse-checkout set Coin-Market
 cd Coin-Market
 ```
 
-To pick up later changes: `git pull` from `~/coin-market-repo`.
+### Windows PowerShell
+
+No line continuations, no `&&` — one command per line. You do **not** need an
+elevated prompt, and do not do this inside `C:\WINDOWS\system32`.
+
+```powershell
+cd $HOME
+git clone --depth 1 --filter=blob:none --sparse --branch claude/ebay-lot-tracking-pricing-2cxogj https://github.com/svengoranturner/Superalgos.git coin-market-repo
+cd coin-market-repo
+git sparse-checkout set Coin-Market
+cd Coin-Market
+```
+
+If you have WSL, using it instead means every bash snippet in these docs works
+verbatim, and it is a closer fit for driving a Linux Pi.
+
+To pick up later changes: `git pull` from the repo root.
 
 ## 3. Run it — there is nothing to install
 

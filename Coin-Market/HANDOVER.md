@@ -26,6 +26,13 @@ for that reason, not through carelessness.
 | Gold price | paid metals.dev feed, stored on the Pi, ~20-minute cadence |
 | Market | eBay UK (`EBAY_GB`), GBP throughout |
 | eBay account | dev account approved; **sandbox** keyset exists, production not yet created |
+| User's workstation | **Windows**, PowerShell 5.1 (`&&` and `\` continuations are unavailable) |
+
+You are most likely running on that Windows machine and driving the Pi over SSH
+(`ssh pi@192.168.68.51` — Windows 10/11 ships an OpenSSH client). Keep the two
+straight: commands that run **on the Pi** are bash; commands on the workstation
+are PowerShell unless the user is in WSL. Every code block in these docs that is
+not explicitly marked `powershell` is bash, meant for the Pi.
 
 ## State
 
