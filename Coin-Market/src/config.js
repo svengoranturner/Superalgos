@@ -50,4 +50,27 @@ function prune (value) {
     return value
 }
 
+/*
+    A credential still carrying the placeholder text from a copied command
+    line. This exists because it happened twice: running an init line with
+    the instructions' own "..." or "REAL_APP_ID" in it writes a settings.json
+    that looks complete and then fails at the first eBay call, with an auth
+    error that names none of this.
+*/
+const PLACEHOLDER = new RegExp(
+    '^(' +
+    '\\.{2,}' +                                              /* ...        */
+    '|<.*>' +                                                /* <app id>   */
+    '|x{3,}' +                                               /* xxxx       */
+    '|(your|real|my|the)[-_ ]?(app|cert|dev|client)?[-_ ]?(id|secret|key)?' +
+    '|(app|cert|dev|client)[-_](id|secret|key)' +
+    ')$', 'i')
+
+exports.looksUnfilled = function (value) {
+    if (value === undefined || value === null) { return true }
+    const text = String(value).trim()
+    if (text === '') { return true }
+    return PLACEHOLDER.test(text)
+}
+
 exports.ROOT = ROOT

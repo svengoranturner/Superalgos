@@ -54,6 +54,57 @@ function gbp (value) {
     return 'GBP ' + value.toFixed(2)
 }
 
+/*
+    Ask for one value on the terminal.
+
+    init takes its credentials this way rather than from the command line
+    because a pasted command line is the thing that goes wrong: the
+    placeholder gets run verbatim, and the real keys - when they are
+    finally right - land in shell history and in ps output for anyone on
+    the machine. Nothing to substitute, nothing left behind.
+*/
+function newPrompter () {
+    const READLINE = require('node:readline')
+    const rl = READLINE.createInterface({ input: process.stdin, output: process.stdout, terminal: true })
+
+    let muted = false
+    let closed = false
+    rl.once('close', () => { closed = true })
+    rl._writeToOutput = function (chunk) { if (!muted) { rl.output.write(chunk) } }
+
+    return {
+        /*  One interface for the whole run, not one per question: closing an
+            interface takes stdin with it, and the second question then never
+            arrives. */
+        ask (question, options) {
+            const secret = options !== undefined && options.secret === true
+            /*  Input already ended - asking again throws. Answer empty and
+                let the caller's placeholder check report it properly. */
+            if (closed) { return Promise.resolve('') }
+            return new Promise(resolve => {
+                let settled = false
+                const finish = value => {
+                    if (settled) { return }
+                    settled = true
+                    muted = false
+                    resolve(value)
+                }
+                /*  EOF instead of an answer resolves empty rather than
+                    hanging - the caller rejects it as unfilled, which is a
+                    better ending than a process that exits saying nothing. */
+                rl.once('close', () => finish(''))
+                rl.question(question, answer => {
+                    if (muted) { rl.output.write('\n') }
+                    finish(answer.trim())
+                })
+                /* Set after question(), so the prompt itself still prints. */
+                muted = secret
+            })
+        },
+        close () { rl.close() }
+    }
+}
+
 /* The example template may still hold placeholders at init time, so this
    never lets a bad spot block stop settings.json being written. */
 function describeSpot (spec) {
@@ -412,20 +463,60 @@ COMMANDS.init = {
             if (match !== null) { flags[match[1]] = match[2] }
         }
 
-        const required = ['app-id', 'cert-id', 'dev-id']
-        const missing = required.filter(name => flags[name] === undefined)
-        if (missing.length > 0) {
-            console.log('Usage:')
-            console.log('  node bin/cli.js init --app-id=... --cert-id=... --dev-id=... \\')
-            console.log('      [--env=sandbox|production] [--marketplace=EBAY_GB]')
-            console.log('      [--spot-project=/path/to/portfolio/app] [--spot-db=/path/to/prices.db]')
-            console.log('')
-            console.log('Missing: ' + missing.join(', '))
+        const target = PATH.join(CONFIG.ROOT, 'config', 'settings.json')
+
+        /* Checked before anything is asked for: refusing after three
+           prompts, one of them a secret, would be its own small insult. */
+        if (FS.existsSync(target) && flags.force === undefined) {
+            console.log(target + ' already exists. Pass --force= to overwrite.')
+            console.log('(the trailing = is required - flags are --name=value)')
             process.exitCode = 1
             return
         }
 
-        const target = PATH.join(CONFIG.ROOT, 'config', 'settings.json')
+        const FIELDS = [
+            { flag: 'app-id', label: 'App ID (Client ID)   ' },
+            { flag: 'cert-id', label: 'Cert ID (Client Secret)', secret: true },
+            { flag: 'dev-id', label: 'Dev ID               ' }
+        ]
+
+        const missing = FIELDS.filter(f => flags[f.flag] === undefined)
+        if (missing.length > 0 && !process.stdin.isTTY) {
+            console.log('Usage:')
+            console.log('  node bin/cli.js init            (asks for the keys - preferred)')
+            console.log('  node bin/cli.js init --app-id=<id> --cert-id=<secret> --dev-id=<id>')
+            console.log('      [--env=sandbox|production] [--marketplace=EBAY_GB]')
+            console.log('      [--spot-project=/path/to/portfolio/app] [--spot-db=/path/to/prices.db]')
+            console.log('')
+            console.log('Missing: ' + missing.map(f => f.flag).join(', '))
+            process.exitCode = 1
+            return
+        }
+
+        if (missing.length > 0) {
+            console.log('eBay keys from developer.ebay.com - paste each one.')
+            console.log('The Cert ID will not echo. Nothing is stored in shell history.')
+            console.log('')
+            const prompter = newPrompter()
+            try {
+                for (const field of missing) {
+                    flags[field.flag] = await prompter.ask('  ' + field.label + ': ', { secret: field.secret })
+                }
+            } finally { prompter.close() }
+            console.log('')
+        }
+
+        /* A placeholder that reached this far would write a settings.json
+           that looks complete and fails at the first eBay call instead. */
+        const unfilled = FIELDS.filter(f => CONFIG.looksUnfilled(flags[f.flag]))
+        if (unfilled.length > 0) {
+            console.log('That is still placeholder text, not a key: ' +
+                unfilled.map(f => f.flag + '=' + JSON.stringify(flags[f.flag])).join(', '))
+            console.log('Paste the actual values from developer.ebay.com. Nothing was written.')
+            process.exitCode = 1
+            return
+        }
+
         const template = JSON.parse(
             FS.readFileSync(PATH.join(CONFIG.ROOT, 'config', 'settings.example.json'), 'utf8'))
 
@@ -462,12 +553,6 @@ COMMANDS.init = {
         template.sellerSalt = require('node:crypto').randomBytes(24).toString('base64url')
         template.ebay.accountDeletion.verificationToken =
             require('../src/ebay/notifications.js').generateToken()
-
-        if (FS.existsSync(target) && flags.force === undefined) {
-            console.log(target + ' already exists. Pass --force= to overwrite.')
-            process.exitCode = 1
-            return
-        }
 
         FS.writeFileSync(target, JSON.stringify(template, null, 2) + '\n', { mode: 0o600 })
         console.log('Wrote ' + target + ' (mode 0600, gitignored)')
