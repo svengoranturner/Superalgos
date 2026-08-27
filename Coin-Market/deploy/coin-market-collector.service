@@ -1,0 +1,50 @@
+# The collector: discovery, snapshotting, outcome resolution, spot mirroring.
+#
+# EDIT TWO THINGS: User= and WorkingDirectory=.
+#
+# Install:
+#   sudo cp coin-market-*.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now coin-market-collector
+#   journalctl -u coin-market-collector -f
+
+[Unit]
+Description=Coin Market collector (eBay lot tracking)
+Documentation=https://github.com/svengoranturner/Superalgos
+After=network-online.target
+Wants=network-online.target
+
+# Never stop retrying. StartLimitIntervalSec and StartLimitBurst live in
+# [Unit], not [Service] - put them in [Service] and systemd ignores them
+# silently, leaving the default rate limit in force. A collector that gives
+# up at 2am loses every auction that closed overnight, and discovery only
+# works while a listing is live, so those lots are gone for good.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/coin-market-repo/Coin-Market
+ExecStart=/usr/bin/node bin/cli.js run
+
+# A collector that dies quietly at 2am loses every auction that closed
+# overnight, and those lots can never be recovered - discovery only works
+# while a listing is live. So restart always, and keep trying.
+Restart=always
+RestartSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=coin-market
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

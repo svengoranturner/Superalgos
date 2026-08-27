@@ -1,0 +1,47 @@
+# The eBay account-deletion endpoint.
+#
+# Needed to activate a PRODUCTION keyset, and to honour deletion
+# notifications afterwards. Listens on 127.0.0.1:34261; cloudflared
+# publishes exactly one path to it - see cloudflared-ingress.md.
+#
+# eBay retries failed deliveries and eventually disables a subscription
+# that keeps failing, which would deactivate the keyset. Hence Restart=always.
+#
+# EDIT TWO THINGS: User= and WorkingDirectory=.
+
+[Unit]
+Description=Coin Market eBay account-deletion endpoint
+After=network-online.target
+Wants=network-online.target
+
+# Never stop retrying. StartLimitIntervalSec and StartLimitBurst live in
+# [Unit], not [Service] - put them in [Service] and systemd ignores them
+# silently, leaving the default rate limit in force. A collector that gives
+# up at 2am loses every auction that closed overnight, and discovery only
+# works while a listing is live, so those lots are gone for good.
+StartLimitIntervalSec=0
+StartLimitBurst=0
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/coin-market-repo/Coin-Market
+ExecStart=/usr/bin/node bin/cli.js notify-endpoint
+
+Restart=always
+RestartSec=15
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=coin-market-notify
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

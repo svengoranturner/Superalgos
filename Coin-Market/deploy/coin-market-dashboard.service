@@ -1,0 +1,34 @@
+# The dashboard. Binds to 127.0.0.1 by design - it holds your buying
+# intentions and has no business being reachable from the network.
+# Reach it with:  ssh -L 34260:127.0.0.1:34260 pi@<your-pi>
+#
+# EDIT TWO THINGS: User= and WorkingDirectory=.
+
+[Unit]
+Description=Coin Market dashboard
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/coin-market-repo/Coin-Market
+ExecStart=/usr/bin/node bin/cli.js dashboard
+
+Restart=on-failure
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=coin-market-dashboard
+
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectControlGroups=yes
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

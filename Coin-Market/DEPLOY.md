@@ -138,7 +138,10 @@ Roughly in order of how much they unlock:
    cloudflared tunnel it is an ingress rule plus an Access bypass for that one
    path, because eBay's challenge arrives unauthenticated.
 4. **User token** — final sale prices and the watch-list mirror.
-5. **Run it continuously** — `node bin/cli.js run`, under systemd.
+5. **Run it continuously** — systemd units and the Cloudflare tunnel recipe are
+   in **[`deploy/`](deploy/README.md)**, ready to install. The units pass
+   `systemd-analyze verify`; the tunnel config needs merging into your existing
+   `config.yml` rather than copying blind.
 
 Steps 1–2 give you a working tool. Steps 3–4 are what make clearing premiums
 possible.

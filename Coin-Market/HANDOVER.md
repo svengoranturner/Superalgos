@@ -131,6 +131,17 @@ cause.
 
 ### 5. User token, then run it continuously
 
+**`deploy/` already contains what you need** — do not write your own. Three
+systemd units (verified with `systemd-analyze verify`) and
+`deploy/cloudflared-ingress.md`, which covers the tunnel ingress rule, the
+Access **bypass** that eBay's unauthenticated challenge requires, and the two
+things that silently break validation: ingress rules match in order, and the
+endpoint URL is part of the challenge hash.
+
+The tunnel config is the one artefact written blind — merge it into the existing
+`config.yml`, do not overwrite.
+
+
 `auth-url` → approve → `auth-code` gives a refresh token good for ~18 months,
 which unlocks final sale prices and the watch-list mirror. Then `run` under
 systemd, with `dashboard` reachable over an SSH tunnel — it binds to loopback
