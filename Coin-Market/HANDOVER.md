@@ -8,6 +8,9 @@ as the Pi and can actually reach it.
 Read `README.md` for what the tool does and `SETUP.md` / `DEPLOY.md` for the
 detailed procedures. This file is the state of play and the order of work.
 
+`DEPLOY.md` §2a covers installing Claude Code itself, if you are reading this
+before that has happened.
+
 ## Why the handover
 
 The build happened in a cloud container with **no route to the LAN** (verified:

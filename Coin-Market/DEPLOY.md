@@ -62,6 +62,34 @@ verbatim, and it is a closer fit for driving a Linux Pi.
 
 To pick up later changes: `git pull` from the repo root.
 
+## 2a. Claude Code, if you want a session driving this
+
+Optional, but this is how the deployment is meant to be worked through — a
+session on a machine that can actually reach the Pi. It is not needed to run the
+tool itself.
+
+**Windows PowerShell** (no Administrator prompt required):
+
+```powershell
+irm https://claude.ai/install.ps1 | iex
+```
+
+**macOS / Linux / WSL:**
+
+```bash
+curl -fsSL https://claude.ai/install.sh | bash
+```
+
+Reopen the terminal afterwards, then `claude --version` to confirm. Requires a
+Pro, Max, Team or Enterprise account; first run opens a browser to log in.
+
+On native Windows, having **Git for Windows** installed also gives Claude Code
+the Bash tool via Git Bash instead of PowerShell only — worth having, since it
+makes every bash snippet in these docs usable directly.
+
+Then, from the `Coin-Market` directory, start it and say:
+*"Read HANDOVER.md and pick this up."*
+
 ## 3. Run it — there is nothing to install
 
 ```bash
