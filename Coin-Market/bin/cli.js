@@ -5,9 +5,11 @@
     Node version guard.
 
     The tool has no dependencies because it uses node:sqlite, which landed
-    in Node 22.5.0. Raspberry Pi OS still ships 18 or 20 through apt, so
-    the most likely first-run failure on the target machine is a cryptic
-    "Cannot find module node:sqlite". Fail with something actionable.
+    in Node 22.5.0. Debian 13 on the Pi ships 20.19 through apt - and the
+    Pi had no node at all - so the most likely first-run failure on the
+    target machine is a cryptic "Cannot find module node:sqlite". Fail with
+    something actionable, and point at what actually worked there rather
+    than at a NodeSource script that has no trixie repository.
 */
 {
     const parts = process.versions.node.split('.').map(Number)
@@ -18,9 +20,13 @@
         console.error('It uses node:sqlite, built into Node since 22.5 - which is why this tool')
         console.error('has no dependencies and needs no compiler on a Pi.')
         console.error('')
-        console.error('On Raspberry Pi OS / Debian, apt ships an older Node. Install a current one:')
-        console.error('  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -')
-        console.error('  sudo apt-get install -y nodejs')
+        console.error('On Debian / Raspberry Pi OS, apt ships an older Node. Install a current one -')
+        console.error('this is the arm64 build, and DEPLOY.md section 1 has the whole sequence:')
+        console.error('  V=v24.20.0; cd /tmp')
+        console.error('  curl -fsSL -O https://nodejs.org/dist/$V/node-$V-linux-arm64.tar.xz')
+        console.error('  sudo mkdir -p /usr/local/lib/nodejs')
+        console.error('  sudo tar -xJf node-$V-linux-arm64.tar.xz -C /usr/local/lib/nodejs')
+        console.error('  sudo ln -sfn /usr/local/lib/nodejs/node-$V-linux-arm64/bin/node /usr/local/bin/node')
         console.error('')
         process.exit(1)
     }
@@ -46,6 +52,12 @@ function pct (value, digits) {
 function gbp (value) {
     if (value === null || value === undefined || !Number.isFinite(value)) { return '-' }
     return 'GBP ' + value.toFixed(2)
+}
+
+/* The example template may still hold placeholders at init time, so this
+   never lets a bad spot block stop settings.json being written. */
+function describeSpot (spec) {
+    try { return SPOT.newSpotSource(spec).describe() } catch (err) { return spec.type + ' (' + err.message + ')' }
 }
 
 /* ------------------------------------------------------------- demo */
@@ -405,7 +417,8 @@ COMMANDS.init = {
         if (missing.length > 0) {
             console.log('Usage:')
             console.log('  node bin/cli.js init --app-id=... --cert-id=... --dev-id=... \\')
-            console.log('      [--env=sandbox|production] [--marketplace=EBAY_GB] [--spot-db=/path/to/prices.db]')
+            console.log('      [--env=sandbox|production] [--marketplace=EBAY_GB]')
+            console.log('      [--spot-project=/path/to/portfolio/app] [--spot-db=/path/to/prices.db]')
             console.log('')
             console.log('Missing: ' + missing.join(', '))
             process.exitCode = 1
@@ -427,7 +440,21 @@ COMMANDS.init = {
         template.ebay.environment = flags.env || 'sandbox'
         template.ebay.marketplaceId = flags.marketplace || 'EBAY_GB'
         if (flags.runame !== undefined) { template.ebay.ruName = flags.runame }
-        if (flags['spot-db'] !== undefined) { template.spot.path = flags['spot-db'] }
+        /* The portfolio app on the Pi keeps spot in PostgreSQL; --spot-project
+           points at its compose project. --spot-db is still there for a
+           portfolio store that is a SQLite file, which switches the whole
+           source over rather than setting a path the postgres reader ignores. */
+        if (flags['spot-project'] !== undefined) { template.spot.projectDir = flags['spot-project'] }
+        if (flags['spot-db'] !== undefined) {
+            template.spot = {
+                type: 'sqlite',
+                path: flags['spot-db'],
+                table: 'spot_prices',
+                metalValue: 'XAU',
+                columns: { observedAt: 'observed_at', gbpPerOz: 'gbp_per_oz', usdPerOz: 'usd_per_oz', metal: 'metal' },
+                toleranceMinutes: template.spot.toleranceMinutes || 90
+            }
+        }
 
         /* A salt that is generated, not left as the placeholder - it is
            what keeps stored seller hashes from being reversible by anyone
@@ -449,7 +476,7 @@ COMMANDS.init = {
         console.log('  marketplace        : ' + template.ebay.marketplaceId)
         console.log('  seller salt        : generated')
         console.log('  deletion token     : generated (register it with eBay)')
-        console.log('  spot store         : ' + template.spot.path)
+        console.log('  spot store         : ' + describeSpot(template.spot))
         console.log('')
         console.log('Next:  node bin/cli.js smoke')
     }

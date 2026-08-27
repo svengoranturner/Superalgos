@@ -24,12 +24,13 @@ const DAY_MS = 24 * 60 * 60 * 1000
 exports.newSpotSource = function (config) {
     const spec = config || {}
     switch (spec.type) {
-        case 'sqlite': return newSqliteSource(spec)
-        case 'json':   return newJsonSource(spec)
-        case 'http':   return newHttpSource(spec)
+        case 'sqlite':   return newSqliteSource(spec)
+        case 'postgres': return newPostgresSource(spec)
+        case 'json':     return newJsonSource(spec)
+        case 'http':     return newHttpSource(spec)
         default:
             throw new Error('Unknown spot source type: ' + spec.type +
-                ' (expected sqlite, json or http)')
+                ' (expected sqlite, postgres, json or http)')
     }
 }
 
@@ -70,6 +71,249 @@ function newSqliteSource (spec) {
             }
         }
     }
+}
+
+/*
+    Reads the portfolio app's PostgreSQL store by shelling out to psql.
+
+    Two things about the real setup forced this, and neither was known when
+    the sqlite reader above was written:
+
+      * the portfolio app (metal-stack) keeps spot in PostgreSQL, inside a
+        Docker container, not in a SQLite file on disk; and
+      * it stores GBP per GRAM, while everything downstream here works in
+        GBP per troy ounce.
+
+    Shelling out to psql rather than adding a driver keeps the zero-dependency
+    promise that makes this tool installable on a Pi with no compiler. It is
+    also still a local read - no HTTP, no domain, no Cloudflare - which was
+    the whole reason for putting this tool on the same machine.
+
+    The connection is opened read-only at the libpq level (PGOPTIONS sets
+    default_transaction_read_only), so a bug here cannot corrupt the
+    portfolio app's data even though the role it connects as could.
+
+    Two series live in that database:
+
+      * spot_tick    - appended every refresh, ~20 minute cadence. This is
+                       the analogue of what the sqlite reader expected, and
+                       the only series fine-grained enough to price a lot
+                       against the moment it closed.
+      * spot_history - one row per day, going back decades. Read only when
+                       includeDaily is set, and only for dates before the
+                       tick series begins. A daily close has no true intraday
+                       timestamp, so those rows are stamped at dailyHourUtc
+                       and marked 'metals.dev-daily' in the source column -
+                       visibly coarser, never silently mixed in.
+*/
+function newPostgresSource (spec) {
+    const gramsPerOz = spec.gramsPerOz === undefined ? 31.1034768 : Number(spec.gramsPerOz)
+    const scale = spec.units === 'gbp_per_oz' ? 1 : gramsPerOz
+    const metal = spec.metalValue === undefined ? 'Au' : spec.metalValue
+    const includeDaily = spec.includeDaily === true
+
+    const tick = Object.assign(
+        { table: 'spot_tick', observedAt: 'priced_at', value: 'gbp_per_g', metal: 'metal' },
+        spec.tick || {}
+    )
+    const daily = Object.assign(
+        { table: 'spot_history', observedOn: 'priced_on', value: 'gbp_per_g', metal: 'metal' },
+        spec.daily || {}
+    )
+
+    /* psql quotes VALUES for us via :'var', but never identifiers. Table and
+       column names come from settings.json, so they are checked rather than
+       trusted. */
+    for (const name of [tick.table, tick.observedAt, tick.value, tick.metal,
+        daily.table, daily.observedOn, daily.value, daily.metal]) {
+        assertIdentifier(name)
+    }
+
+    const sql = buildSpotSql({ tick, daily, includeDaily, dailyHourUtc: spec.dailyHourUtc })
+    const run = spec.run || runPsql   /* injectable so this is testable without a database */
+
+    return {
+        describe () {
+            const where = spec.via === 'psql'
+                ? (spec.host || 'localhost') + '/' + (spec.database || 'postgres')
+                : (spec.service || 'db') + ':' + (spec.database || 'postgres') + ' in ' + (spec.projectDir || '.')
+            return 'postgres:' + where + '#' + tick.table + (includeDaily ? '+' + daily.table : '')
+        },
+        readSince (sinceIso) {
+            const command = buildPsqlCommand(spec, sql, { since: sinceIso, metal })
+            const text = run(command)
+            return parsePsqlCsv(text)
+                .map(fields => normaliseRow({
+                    observedAt: fields[0],
+                    gbpPerOz: Number(fields[1]) * scale,
+                    source: fields[2] === 'daily' ? 'metals.dev-daily' : 'metals.dev'
+                }))
+                .filter(row => row !== null)
+        }
+    }
+}
+
+const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+function assertIdentifier (name) {
+    if (!IDENTIFIER.test(String(name))) {
+        throw new Error('Not a usable PostgreSQL identifier: ' + name +
+            ' (letters, digits and underscore only - it goes into SQL unquoted)')
+    }
+}
+
+/*
+    Timestamps come back formatted rather than in psql's default rendering,
+    because "2026-08-27 14:00:35.68+00" is not ISO 8601 and what a Date
+    constructor makes of it is a matter of opinion. Ask for the one shape
+    that is not.
+*/
+function buildSpotSql (options) {
+    const tick = options.tick
+    const daily = options.daily
+    const hour = Number.isFinite(Number(options.dailyHourUtc)) ? Number(options.dailyHourUtc) : 12
+    const stamp = String(hour).padStart(2, '0') + ':00:00.000'
+
+    const ticks =
+        'SELECT to_char(' + tick.observedAt + ' AT TIME ZONE \'UTC\', \'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"\'),' +
+        ' ' + tick.value + '::float8, \'tick\'' +
+        ' FROM ' + tick.table +
+        ' WHERE ' + tick.metal + ' = :\'metal\' AND ' + tick.observedAt + ' >= :\'since\'::timestamptz'
+
+    if (!options.includeDaily) { return ticks + ' ORDER BY 1' }
+
+    /* Only for the stretch before the tick series starts: where both exist
+       the intraday number is strictly better, and two rows for one day would
+       just give the nearest-observation lookup a worse candidate to pick. */
+    const days =
+        'SELECT to_char(' + daily.observedOn + ', \'YYYY-MM-DD"T"' + stamp + '"Z"\'),' +
+        ' ' + daily.value + '::float8, \'daily\'' +
+        ' FROM ' + daily.table +
+        ' WHERE ' + daily.metal + ' = :\'metal\'' +
+        ' AND ' + daily.observedOn + ' >= (:\'since\'::timestamptz AT TIME ZONE \'UTC\')::date' +
+        ' AND ' + daily.observedOn + ' < (SELECT COALESCE(MIN(' + tick.observedAt + ') AT TIME ZONE \'UTC\', \'infinity\')::date' +
+        ' FROM ' + tick.table + ' WHERE ' + tick.metal + ' = :\'metal\')'
+
+    return ticks + ' UNION ALL ' + days + ' ORDER BY 1'
+}
+
+/*
+    The SQL goes in on stdin rather than after -c. psql only performs :'var'
+    interpolation while lexing script input; a -c string is passed to the
+    server untouched, so the variables would arrive as literal colons and the
+    server would reject them. Feeding stdin is what keeps psql - rather than
+    string concatenation here - responsible for quoting the values.
+
+    -X     ignore ~/.psqlrc, which could otherwise turn on a pager or change
+           the output format under us
+    -t     no header and no row count, just tuples
+    --csv  quoting we can parse unambiguously
+    -f -   read the script from standard input
+*/
+function buildPsqlCommand (spec, sql, params) {
+    const psqlArgs = [
+        '-X', '-q', '-t', '--csv',
+        '-v', 'ON_ERROR_STOP=1',
+        '-v', 'since=' + params.since,
+        '-v', 'metal=' + params.metal,
+        '-U', spec.user || 'postgres',
+        '-d', spec.database || 'postgres',
+        '-f', '-'
+    ]
+
+    const readOnly = '-c default_transaction_read_only=on'
+
+    if (Array.isArray(spec.command) && spec.command.length > 0) {
+        return {
+            file: spec.command[0],
+            args: spec.command.slice(1).concat(psqlArgs),
+            cwd: spec.projectDir,
+            env: { PGOPTIONS: readOnly },
+            input: sql
+        }
+    }
+
+    if (spec.via === 'psql') {
+        const connection = []
+        if (spec.host !== undefined) { connection.push('-h', String(spec.host)) }
+        if (spec.port !== undefined) { connection.push('-p', String(spec.port)) }
+        return {
+            file: spec.psql || 'psql',
+            args: connection.concat(psqlArgs),
+            cwd: spec.projectDir,
+            env: { PGOPTIONS: readOnly },
+            input: sql
+        }
+    }
+
+    /* Default: the portfolio app's own compose project, which is where its
+       database actually lives and the only place its credentials are already
+       set up. */
+    return {
+        file: spec.docker || 'docker',
+        args: ['compose', 'exec', '-T', '-e', 'PGOPTIONS=' + readOnly, spec.service || 'db', 'psql']
+            .concat(psqlArgs),
+        cwd: spec.projectDir,
+        env: {},
+        input: sql
+    }
+}
+
+function runPsql (command) {
+    const { spawnSync } = require('node:child_process')
+    const result = spawnSync(command.file, command.args, {
+        input: command.input,
+        cwd: command.cwd,
+        env: Object.assign({}, process.env, command.env),
+        encoding: 'utf8',
+        maxBuffer: 64 * 1024 * 1024
+    })
+
+    if (result.error) {
+        throw new Error('Could not run ' + command.file + ': ' + result.error.message)
+    }
+    if (result.status !== 0) {
+        throw new Error(command.file + ' exited ' + result.status + ': ' +
+            String(result.stderr || '').trim())
+    }
+    return result.stdout
+}
+
+/* psql --csv quotes any field containing a comma, quote or newline, and
+   doubles embedded quotes. Small enough to parse honestly. */
+function parsePsqlCsv (text) {
+    const rows = []
+    let fields = []
+    let field = ''
+    let quoted = false
+    let started = false
+
+    for (let i = 0; i < text.length; i++) {
+        const char = text[i]
+        if (quoted) {
+            if (char === '"') {
+                if (text[i + 1] === '"') { field += '"'; i++ } else { quoted = false }
+            } else { field += char }
+            continue
+        }
+        if (char === '"') { quoted = true; started = true; continue }
+        if (char === ',') { fields.push(field); field = ''; started = true; continue }
+        if (char === '\n' || char === '\r') {
+            if (started || field.length > 0 || fields.length > 0) {
+                fields.push(field)
+                rows.push(fields)
+                fields = []
+                field = ''
+                started = false
+            }
+            if (char === '\r' && text[i + 1] === '\n') { i++ }
+            continue
+        }
+        field += char
+        started = true
+    }
+    if (started || field.length > 0 || fields.length > 0) { fields.push(field); rows.push(fields) }
+    return rows
 }
 
 /* Reads a JSON file the portfolio app writes - an array of observations,
@@ -135,7 +379,7 @@ function normaliseRow (row) {
         observedAt,
         gbpPerOz,
         usdPerOz: Number.isFinite(Number(row.usdPerOz)) ? Number(row.usdPerOz) : null,
-        source: 'metals.dev'
+        source: row.source || 'metals.dev'
     }
 }
 
@@ -153,6 +397,9 @@ function toIso (value) {
 
 exports.toIso = toIso
 exports.normaliseRow = normaliseRow
+exports.buildSpotSql = buildSpotSql
+exports.buildPsqlCommand = buildPsqlCommand
+exports.parsePsqlCsv = parsePsqlCsv
 
 /* ------------------------------------------------------------ mirror */
 

@@ -104,7 +104,12 @@ Being honest about what cannot be known is most of the value here.
 Reads the metals.dev feed your portfolio app already collects on the same Pi,
 rather than polling metals.dev again. Two pollers would drift, and the portfolio
 and this tool would quote different premiums for the same metal on the same day.
-Point `spot.path` at the portfolio store and adjust the column names.
+
+The portfolio app keeps it in PostgreSQL, inside Docker, in GBP per gram, so
+that is what the default reader speaks — through `psql` rather than a driver, to
+keep the dependency count at zero, read-only, and still entirely local. Readers
+for a SQLite file, a JSON file and an HTTP endpoint sit behind the same
+interface. See [SETUP.md](SETUP.md) §7.
 
 ## Setup for live data
 

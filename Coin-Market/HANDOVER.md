@@ -1,9 +1,12 @@
 # Handover
 
-**You are picking up a project that has been designed, built and tested, but
-never deployed.** This document is written for a Claude Code session running on
-the user's laptop — which, unlike the session that built this, is on the same LAN
-as the Pi and can actually reach it.
+**Deployed and running against the real gold feed; not yet pointed at eBay.**
+Steps 1 and 2 below are done. Step 3 onward is blocked on eBay credentials,
+which only the user can create.
+
+This document was written for a Claude Code session on the user's laptop, which
+— unlike the session that built this — is on the same LAN as the Pi. That
+session has now happened; what it found is recorded below.
 
 Read `README.md` for what the tool does and `SETUP.md` / `DEPLOY.md` for the
 detailed procedures. This file is the state of play and the order of work.
@@ -15,39 +18,54 @@ before that has happened.
 
 The build happened in a cloud container with **no route to the LAN** (verified:
 no interface, no default route, no path to `192.168.68.51:22`) and **an egress
-policy blocking every `ebay.com` host**. So nothing has ever been run against
-real eBay or real hardware. Everything below marked "unverified" is unverified
-for that reason, not through carelessness.
+policy blocking every `ebay.com` host**. So nothing had ever been run against
+real eBay or real hardware. Anything still marked "unverified" is unverified for
+that reason, not through carelessness.
+
+The hardware half of that is now settled — see State. **eBay is not**: no call
+has yet been made to any eBay host, so all three assumptions below stand exactly
+where the build session left them.
 
 ## The user's setup
 
 | | |
 |---|---|
 | Pi | `192.168.68.51`, always-on, on the LAN |
-| Portfolio app | metalhead.gold, runs on the same Pi |
+| Pi login | `stacker@192.168.68.51`, key `~/.ssh/id_metalpi`, host alias **`metalpi`** |
+| Pi OS | Debian 13 (trixie), arm64, 49 GB free, Node v24.20.0 |
+| Portfolio app | metalhead.gold — `metal-stack`, Docker Compose in `~/apps/metal-stack`, app + `postgres:16` |
 | Public exposure | **cloudflared tunnel**, behind a Cloudflare gate |
-| Gold price | paid metals.dev feed, stored on the Pi, ~20-minute cadence |
+| Gold price | paid metals.dev feed, in that Postgres, 20-minute cadence |
 | Market | eBay UK (`EBAY_GB`), GBP throughout |
 | eBay account | dev account approved; **sandbox** keyset exists, production not yet created |
 | User's workstation | **Windows**, PowerShell 5.1 (`&&` and `\` continuations are unavailable) |
 
 You are most likely running on that Windows machine and driving the Pi over SSH
-(`ssh pi@192.168.68.51` — Windows 10/11 ships an OpenSSH client). Keep the two
+(`ssh metalpi` — the host entry already exists). Keep the two
 straight: commands that run **on the Pi** are bash; commands on the workstation
 are PowerShell unless the user is in WSL. Every code block in these docs that is
 not explicitly marked `powershell` is bash, meant for the Pi.
 
 ## State
 
-- Branch `claude/ebay-lot-tracking-pricing-2cxogj`, latest commit adds this file.
-- **72 tests pass.** `npm test` — no `npm install` needed, there are no
-  dependencies (`node:sqlite` and `node:test` are built into Node 22.5+).
-- **Nothing is deployed and nothing is running**, anywhere.
-- The demo works end to end: `node bin/cli.js demo` builds a synthetic market and
-  reports ~6.6% auction clearing vs ~24% BIN asks — a ~17pp spread, which is the
-  phenomenon the tool exists to measure.
+- Branch `claude/ebay-lot-tracking-pricing-2cxogj`.
+- **85 tests pass**, on the workstation and on the Pi. `npm test` — no
+  `npm install` needed, there are no dependencies (`node:sqlite` and `node:test`
+  are built into Node 22.5+).
+- **On the Pi**: Node **v24.20.0** installed under `/usr/local/lib/nodejs`
+  (official arm64 tarball, checksum verified — apt only offers 20.19 and there
+  was no Node at all). Sparse clone at `~/coin-market-repo/Coin-Market`, 2.0 MB.
+  `npm test` and `demo` both pass there.
+- The demo works end to end on the Pi: ~6.6% auction clearing vs ~24.2% BIN
+  asks — a 17.6pp spread, which is the phenomenon the tool exists to measure.
+- **The real gold feed is connected and mirrored.** 876 observations, 20-minute
+  cadence, gold at GBP 3,372/oz. See below.
+- **eBay is not configured** and no collector is running. `config/settings.json`
+  exists on the Pi with the real spot block and eBay placeholders.
 
 ## Three assumptions the design rests on, none yet verified
+
+*Unchanged: reaching the Pi settled nothing about eBay.*
 
 Settle these early; each has a fallback but two of them change the architecture.
 
@@ -78,31 +96,54 @@ validation of the market assumptions.
 
 ## Order of work
 
-### 1. Deploy and prove it runs (no eBay, no Cloudflare)
+### 1. Deploy and prove it runs — **DONE**
 
-Follow `DEPLOY.md`. Check `node --version` **first** — the tool needs 22.5+ and
-Raspberry Pi OS ships 18 or 20 via apt; the CLI refuses to start with install
-instructions rather than a cryptic missing-module error. Sparse-clone just this
-folder (2 MB, against the repo's ~630 MB). Then `npm test` and
-`node bin/cli.js demo`.
+Node v24.20.0 from the official arm64 tarball (apt offers 20.19; the Pi had none
+at all), sparse clone at `~/coin-market-repo/Coin-Market`, 85 tests green,
+`demo` reproducing the ~17.6pp spread. `DEPLOY.md` §1 now carries the sequence
+that actually worked, and §1a the DNS flakiness that made it need retries.
 
-### 2. Point it at the real gold feed
+### 2. Point it at the real gold feed — **DONE, and it changed the design**
 
-The one genuinely unknown local detail: **where the portfolio app stores its
-metals.dev data, and in what schema.** Go and look — it is on the same Pi. Then
-set `spot.path`, `spot.table` and `spot.columns` in `config/settings.json` and
-run `node bin/cli.js spot` to mirror it.
+The assumption was a SQLite file on disk. What is actually there:
 
-This reads the file **off local disk**. No HTTP, no domain, no Cloudflare. That
-is precisely why running on the same Pi was chosen, and it is worth not
-re-litigating: two independent metals.dev pollers would drift, and the portfolio
-and the coin tracker would then quote different premiums for the same metal on
-the same day.
+**PostgreSQL 16, in a Docker container, in GBP per GRAM.** Database `metalstack`
+in the `metal-stack` compose project at `~/apps/metal-stack`, written by
+`metalstack.market.refresh` on `metalstack-spot.timer` every ~20 minutes. Three
+tables:
 
-Also worth reporting back: how far the stored series goes back, since that bounds
-how much premium history can be reconstructed.
+| table | shape | span |
+|---|---|---|
+| `spot_price` | one live row per metal, updated in place | now |
+| `spot_tick` | intraday stream, appended each refresh | **2026-08-05 →**, 875 gold rows |
+| `spot_history` | one row per day, upserted for today | **1968-04-01 →**, 15,753 gold rows |
 
-### 3. eBay, application token only
+So `src/spot/spot.js` gained a **`postgres` source** alongside `sqlite`, `json`
+and `http`. It shells out to `psql` through the app's own compose project rather
+than adding a driver — that keeps the zero-dependency promise, and it is still a
+**local** read: no HTTP, no domain, no Cloudflare, which was the whole reason
+for putting this tool on the same Pi. The connection carries
+`default_transaction_read_only=on`, so a bug here cannot corrupt the portfolio
+app's data even though the role it connects as could. Grams are converted to
+troy ounces on the way in.
+
+`spot_tick` is what gets mirrored: it is the only series fine-grained enough to
+price a lot against the moment it closed, and the 20-minute cadence sits inside
+the 90-minute tolerance. `spot_history` is available behind `includeDaily`, for
+the stretch *before* the ticks start — those rows are stamped at `dailyHourUtc`
+and marked `metals.dev-daily`, so a premium priced off a daily close is visibly
+coarser rather than passing for an intraday observation. It is **off** by
+default, since eBay only reaches back 90 days anyway.
+
+First mirror: **876 observations, 2026-08-05 → now, gold GBP 3,372/oz**,
+matching the portfolio app's live figure exactly.
+
+**How far back premium history can be reconstructed** is therefore not bounded
+by spot at all — daily gold goes back to 1968. It is bounded by eBay: discovery
+only sees live listings, and `GetItem` only reaches 90 days. In practice the
+tool prices lots it watched close, so the series starts when the collector does.
+
+### 3. eBay, application token only — **NEXT, and blocked on you**
 
 `node bin/cli.js init --app-id=... --cert-id=... --dev-id=... --env=sandbox`
 then `node bin/cli.js smoke`. This alone gives discovery, classification,
@@ -175,11 +216,13 @@ code comments too.
 
 ## What to report back
 
-The user is tracking this conversationally, not by reading diffs. Useful:
+The user is tracking this conversationally, not by reading diffs. Still useful,
+once step 3 has happened:
 
-- `node --version` on the Pi, and whether step 1 worked
-- the portfolio app's spot store path/schema, and how far back it goes
 - the full `smoke` output, plus `smoke-shapes.json` — the actual eBay response
   field names, which is what lets the tolerant readers be tightened. That file
   contains no credentials.
 - which of the three assumptions above survived contact with production
+
+Already answered: Node on the Pi (there was none; v24.20.0 now), whether step 1
+worked (yes), and the portfolio app's spot store and its depth (see step 2).

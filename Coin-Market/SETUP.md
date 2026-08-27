@@ -85,11 +85,16 @@ Write the config from your keys rather than hand-editing JSON:
 Run this **on the Pi** (bash), where the tool will actually live:
 
 ```bash
-node bin/cli.js init --app-id=<App ID> --cert-id=<Cert ID> --dev-id=<Dev ID> --env=sandbox --spot-db=/home/pi/metalhead/data/prices.db
+node bin/cli.js init --app-id=<App ID> --cert-id=<Cert ID> --dev-id=<Dev ID> --env=sandbox --spot-project=/home/stacker/apps/metal-stack
 ```
 
 Kept on one line deliberately: it is the same command whatever shell you type it
 from, with no continuation syntax to get wrong.
+
+**On the Pi**, though — not from Git Bash on the Windows workstation. Git Bash
+rewrites an absolute Unix path in an argument into a Windows one, so
+`--spot-project=/home/stacker/...` silently becomes
+`C:/Program Files/Git/home/stacker/...` and the setting is quietly wrong.
 
 That writes `config/settings.json` at mode 0600 (gitignored), and generates two
 values you should not choose by hand: the seller-hash salt, which is what stops
@@ -168,18 +173,45 @@ not, snapshotting gets ~200× more expensive and the call budget needs replannin
 
 ## 7. Point it at your gold feed
 
+The portfolio app (`metal-stack`) keeps spot in **PostgreSQL, inside Docker, in
+GBP per gram** — not in a SQLite file in GBP per ounce, which is what the first
+draft of this tool assumed. The reader that matches what is actually there:
+
 ```json
 "spot": {
-  "type": "sqlite",
-  "path": "/home/pi/metalhead/data/prices.db",
-  "table": "spot_prices",
-  "columns": { "observedAt": "timestamp", "gbpPerOz": "gbp_per_oz" }
+  "type": "postgres",
+  "projectDir": "/home/stacker/apps/metal-stack",
+  "service": "db",
+  "user": "metalstack",
+  "database": "metalstack",
+  "metalValue": "Au",
+  "units": "gbp_per_gram",
+  "includeDaily": false,
+  "toleranceMinutes": 90
 }
 ```
 
-Reads the metals.dev feed the portfolio app already collects, rather than polling
-metals.dev again — two pollers would drift and the two tools would quote
-different premiums for the same metal on the same day.
+It shells out to `psql` through the portfolio app's own compose project rather
+than adding a Postgres driver — that keeps the zero-dependency promise that
+makes this installable on a Pi with no compiler, and it is still a **local**
+read: no HTTP, no domain, no Cloudflare. The connection is opened with
+`default_transaction_read_only=on`, so a bug here cannot corrupt the portfolio
+app's data even though the role it connects as could.
+
+Reading that feed rather than polling metals.dev again is deliberate — two
+pollers would drift and the two tools would quote different premiums for the
+same metal on the same day.
+
+**Which series.** `spot_tick` is the ~20-minute intraday stream and the only one
+fine enough to price a lot against the moment it closed; that is what gets
+mirrored. `spot_history` is one row per day going back to 1968. Set
+`includeDaily` to also mirror the stretch *before* the ticks begin — those rows
+are stamped at `dailyHourUtc` (a daily close has no true intraday timestamp) and
+carry the source `metals.dev-daily`, so a premium priced off one is visibly
+coarser rather than passing for a 20-minute observation.
+
+If your portfolio store is a SQLite file instead, `--spot-db=/path/to.db` at
+`init` switches the whole block over to the `sqlite` reader.
 
 ```bash
 node bin/cli.js spot            # mirror it, check the counts look right

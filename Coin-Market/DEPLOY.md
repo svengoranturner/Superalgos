@@ -12,15 +12,54 @@ node --version
 
 You need **22.5 or newer**. The tool uses `node:sqlite`, which landed in Node
 22.5 — that is why it has no dependencies and needs no compiler on a Pi.
-Raspberry Pi OS still ships 18 or 20 through `apt`, so this often fails.
+
+On the Pi as found, there was **no Node at all**, and `apt` offers 20.19
+(Debian 13 trixie) — too old. What was actually installed, and what these
+instructions are now verified against, is the official arm64 build unpacked
+under `/usr/local`, checksum verified:
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt-get install -y nodejs
+V=v24.20.0
+cd /tmp
+curl -fsSL --retry 5 --retry-all-errors -O https://nodejs.org/dist/$V/node-$V-linux-arm64.tar.xz
+curl -fsSL --retry 5 --retry-all-errors https://nodejs.org/dist/$V/SHASUMS256.txt -o SHASUMS256.txt
+grep "node-$V-linux-arm64.tar.xz" SHASUMS256.txt | sha256sum -c -
+sudo mkdir -p /usr/local/lib/nodejs
+sudo tar -xJf node-$V-linux-arm64.tar.xz -C /usr/local/lib/nodejs
+sudo ln -sfn /usr/local/lib/nodejs/node-$V-linux-arm64 /usr/local/lib/nodejs/current
+sudo ln -sfn /usr/local/lib/nodejs/current/bin/node /usr/local/bin/node
+sudo ln -sfn /usr/local/lib/nodejs/current/bin/npm /usr/local/bin/npm
+sudo ln -sfn /usr/local/lib/nodejs/current/bin/npx /usr/local/bin/npx
+node --version
 ```
 
-If you skip this, the CLI stops with these instructions rather than a cryptic
-missing-module error.
+The `current` symlink is the point of the layout: upgrading later is unpacking
+the next version beside it and repointing one link, and backing out is
+repointing it again. `apt` never gets an opinion about Node.
+
+The `--retry` flags are not decoration. The Pi resolves DNS through the router
+alone, and `nodejs.org` and `github.com` intermittently fail to resolve — every
+long-running fetch on this box wants retries (see *DNS* below).
+
+If you skip Node entirely, the CLI stops with install instructions rather than a
+cryptic missing-module error.
+
+## 1a. DNS
+
+Worth knowing before anything blames the network on your behalf. `/etc/resolv.conf`
+lists one nameserver — the router, `192.168.68.1` — and lookups to it fail
+intermittently: a `git clone` and a `curl` both died on *Could not resolve host*
+mid-run, then the same name resolved 10/10 times a second later.
+
+Nothing here was changed, because it is your network. But the collector talks to
+eBay every hour, and a name that fails to resolve looks exactly like an API
+outage in the logs. Adding a second resolver on the Pi is a one-line fix if it
+gets annoying:
+
+```bash
+sudo nmcli connection modify "Wired connection 1" ipv4.dns "192.168.68.1 1.1.1.1"
+sudo nmcli connection up "Wired connection 1"
+```
 
 ## 2. Clone just this folder
 
@@ -93,7 +132,7 @@ Then, from the `Coin-Market` directory, start it and say:
 ## 3. Run it — there is nothing to install
 
 ```bash
-npm test          # 72 tests, no npm install needed
+npm test          # 85 tests, no npm install needed
 node bin/cli.js demo
 ```
 
@@ -118,8 +157,11 @@ node bin/cli.js dashboard
 From your laptop, tunnel to it over SSH:
 
 ```bash
-ssh -L 34260:127.0.0.1:34260 pi@<your-pi>
+ssh -L 34260:127.0.0.1:34260 stacker@192.168.68.51
 ```
+
+There is already a `metalpi` host entry in the workstation's `~/.ssh/config`, so
+`ssh -L 34260:127.0.0.1:34260 metalpi` does the same thing.
 
 Then open `http://127.0.0.1:34260` in your browser. Nothing is exposed publicly
 and Cloudflare is not involved.
@@ -128,9 +170,12 @@ and Cloudflare is not involved.
 
 Roughly in order of how much they unlock:
 
-1. **Point it at your real gold feed** — `spot.path` at the portfolio app's
-   database. Coin Market reads that file **off local disk**; no HTTP, no domain,
-   no Cloudflare. It is why running on the same Pi was the right call.
+1. **Point it at your real gold feed** — done, and see `SETUP.md` §7 for what
+   was found. The portfolio app keeps spot in **PostgreSQL inside Docker, in GBP
+   per gram**, not the SQLite file this originally assumed. Coin Market reads it
+   with `psql` through the app's own compose project: still a **local** read, no
+   HTTP, no domain, no Cloudflare, and the connection is opened read-only. It is
+   why running on the same Pi was the right call.
 2. **eBay application keys** — discovery, classification, snapshots and the
    uplift curve all work with the application token alone. See `SETUP.md`.
 3. **The account-deletion endpoint** — the only piece that must be publicly
