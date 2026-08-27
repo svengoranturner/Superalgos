@@ -6,3 +6,4 @@ demo.db-*
 *.db-wal
 report.html
 node_modules/
+smoke-shapes.json

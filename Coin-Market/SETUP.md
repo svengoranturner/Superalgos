@@ -80,13 +80,36 @@ node bin/cli.js notify-check
 
 ## 3. Application token — you now have a working tool
 
-Put the production App ID and Cert ID into `config/settings.json` as `clientId`
-and `clientSecret`. That is enough for the Browse API: discovery, classification,
-snapshots, and the closing-uplift curve.
+Write the config from your keys rather than hand-editing JSON:
 
 ```bash
-node bin/cli.js doctor
+node bin/cli.js init \
+  --app-id=<App ID>   --cert-id=<Cert ID>   --dev-id=<Dev ID> \
+  --env=sandbox       --spot-db=/home/pi/metalhead/data/prices.db
 ```
+
+That writes `config/settings.json` at mode 0600 (gitignored), and generates two
+values you should not choose by hand: the seller-hash salt, which is what stops
+stored seller hashes being reversible by anyone holding a copy of the database,
+and the account-deletion verification token.
+
+Then probe eBay for real:
+
+```bash
+node bin/cli.js smoke          # every API path, pass/fail/unknown per capability
+node bin/cli.js doctor         # the narrower load-bearing checks
+```
+
+`smoke` reports **UNKNOWN** rather than a false green where the environment
+genuinely cannot answer — sandbox has no real coin listings, so it can prove the
+client is correctly built and nothing whatsoever about the coin market. It also
+writes `smoke-shapes.json`: the actual field names eBay returned on ItemSummary
+and inside `conditionDescriptors`. Several readers are written tolerantly
+because eBay documents those ambiguously, and that file is what lets them be
+tightened to reality. It contains no credentials.
+
+Re-run `smoke` after flipping `environment` to `production`, and any time eBay
+announces a change.
 
 ## 4. RuName (only needed for final sale prices)
 

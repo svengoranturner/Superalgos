@@ -366,6 +366,94 @@ COMMANDS['notify-check'] = {
     }
 }
 
+COMMANDS.init = {
+    describe: 'Write config/settings.json from your eBay keys (no hand-editing JSON)',
+    async run (args) {
+        const flags = {}
+        for (const arg of args) {
+            const match = arg.match(/^--([a-zA-Z-]+)=([\s\S]*)$/)
+            if (match !== null) { flags[match[1]] = match[2] }
+        }
+
+        const required = ['app-id', 'cert-id', 'dev-id']
+        const missing = required.filter(name => flags[name] === undefined)
+        if (missing.length > 0) {
+            console.log('Usage:')
+            console.log('  node bin/cli.js init --app-id=... --cert-id=... --dev-id=... \\')
+            console.log('      [--env=sandbox|production] [--marketplace=EBAY_GB] [--spot-db=/path/to/prices.db]')
+            console.log('')
+            console.log('Missing: ' + missing.join(', '))
+            process.exitCode = 1
+            return
+        }
+
+        const target = PATH.join(CONFIG.ROOT, 'config', 'settings.json')
+        const template = JSON.parse(
+            FS.readFileSync(PATH.join(CONFIG.ROOT, 'config', 'settings.example.json'), 'utf8'))
+
+        /* Prose keys in the example file are documentation, not settings. */
+        for (const key of Object.keys(template)) {
+            if (key.startsWith('_')) { delete template[key] }
+        }
+
+        template.ebay.clientId = flags['app-id']
+        template.ebay.clientSecret = flags['cert-id']
+        template.ebay.devId = flags['dev-id']
+        template.ebay.environment = flags.env || 'sandbox'
+        template.ebay.marketplaceId = flags.marketplace || 'EBAY_GB'
+        if (flags.runame !== undefined) { template.ebay.ruName = flags.runame }
+        if (flags['spot-db'] !== undefined) { template.spot.path = flags['spot-db'] }
+
+        /* A salt that is generated, not left as the placeholder - it is
+           what keeps stored seller hashes from being reversible by anyone
+           holding a copy of the database. */
+        template.sellerSalt = require('node:crypto').randomBytes(24).toString('base64url')
+        template.ebay.accountDeletion.verificationToken =
+            require('../src/ebay/notifications.js').generateToken()
+
+        if (FS.existsSync(target) && flags.force === undefined) {
+            console.log(target + ' already exists. Pass --force= to overwrite.')
+            process.exitCode = 1
+            return
+        }
+
+        FS.writeFileSync(target, JSON.stringify(template, null, 2) + '\n', { mode: 0o600 })
+        console.log('Wrote ' + target + ' (mode 0600, gitignored)')
+        console.log('')
+        console.log('  environment        : ' + template.ebay.environment)
+        console.log('  marketplace        : ' + template.ebay.marketplaceId)
+        console.log('  seller salt        : generated')
+        console.log('  deletion token     : generated (register it with eBay)')
+        console.log('  spot store         : ' + template.spot.path)
+        console.log('')
+        console.log('Next:  node bin/cli.js smoke')
+    }
+}
+
+COMMANDS.smoke = {
+    describe: 'Probe every eBay API path and report pass/fail/unknown per capability',
+    async run (args) {
+        const settings = CONFIG.load()
+        const SMOKE = require('../src/ebay/smoke.js')
+
+        const probeItemId = args.find(a => /^\d{9,}$/.test(a)) || process.env.COIN_MARKET_PROBE_ITEM || null
+        const report = await SMOKE.run(settings, { probeItemId })
+
+        console.log(SMOKE.format(report))
+
+        /* The response shapes matter as much as the verdicts: several
+           readers were written tolerantly because eBay documents these
+           ambiguously. Dumped so they can be inspected or shared. */
+        const dump = PATH.join(CONFIG.ROOT, 'smoke-shapes.json')
+        FS.writeFileSync(dump, JSON.stringify(report.shapes, null, 2) + '\n')
+        console.log('  Response shapes written to ' + dump)
+        console.log('  (no credentials in that file - safe to share)')
+        console.log('')
+
+        if (report.results.some(r => r.status === 'FAIL')) { process.exitCode = 1 }
+    }
+}
+
 /* ---------------------------------------------------------- doctor */
 
 COMMANDS.doctor = {
