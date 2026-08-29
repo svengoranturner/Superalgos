@@ -1,12 +1,14 @@
 # Handover
 
-**Deployed, reading the real gold feed, and talking to eBay sandbox.**
-Steps 1, 2 and 3 below are done. Step 4 onward needs a production keyset and a
-RuName, which only the user can create.
+**Deployed, reading the real gold feed, talking to eBay sandbox, and with the
+account-deletion endpoint live on the public internet.** Steps 1-4 below are
+done. Step 5 needs a **RuName** and, for anything that matters, a **production
+keyset** — both of which only the user can create.
 
 The sandbox run proves the client is built correctly and answers **none** of the
-three market assumptions — sandbox has no real coin listings. That is the whole
-reason step 4 exists.
+three market assumptions — sandbox has no real coin listings. Production is the
+only thing that can move them, and the deletion endpoint (step 4) existed to
+unblock exactly that.
 
 This document was written for a Claude Code session on the user's laptop, which
 — unlike the session that built this — is on the same LAN as the Pi. That
@@ -42,7 +44,8 @@ them.
 | Public exposure | **cloudflared tunnel**, behind a Cloudflare gate |
 | Gold price | paid metals.dev feed, in that Postgres, 20-minute cadence |
 | Market | eBay UK (`EBAY_GB`), GBP throughout |
-| eBay account | dev account approved; **sandbox** keyset exists, production not yet created |
+| eBay account | dev account approved; **sandbox** keyset live, production not yet created |
+| Deletion endpoint | `https://metalhead.gold/ebay/account-deletion` — live, verified, Access-bypassed |
 | User's workstation | **Windows**, PowerShell 5.1 (`&&` and `\` continuations are unavailable) |
 
 You are most likely running on that Windows machine and driving the Pi over SSH
