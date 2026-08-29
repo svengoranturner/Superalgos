@@ -227,9 +227,31 @@ Verified from the Pi, through the public URL:
 - `https://metalhead.gold/` still → **302** to the Access login, so the live site
   remains gated
 
-**Remaining, and only the user can do it:** register the endpoint URL and
-verification token in eBay's Marketplace Account Deletion form, then create the
-production keyset.
+**Remaining, and only the user can do it — and the order is the opposite of
+what you would guess.** Checked against the live portal and eBay's own guide:
+
+1. **Create the Production keyset first**, at `developer.ebay.com/my/keys`.
+   The subscription form does not exist until it does. On the **Sandbox**
+   keyset's Alerts & Notifications page the Event Notification Delivery Method
+   section offers only *Platform Notifications (push)* — there is no Marketplace
+   Account Deletion radio at all — and with Production selected and no keyset,
+   the page just says "select or create a keyset".
+2. Then **Notifications** next to the production App ID →
+   `developer.ebay.com/my/push?env=production` → select the **Marketplace
+   Account Deletion** radio → alert email → *Save* → endpoint URL and
+   verification token → *Save*, which fires the challenge immediately.
+
+The keyset is inert until this is done. eBay: *"New third-party developers ...
+must subscribe to or opt out ... before they make their first production API
+call. Once the new developer's application is subscribed ... the keyset/App ID
+is activated."* So the endpoint being ready first, as it now is, is the right
+way round — there is simply no form to put it in until the keyset exists.
+
+Everything eBay's guide requires, this endpoint already does, verified:
+`challengeCode + verificationToken + endpoint` in that order, `application/json`,
+an https URL with no localhost, and a 43-character token from their allowed
+alphabet. Their guide also warns that hand-built response strings often carry a
+BOM and fail — `newHandler` uses `JSON.stringify`, so that cannot happen here.
 
 ### 5. User token, then run it continuously
 
