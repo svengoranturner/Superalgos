@@ -3,9 +3,9 @@
 metalhead.gold is already served through a `cloudflared` tunnel. This adds
 **one path** to it, and nothing else about the tool becomes publicly reachable.
 
-> **Not verified on your setup.** These were written without access to your
-> `config.yml` or Cloudflare account. Read your existing config first and merge
-> — do not overwrite it.
+> **Now verified against the real setup, and section 1 was wrong.** The
+> original assumed a locally-configured tunnel with a `config.yml` to merge
+> into. This Pi does not have one.
 
 ## Why this path has to be public at all
 
@@ -18,50 +18,50 @@ To validate the subscription, eBay sends an **unauthenticated GET** carrying a
 challenge code. That is the whole reason this one path cannot sit behind your
 Access gate.
 
-## 1. Ingress rule
+## 1. The route — in the dashboard, not a file
 
-Find your tunnel config — usually `/etc/cloudflared/config.yml` or
-`~/.cloudflared/config.yml`. Add the **specific path rule before** any catch-all
-for the same hostname; cloudflared matches ingress rules **in order** and the
-first match wins, so a rule placed after your existing `metalhead.gold` entry
-will never be reached.
+This tunnel is **remotely managed**. `cloudflared.service` runs:
 
-```yaml
-ingress:
-  # eBay account-deletion endpoint - must come BEFORE the metalhead.gold rule
-  - hostname: metalhead.gold
-    path: ^/ebay/account-deletion$
-    service: http://localhost:34261
-
-  # your existing rules follow unchanged
-  - hostname: metalhead.gold
-    service: http://localhost:PORT_OF_PORTFOLIO_APP
-
-  - service: http_status:404
+```
+/usr/bin/cloudflared --no-autoupdate tunnel run --token-file /etc/cloudflared/token
 ```
 
-Validate and restart:
+With `--token-file` there is no local ingress config: `/etc/cloudflared/` holds
+only the token, and the routing lives in Cloudflare. So there is nothing to
+merge, and `cloudflared tunnel ingress validate` / `ingress rule` have no config
+to read — they do not apply here. Any recipe telling you to edit `config.yml` is
+for a different kind of tunnel.
 
-```bash
-cloudflared tunnel ingress validate
-sudo systemctl restart cloudflared
-```
+Add the route in **Zero Trust → Networks → Tunnels →** your tunnel **→ Public
+Hostnames**:
 
-`ingress validate` also has a useful companion for checking rule ordering:
+| Field | Value |
+|---|---|
+| Subdomain | *(blank)* |
+| Domain | `metalhead.gold` |
+| Path | `ebay/account-deletion` |
+| Service | `HTTP` → `localhost:34261` |
 
-```bash
-cloudflared tunnel ingress rule https://metalhead.gold/ebay/account-deletion
-```
+**Order matters and the dashboard list is the order.** The existing bare
+`metalhead.gold` entry points at the portfolio app on `127.0.0.1:8000` and will
+swallow every path if it comes first. Drag the new entry **above** it.
 
-It prints which rule that URL matches. If it names your portfolio app rather
-than `localhost:34261`, the ordering is wrong.
+Note the Path field takes no leading slash in the dashboard.
 
 ## 2. Access bypass — the step that is easy to miss
 
-If metalhead.gold is behind **Cloudflare Access**, the challenge request will be
-intercepted and eBay will see a login page instead of the JSON it expects. The
+**Confirmed necessary here, by measurement.** metalhead.gold is behind Cloudflare
+Access (team domain `late-wave-cdce.cloudflareaccess.com`), and an unauthenticated
+GET to the target path today returns:
+
+```
+HTTP/2 302
+location: https://late-wave-cdce.cloudflareaccess.com/cdn-cgi/access/login/metalhead.gold?...
+```
+
+That is precisely what eBay would receive instead of the JSON it expects. The
 failure surfaces only as "endpoint validation failed", which names neither the
-gate nor the path.
+gate nor the path — so do this step before touching eBay's form.
 
 In the Cloudflare dashboard: **Zero Trust → Access → Applications**.
 
@@ -84,9 +84,11 @@ exposes no data and offers nothing to an unauthenticated caller.
 On the Pi:
 
 ```bash
-node bin/cli.js notify-token          # generate the verification token, put it in settings.json
-node bin/cli.js notify-endpoint       # leave running
+sudo systemctl status coin-market-notify    # installed and enabled; listens on 127.0.0.1:34261
 ```
+
+`init` already generated the verification token and endpoint URL into
+`settings.json`, so `notify-token` is only needed if you want to rotate it.
 
 From anywhere:
 
@@ -115,9 +117,11 @@ compares. It names the likely cause on mismatch.
 reaches must be byte-identical. A trailing slash, `http` vs `https`, or a `www.`
 prefix all produce a valid-looking hash that eBay rejects.
 
-**Ingress rules match in order.** A path rule placed after a hostname catch-all
-for the same hostname is dead. `cloudflared tunnel ingress rule <url>` tells you
-which rule wins.
+**Routes match in order.** A path entry listed after the bare-hostname entry for
+the same hostname is dead — the catch-all wins and eBay reaches the portfolio
+app instead. On a token-managed tunnel the order is the dashboard list order, so
+check it by eye; `cloudflared tunnel ingress rule` needs a local config file and
+has none to read here.
 
 ## Nothing else is exposed
 

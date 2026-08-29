@@ -31,11 +31,26 @@ which is where NodeSource installs it:
 which node
 ```
 
+**On this Pi the four values are known**, because `coin-market-notify` is now
+installed and running with them:
+
+| Directive | Value here |
+|---|---|
+| `User=` / `Group=` | `stacker` |
+| `WorkingDirectory=` | `/home/stacker/coin-market-repo/Coin-Market` |
+| `ExecStart=` | `/usr/local/bin/node bin/cli.js ...` |
+
+Node is **not** at `/usr/bin/node` — it was installed from the official arm64
+tarball under `/usr/local/lib/nodejs`, with `/usr/local/bin/node` symlinked to it.
+
 ## What was and was not verified
 
 The unit files pass `systemd-analyze verify` with no syntax or directive errors.
-They have **not** been run on real hardware, and the `ExecStart` paths are
-placeholders until you edit them.
+
+`coin-market-notify` has now **been run on the real Pi**: installed, enabled,
+listening on 127.0.0.1:34261, and answering both a challenge GET and a deletion
+POST correctly. The collector and dashboard units are still unrun, and their
+`ExecStart` paths are still placeholders until you edit them.
 
 Verification caught one genuine bug worth knowing about, because it is invisible
 at runtime: `StartLimitIntervalSec` was originally in `[Service]`, where systemd

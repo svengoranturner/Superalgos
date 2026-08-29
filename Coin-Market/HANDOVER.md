@@ -180,7 +180,7 @@ placeholder text on either path.
 
 The flags still exist for scripting. If you use them, you own the consequence.
 
-### 4. The account-deletion endpoint — **NEXT**, the only Cloudflare-facing piece
+### 4. The account-deletion endpoint — **half done: the Pi half works, the Cloudflare half is yours**
 
 A production keyset **stays inert** until eBay's Marketplace Account Deletion
 notification is either subscribed or exempted. We subscribe, and honour it for
@@ -196,6 +196,22 @@ URL is **part of the challenge hash**, so it must match byte for byte between
 `settings.json` and eBay's form (a trailing slash is enough); and the path must
 not be gated. `node bin/cli.js notify-check` tests both and names the likely
 cause.
+
+**Done on the Pi.** `coin-market-notify` is installed, enabled at boot and
+listening on 127.0.0.1:34261. Its challenge response was checked against an
+independently computed SHA-256 — not just against the tool's own function, which
+would agree with itself even if the algorithm were wrong — and a synthetic
+deletion POST returned 200 and logged `purged 0 listings`, correct for a seller
+never seen. `endpointUrl` and a valid 43-character token are already in
+`settings.json`.
+
+**Not done, and only the user can:** this tunnel is token-managed, so the route
+is a **Public Hostname entry in the Cloudflare dashboard**, not a `config.yml` —
+see `deploy/cloudflared-ingress.md` §1, which has been rewritten for that.
+Access is confirmed live on the domain: the target path currently 302s to
+`late-wave-cdce.cloudflareaccess.com`, which is exactly what eBay would get. So
+both the route and an Access **Bypass** are required before eBay's form will
+validate.
 
 ### 5. User token, then run it continuously
 
