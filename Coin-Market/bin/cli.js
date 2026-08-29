@@ -493,6 +493,19 @@ COMMANDS.init = {
             return
         }
 
+        /*  Read before it is overwritten: some of what is in there has to
+            survive, and a malformed file should say so rather than quietly
+            losing a verification token eBay is still holding. */
+        let existing = null
+        if (FS.existsSync(target)) {
+            try { existing = JSON.parse(FS.readFileSync(target, 'utf8')) }
+            catch (err) {
+                console.log('Warning: ' + target + ' is not valid JSON (' + err.message + ')')
+                console.log('Nothing can be carried forward from it.')
+                console.log('')
+            }
+        }
+
         const FIELDS = [
             { flag: 'app-id', label: 'App ID (Client ID)   ' },
             { flag: 'cert-id', label: 'Cert ID (Client Secret)', secret: true },
@@ -573,14 +586,36 @@ COMMANDS.init = {
         template.ebay.accountDeletion.verificationToken =
             require('../src/ebay/notifications.js').generateToken()
 
-        FS.writeFileSync(target, JSON.stringify(template, null, 2) + '\n', { mode: 0o600 })
+        /*  Overwriting an existing setup keeps the values that something
+            outside this file already depends on - eBay holds the
+            verification token, and every stored seller hash was computed
+            with the salt. Regenerating either silently breaks a working
+            install; see CONFIG.carryForward. */
+        let settings = template
+        if (existing !== null && flags['regenerate-secrets'] === undefined) {
+            settings = CONFIG.carryForward(existing, template)
+        }
+
+        FS.writeFileSync(target, JSON.stringify(settings, null, 2) + '\n', { mode: 0o600 })
         console.log('Wrote ' + target + ' (mode 0600, gitignored)')
         console.log('')
-        console.log('  environment        : ' + template.ebay.environment)
-        console.log('  marketplace        : ' + template.ebay.marketplaceId)
-        console.log('  seller salt        : generated')
-        console.log('  deletion token     : generated (register it with eBay)')
-        console.log('  spot store         : ' + describeSpot(template.spot))
+        const carried = settings.carriedForward || []
+        const wasKept = name => carried.includes(name)
+
+        console.log('  environment        : ' + settings.ebay.environment)
+        console.log('  marketplace        : ' + settings.ebay.marketplaceId)
+        console.log('  seller salt        : ' + (wasKept('sellerSalt')
+            ? 'kept (stored seller hashes still match)'
+            : 'generated'))
+        console.log('  deletion token     : ' + (wasKept('ebay.accountDeletion.verificationToken')
+            ? 'kept (eBay holds this one - do not re-register)'
+            : 'generated (register it with eBay)'))
+        console.log('  spot store         : ' + describeSpot(settings.spot))
+        if (carried.length > 0) {
+            console.log('')
+            console.log('  Carried over from the previous file: ' + carried.join(', '))
+            console.log('  Use --regenerate-secrets= to start fresh instead.')
+        }
         console.log('')
         console.log('Next:  node bin/cli.js smoke')
     }

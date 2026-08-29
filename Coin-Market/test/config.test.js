@@ -60,3 +60,77 @@ test('a real key is not refused for merely starting with a placeholder word', ()
     assert.strictEqual(CONFIG.looksUnfilled('realistic-app-PRD-1a2b3c4d'), false)
     assert.strictEqual(CONFIG.looksUnfilled('yourcompany-tracker-SBX-9f2a1c'), false)
 })
+
+/*
+    Carrying values through an "init --force=".
+
+    The failure this prevents is silent and expensive: eBay holds a copy of
+    the verification token, and every stored seller hash was computed with
+    the salt. Regenerating either leaves a settings.json that looks correct
+    and a subscription that no longer validates.
+*/
+
+const EXISTING = {
+    sellerSalt: 'oldSaltThatHashesWereBuiltWith',
+    ebay: {
+        ruName: 'Rhys_Turner-RhysTurn-metalh-abcdef',
+        refreshToken: 'v1.1#i#a-long-refresh-token-value',
+        accountDeletion: {
+            verificationToken: 'tokenEbayIsHoldingRightNow-1234567890abcd',
+            endpointUrl: 'https://metalhead.gold/ebay/account-deletion'
+        }
+    }
+}
+
+function freshTemplate () {
+    return {
+        sellerSalt: 'brandNewSalt',
+        ebay: {
+            ruName: 'YOUR-RUNAME',
+            accountDeletion: { verificationToken: 'brandNewToken', endpointUrl: 'https://example.com/x' }
+        }
+    }
+}
+
+test('the salt and the verification token survive an overwrite', () => {
+    const out = CONFIG.carryForward(EXISTING, freshTemplate())
+    assert.strictEqual(out.sellerSalt, EXISTING.sellerSalt)
+    assert.strictEqual(out.ebay.accountDeletion.verificationToken,
+        EXISTING.ebay.accountDeletion.verificationToken)
+})
+
+test('a hard-won RuName, refresh token and endpoint survive too', () => {
+    const out = CONFIG.carryForward(EXISTING, freshTemplate())
+    assert.strictEqual(out.ebay.ruName, EXISTING.ebay.ruName)
+    assert.strictEqual(out.ebay.refreshToken, EXISTING.ebay.refreshToken)
+    assert.strictEqual(out.ebay.accountDeletion.endpointUrl,
+        EXISTING.ebay.accountDeletion.endpointUrl)
+})
+
+test('placeholder values in the old file are not carried forward', () => {
+    const stale = { ebay: { ruName: 'YOUR-RUNAME', accountDeletion: { verificationToken: '' } } }
+    const out = CONFIG.carryForward(stale, freshTemplate())
+    assert.strictEqual(out.ebay.ruName, 'YOUR-RUNAME')
+    assert.strictEqual(out.ebay.accountDeletion.verificationToken, 'brandNewToken')
+})
+
+test('a first install has nothing to carry and is returned untouched', () => {
+    const template = freshTemplate()
+    assert.strictEqual(CONFIG.carryForward(null, template), template)
+})
+
+test('the source object is never mutated', () => {
+    const template = freshTemplate()
+    CONFIG.carryForward(EXISTING, template)
+    assert.strictEqual(template.sellerSalt, 'brandNewSalt')
+    assert.strictEqual(EXISTING.sellerSalt, 'oldSaltThatHashesWereBuiltWith')
+})
+
+test('what was carried is reported, so init can say so', () => {
+    const out = CONFIG.carryForward(EXISTING, freshTemplate())
+    assert.ok(out.carriedForward.includes('sellerSalt'))
+    assert.ok(out.carriedForward.includes('ebay.accountDeletion.verificationToken'))
+    /* Non-enumerable, so it never lands in the written JSON. */
+    assert.ok(!Object.keys(out).includes('carriedForward'))
+    assert.ok(!('carriedForward' in JSON.parse(JSON.stringify(out))))
+})

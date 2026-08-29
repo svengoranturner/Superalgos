@@ -73,4 +73,56 @@ exports.looksUnfilled = function (value) {
     return PLACEHOLDER.test(text)
 }
 
+/*
+    Values that must survive an "init --force=".
+
+    Two of these are shared with something outside this file the moment a
+    setup starts working, and silently regenerating them breaks it:
+
+      * sellerSalt        - every stored seller hash was computed with it. A
+                            new salt orphans all of them, so an account
+                            deletion notification would purge nothing while
+                            still answering eBay 200. The subscription would
+                            be honoured in name only, which is the one
+                            outcome the whole design exists to avoid.
+      * verificationToken - eBay holds a copy. The challenge response is
+                            hashed with it, so a new token fails eBay's next
+                            validation and the production keyset goes back to
+                            disabled.
+
+    endpointUrl, ruName and refreshToken are carried for the milder reason
+    that they were work to obtain and nothing regenerates them.
+
+    Pass --regenerate-secrets= to init to deliberately start fresh.
+*/
+exports.carryForward = function (existing, next) {
+    if (existing === null || typeof existing !== 'object') { return next }
+
+    const out = JSON.parse(JSON.stringify(next))
+    const worthKeeping = value =>
+        value !== undefined && value !== null &&
+        String(value).length > 0 && !exports.looksUnfilled(value)
+
+    const kept = []
+    if (worthKeeping(existing.sellerSalt)) { out.sellerSalt = existing.sellerSalt; kept.push('sellerSalt') }
+
+    const from = existing.ebay || {}
+    const to = out.ebay || (out.ebay = {})
+    for (const key of ['ruName', 'refreshToken']) {
+        if (worthKeeping(from[key])) { to[key] = from[key]; kept.push('ebay.' + key) }
+    }
+
+    const fromDeletion = from.accountDeletion || {}
+    const toDeletion = to.accountDeletion || (to.accountDeletion = {})
+    for (const key of ['verificationToken', 'endpointUrl']) {
+        if (worthKeeping(fromDeletion[key])) {
+            toDeletion[key] = fromDeletion[key]
+            kept.push('ebay.accountDeletion.' + key)
+        }
+    }
+
+    Object.defineProperty(out, 'carriedForward', { value: kept, enumerable: false })
+    return out
+}
+
 exports.ROOT = ROOT
