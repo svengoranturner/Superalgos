@@ -1,14 +1,15 @@
 # Handover
 
-**Deployed, reading the real gold feed, talking to eBay sandbox, and with the
-account-deletion endpoint live on the public internet.** Steps 1-4 below are
-done. Step 5 needs a **RuName** and, for anything that matters, a **production
-keyset** — both of which only the user can create.
+**Live on production eBay.** Steps 1-4 are done: deployed on the Pi, reading the
+real gold feed, account-deletion endpoint public and validated, production
+keyset created and **enabled**. `smoke` against production: **7 pass, 0 fail,
+1 unknown, 2 skip**.
 
-The sandbox run proves the client is built correctly and answers **none** of the
-three market assumptions — sandbox has no real coin listings. Production is the
-only thing that can move them, and the deletion endpoint (step 4) existed to
-unblock exactly that.
+**The assumption that could have forced a redesign survived**: `ItemSummary`
+carries `bidCount` on 50/50 live auctions, so cheap snapshotting holds.
+
+Step 5 is what remains, and it is blocked on one thing only: a **RuName**, which
+unlocks the user token, which answers the last open assumption and the two SKIPs.
 
 This document was written for a Claude Code session on the user's laptop, which
 — unlike the session that built this — is on the same LAN as the Pi. That
@@ -68,26 +69,30 @@ not explicitly marked `powershell` is bash, meant for the Pi.
   asks — a 17.6pp spread, which is the phenomenon the tool exists to measure.
 - **The real gold feed is connected and mirrored.** 876 observations, 20-minute
   cadence, gold at GBP 3,372/oz. See below.
-- **eBay sandbox is configured and smoke has been run for real.** Regenerated
-  sandbox keys are in `config/settings.json` on the Pi (mode 0600, gitignored).
-  `smoke`: **4 pass, 0 fail, 4 unknown, 2 skip** — application token obtained,
-  the Browse guard fires, `categoryTreeId = 3` for `EBAY_GB`, and 22 coin leaves
-  found of 326 categories. No collector is running yet.
-- **All three assumptions below are still unanswered**, exactly as predicted:
-  sandbox returned 0 auctions, so there was nothing to inspect for `bidCount` or
-  `conditionDescriptors`. Sandbox also reports **stub rate limits** (`apiName:
-  "api name"`, a resource called `DELETE1`), so the call budget cannot be
-  validated there either. The two SKIPs need a user token.
+- **Production eBay is configured and smoke has been run against it.**
+  `config/settings.json` on the Pi holds the production keyset (mode 0600,
+  gitignored), `environment: production`. `smoke`: **7 pass, 0 fail, 1 unknown,
+  2 skip**. No collector is running yet.
+- **The call budget has real numbers at last.** Browse: **limit 5000, remaining
+  5000, window 86400s**, resetting 07:00 UTC. Sandbox had only reported stub
+  values (`apiName: "api name"`, a resource called `DELETE1`), so this is the
+  first figure the collector's pacing can honestly be planned against.
+- **`smoke-shapes.json` now holds a real ItemSummary field list** — 26 fields,
+  including `bidCount`, `currentBidPrice`, `itemEndDate`, `legacyItemId`,
+  `leafCategoryIds`, `seller` and `shippingOptions`, and notably **no
+  `conditionDescriptors`**. That file carries no credentials and is safe to
+  share.
 - **`ebay.ruName` is still a placeholder**, which blocks the user token. `auth-url`
   now refuses it rather than printing a consent URL that eBay will reject.
 - **The Pi's DNS is fixed** — see `DEPLOY.md` §1a. It was not the router: glibc's
   parallel A/AAAA queries were the cause, `getaddrinfo` failed 14/20, and
   `single-request-reopen` took it to 0/20. Persisted via netplan, survives reboot.
 
-## Three assumptions the design rests on, none yet verified
+## Three assumptions the design rests on — one answered, two open
 
-*Unchanged. A clean sandbox smoke run settled nothing about the coin market:
-it returned 0 auctions, so there was nothing to inspect.*
+**Production smoke run, 2026-08-30: 7 pass, 0 fail, 1 unknown, 2 skip.** The
+sandbox run before it answered nothing, as expected. Production answered
+assumption 2 outright and gave real evidence on 3.
 
 Settle these early; each has a fallback but two of them change the architecture.
 
@@ -98,17 +103,36 @@ Settle these early; each has a fallback but two of them change the architecture.
    the last snapshot before close (already implemented behind the same
    interface in `src/collect/resolve.js`) — less exact, still usable.
 
+   **STILL UNANSWERED — it needs a user token, which needs a RuName.** One
+   piece of good news from the shapes though: search results carry
+   **`legacyItemId`**, which is the identifier `GetItem` takes. So the
+   plumbing to attempt it is there; only the token is missing.
+
 2. **Does `ItemSummary` carry `bidCount` in search results?** Bulk item lookup
    (`getItems`) is Limited Release and unavailable, so snapshotting works by
    re-running searches — one call refreshes 200 listings instead of one. *If it
    fails:* snapshotting costs ~200× more and the call budget needs replanning
    from scratch.
 
+   **ANSWERED — YES.** Production search returned **50/50 auctions carrying
+   `bidCount`, and 50 carrying `currentBidPrice`**. The cheap snapshotting
+   path holds and the call budget stands as designed. This was the assumption
+   with the power to change the architecture; it survived.
+
 3. **What shape do `conditionDescriptors` actually arrive in, and have they
    reached UK listings?** eBay's mandatory coin condition detail was announced
    with US dates. `src/catalogue/conditions.js` is deliberately tolerant of
    several field shapes *because this was unconfirmed* — tighten it to reality
    once seen, don't leave it guessing forever.
+
+   **STILL UNKNOWN, and now with evidence: 0 of 50 live UK listings carried
+   `conditionDescriptors`.** The captured field list (`smoke-shapes.json`)
+   has `condition` and `conditionId` but no descriptors at all. Two readings
+   fit: the mandatory coin condition detail has not reached `EBAY_GB` yet, or
+   it is absent from *search* results and appears only on `getItem`. Do not
+   tighten `conditions.js` on this evidence — the tolerant reader is still
+   doing exactly the job it was written for. Re-check when a user token makes
+   `getItem` reachable.
 
 `node bin/cli.js smoke` probes all three and reports **pass / fail / unknown /
 skip** per capability. **UNKNOWN is a real verdict, not a soft pass** — sandbox
