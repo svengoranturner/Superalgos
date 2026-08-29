@@ -180,7 +180,7 @@ placeholder text on either path.
 
 The flags still exist for scripting. If you use them, you own the consequence.
 
-### 4. The account-deletion endpoint — **half done: the Pi half works, the Cloudflare half is yours**
+### 4. The account-deletion endpoint — **DONE and verified end to end**
 
 A production keyset **stays inert** until eBay's Marketplace Account Deletion
 notification is either subscribed or exempted. We subscribe, and honour it for
@@ -205,13 +205,28 @@ deletion POST returned 200 and logged `purged 0 listings`, correct for a seller
 never seen. `endpointUrl` and a valid 43-character token are already in
 `settings.json`.
 
-**Not done, and only the user can:** this tunnel is token-managed, so the route
-is a **Public Hostname entry in the Cloudflare dashboard**, not a `config.yml` —
-see `deploy/cloudflared-ingress.md` §1, which has been rewritten for that.
-Access is confirmed live on the domain: the target path currently 302s to
-`late-wave-cdce.cloudflareaccess.com`, which is exactly what eBay would get. So
-both the route and an Access **Bypass** are required before eBay's form will
-validate.
+**Done in Cloudflare too.** This tunnel is token-managed, so the route is a
+dashboard entry, not a `config.yml` — `deploy/cloudflared-ingress.md` §1 now
+carries the exact fields, including the two things that were not obvious: the
+Path field is a **regex** (`^/ebay/account-deletion$`), and a new route is
+appended **below** the `*` catch-all where it is dead until moved to position 1.
+
+A second Access application carries a **Bypass / Everyone** policy for that one
+path. The existing `MetalHead` application was not touched.
+
+Verified from the Pi, through the public URL:
+
+- `GET https://metalhead.gold/ebay/account-deletion` → **200**,
+  `coin-market notification endpoint`
+- the challenge hash matches a SHA-256 computed **independently in Python**, not
+  merely the tool's own function agreeing with itself
+- a deletion `POST` → **200**, logged `purged 0 listings`
+- `https://metalhead.gold/` still → **302** to the Access login, so the live site
+  remains gated
+
+**Remaining, and only the user can do it:** register the endpoint URL and
+verification token in eBay's Marketplace Account Deletion form, then create the
+production keyset.
 
 ### 5. User token, then run it continuously
 
