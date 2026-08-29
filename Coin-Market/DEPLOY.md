@@ -46,20 +46,42 @@ cryptic missing-module error.
 
 ## 1a. DNS
 
-Worth knowing before anything blames the network on your behalf. `/etc/resolv.conf`
-lists one nameserver — the router, `192.168.68.1` — and lookups to it fail
-intermittently: a `git clone` and a `curl` both died on *Could not resolve host*
-mid-run, then the same name resolved 10/10 times a second later.
+**Diagnosed and fixed.** This section previously blamed the router and offered a
+second resolver. Both were wrong, and the command named a connection that does
+not exist on this Pi. Kept here because the wrong answer is instructive.
 
-Nothing here was changed, because it is your network. But the collector talks to
-eBay every hour, and a name that fails to resolve looks exactly like an API
-outage in the logs. Adding a second resolver on the Pi is a one-line fix if it
-gets annoying:
+The symptom: `git`, `curl` and `node` intermittently died on *Could not resolve
+host*, badly enough that one `git fetch` needed 17 attempts.
+
+The router's DNS is not the problem. Queried directly over UDP it answered
+**24/24 in 0.00s**, A and AAAA alike. What failed was the Pi's own resolver:
+`getaddrinfo` — which is what git, curl and node actually call — failed **14 of
+20 times** with `EAI_AGAIN`, each attempt burning 10–20 seconds first.
+
+Single queries fine, `getaddrinfo` failing, is the signature of glibc sending
+the A and AAAA queries **in parallel down one socket**. Some routers mishandle
+the second reply, and the resolver waits out its full timeout for an answer that
+never comes. The fix tells glibc to send them one at a time, reopening the
+socket between:
 
 ```bash
-sudo nmcli connection modify "Wired connection 1" ipv4.dns "192.168.68.1 1.1.1.1"
-sudo nmcli connection up "Wired connection 1"
+sudo nmcli connection modify netplan-eth0 ipv4.dns-options single-request-reopen
+sudo nmcli device reapply eth0
 ```
+
+Measured immediately after: `getaddrinfo` **0/20 failures, slowest 0.03s**, and
+`git ls-remote` **10/10** where it had been 2/10.
+
+Two details that matter if you touch this again. The connection is
+**`netplan-eth0`**, not `Wired connection 1` — this Pi's NetworkManager profiles
+are stored as netplan YAML in `/etc/netplan/90-NM-<uuid>.yaml`, which is also
+why the `nmcli` change survives a reboot rather than being overwritten. And
+`device reapply` was used instead of `connection up` deliberately: it re-applies
+the profile without dropping the link, so it is safe to run over SSH.
+
+No second resolver was added. Nothing in the evidence called for one, and
+`1.1.1.1` ahead of the router would have broken `.lan` names, since an NXDOMAIN
+is an authoritative answer that glibc does not retry elsewhere.
 
 ## 2. Clone just this folder
 

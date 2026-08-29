@@ -1,8 +1,12 @@
 # Handover
 
-**Deployed and running against the real gold feed; not yet pointed at eBay.**
-Steps 1 and 2 below are done. Step 3 onward is blocked on eBay credentials,
-which only the user can create.
+**Deployed, reading the real gold feed, and talking to eBay sandbox.**
+Steps 1, 2 and 3 below are done. Step 4 onward needs a production keyset and a
+RuName, which only the user can create.
+
+The sandbox run proves the client is built correctly and answers **none** of the
+three market assumptions — sandbox has no real coin listings. That is the whole
+reason step 4 exists.
 
 This document was written for a Claude Code session on the user's laptop, which
 — unlike the session that built this — is on the same LAN as the Pi. That
@@ -22,9 +26,10 @@ policy blocking every `ebay.com` host**. So nothing had ever been run against
 real eBay or real hardware. Anything still marked "unverified" is unverified for
 that reason, not through carelessness.
 
-The hardware half of that is now settled — see State. **eBay is not**: no call
-has yet been made to any eBay host, so all three assumptions below stand exactly
-where the build session left them.
+The hardware half is settled, and eBay has now been called for real — but only
+in **sandbox**, which returned zero coin listings. So all three assumptions below
+still stand exactly where the build session left them. Only production can move
+them.
 
 ## The user's setup
 
@@ -49,7 +54,7 @@ not explicitly marked `powershell` is bash, meant for the Pi.
 ## State
 
 - Branch `claude/ebay-lot-tracking-pricing-2cxogj`.
-- **85 tests pass**, on the workstation and on the Pi. `npm test` — no
+- **91 tests pass**, on the workstation and on the Pi. `npm test` — no
   `npm install` needed, there are no dependencies (`node:sqlite` and `node:test`
   are built into Node 22.5+).
 - **On the Pi**: Node **v24.20.0** installed under `/usr/local/lib/nodejs`
@@ -60,12 +65,26 @@ not explicitly marked `powershell` is bash, meant for the Pi.
   asks — a 17.6pp spread, which is the phenomenon the tool exists to measure.
 - **The real gold feed is connected and mirrored.** 876 observations, 20-minute
   cadence, gold at GBP 3,372/oz. See below.
-- **eBay is not configured** and no collector is running. `config/settings.json`
-  exists on the Pi with the real spot block and eBay placeholders.
+- **eBay sandbox is configured and smoke has been run for real.** Regenerated
+  sandbox keys are in `config/settings.json` on the Pi (mode 0600, gitignored).
+  `smoke`: **4 pass, 0 fail, 4 unknown, 2 skip** — application token obtained,
+  the Browse guard fires, `categoryTreeId = 3` for `EBAY_GB`, and 22 coin leaves
+  found of 326 categories. No collector is running yet.
+- **All three assumptions below are still unanswered**, exactly as predicted:
+  sandbox returned 0 auctions, so there was nothing to inspect for `bidCount` or
+  `conditionDescriptors`. Sandbox also reports **stub rate limits** (`apiName:
+  "api name"`, a resource called `DELETE1`), so the call budget cannot be
+  validated there either. The two SKIPs need a user token.
+- **`ebay.ruName` is still a placeholder**, which blocks the user token. `auth-url`
+  now refuses it rather than printing a consent URL that eBay will reject.
+- **The Pi's DNS is fixed** — see `DEPLOY.md` §1a. It was not the router: glibc's
+  parallel A/AAAA queries were the cause, `getaddrinfo` failed 14/20, and
+  `single-request-reopen` took it to 0/20. Persisted via netplan, survives reboot.
 
 ## Three assumptions the design rests on, none yet verified
 
-*Unchanged: reaching the Pi settled nothing about eBay.*
+*Unchanged. A clean sandbox smoke run settled nothing about the coin market:
+it returned 0 auctions, so there was nothing to inspect.*
 
 Settle these early; each has a fallback but two of them change the architecture.
 
@@ -99,9 +118,10 @@ validation of the market assumptions.
 ### 1. Deploy and prove it runs — **DONE**
 
 Node v24.20.0 from the official arm64 tarball (apt offers 20.19; the Pi had none
-at all), sparse clone at `~/coin-market-repo/Coin-Market`, 85 tests green,
-`demo` reproducing the ~17.6pp spread. `DEPLOY.md` §1 now carries the sequence
-that actually worked, and §1a the DNS flakiness that made it need retries.
+at all), sparse clone at `~/coin-market-repo/Coin-Market`, tests green, `demo`
+reproducing the ~17.6pp spread. `DEPLOY.md` §1 now carries the sequence that
+actually worked, and §1a the DNS fault that made it need retries — since
+diagnosed and fixed, so the retries should no longer be earning their keep.
 
 ### 2. Point it at the real gold feed — **DONE, and it changed the design**
 
@@ -143,7 +163,7 @@ by spot at all — daily gold goes back to 1968. It is bounded by eBay: discover
 only sees live listings, and `GetItem` only reaches 90 days. In practice the
 tool prices lots it watched close, so the series starts when the collector does.
 
-### 3. eBay, application token only — **NEXT, and blocked on you**
+### 3. eBay, application token only — **DONE for sandbox**
 
 `node bin/cli.js init` — it asks for the three keys, and the Cert ID does not
 echo — then `node bin/cli.js smoke`. This alone gives discovery,
@@ -160,7 +180,7 @@ placeholder text on either path.
 
 The flags still exist for scripting. If you use them, you own the consequence.
 
-### 4. The account-deletion endpoint — the only Cloudflare-facing piece
+### 4. The account-deletion endpoint — **NEXT**, the only Cloudflare-facing piece
 
 A production keyset **stays inert** until eBay's Marketplace Account Deletion
 notification is either subscribed or exempted. We subscribe, and honour it for
@@ -190,8 +210,16 @@ The tunnel config is the one artefact written blind — merge it into the existi
 `config.yml`, do not overwrite.
 
 
+**A RuName is the prerequisite, and it is not yet set** — `ebay.ruName` is
+still `YOUR-RUNAME`, which `auth-url` now refuses rather than printing a consent
+URL eBay would reject. Create one at developer.ebay.com under the keyset, then
+`node bin/cli.js init --runame=<the RuName> --force=`. Do it before any listings
+are collected: `init` regenerates the seller salt, which is harmless while the
+store is empty and orphans every seller hash once it is not.
+
 `auth-url` → approve → `auth-code` gives a refresh token good for ~18 months,
-which unlocks final sale prices and the watch-list mirror. Then `run` under
+which unlocks final sale prices and the watch-list mirror. This is what clears
+the two SKIPs in `smoke`. Then `run` under
 systemd, with `dashboard` reachable over an SSH tunnel — it binds to loopback
 deliberately, since it holds the user's buying intentions.
 
