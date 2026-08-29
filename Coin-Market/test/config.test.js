@@ -24,6 +24,19 @@ test('the placeholder text people actually paste is refused', () => {
     }
 })
 
+/*  The RuName placeholder is the same trap one step later: auth-url would
+    otherwise print a consent URL carrying redirect_uri=YOUR-RUNAME, and the
+    failure appears on eBay's error page rather than here. */
+test('the RuName placeholder is refused too', () => {
+    for (const value of ['YOUR-RUNAME', 'RU_NAME', 'your-redirect-url', 'my-runame']) {
+        assert.strictEqual(CONFIG.looksUnfilled(value), true, value + ' should be refused')
+    }
+})
+
+test('a real RuName is accepted', () => {
+    assert.strictEqual(CONFIG.looksUnfilled('Rhys_Turner-RhysTurn-metalh-abcdef'), false)
+})
+
 test('an absent or blank value counts as unfilled', () => {
     for (const value of [undefined, null, '', '   ']) {
         assert.strictEqual(CONFIG.looksUnfilled(value), true)

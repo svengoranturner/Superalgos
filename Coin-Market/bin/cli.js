@@ -331,6 +331,25 @@ COMMANDS['auth-url'] = {
     describe: 'Print the eBay consent URL for the watch-list / outcome-resolution token',
     async run () {
         const settings = CONFIG.load()
+
+        /*  Without this the URL still prints, with redirect_uri=YOUR-RUNAME
+            in it, and the failure surfaces on eBay's own error page - which
+            says nothing about a placeholder in a local config file. */
+        if (CONFIG.looksUnfilled(settings.ebay.ruName)) {
+            console.log('ebay.ruName is still placeholder text: ' + JSON.stringify(settings.ebay.ruName))
+            console.log('')
+            console.log('A RuName is eBay\'s name for your OAuth redirect. Create one at')
+            console.log('developer.ebay.com > your keyset > "User tokens" > Get a Token from')
+            console.log('eBay via Your Application, then re-run init with it:')
+            console.log('')
+            console.log('  node bin/cli.js init --runame=<the RuName> --force=')
+            console.log('')
+            console.log('Note: init regenerates the seller salt. Harmless now, before any')
+            console.log('listings are stored - a new salt orphans existing seller hashes.')
+            process.exitCode = 1
+            return
+        }
+
         const auth = require('../src/ebay/auth.js').newAuth(settings.ebay, {
             environment: settings.ebay.environment
         })

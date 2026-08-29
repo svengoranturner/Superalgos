@@ -62,8 +62,8 @@ const PLACEHOLDER = new RegExp(
     '\\.{2,}' +                                              /* ...        */
     '|<.*>' +                                                /* <app id>   */
     '|x{3,}' +                                               /* xxxx       */
-    '|(your|real|my|the)[-_ ]?(app|cert|dev|client)?[-_ ]?(id|secret|key)?' +
-    '|(app|cert|dev|client)[-_](id|secret|key)' +
+    '|(your|real|my|the)[-_ ]?(app|cert|dev|client|ru|runame|redirect)?[-_ ]?(id|secret|key|name|url)?' +
+    '|(app|cert|dev|client|ru)[-_](id|secret|key|name)' +
     ')$', 'i')
 
 exports.looksUnfilled = function (value) {
