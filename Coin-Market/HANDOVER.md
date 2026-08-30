@@ -11,8 +11,8 @@ carries `bidCount` on 50/50 live auctions, so cheap snapshotting holds. And
 `GetItem` returns final prices for listings the caller does not own, so the
 outcome-resolution path — and every clearing premium built on it — stands.
 
-What remains is operational, not unknown: start the collector and let it watch
-lots close.
+The collector is **running under systemd and resolving outcomes**. One defect
+found by running it is open and described under "Order of work" step 5.
 
 This document was written for a Claude Code session on the user's laptop, which
 — unlike the session that built this — is on the same LAN as the Pi. That
@@ -302,7 +302,36 @@ an https URL with no localhost, and a 43-character token from their allowed
 alphabet. Their guide also warns that hand-built response strings often carry a
 BOM and fail — `newHandler` uses `JSON.stringify`, so that cannot happen here.
 
-### 5. User token, then run it continuously
+### 5. Collector running — **one open defect**
+
+`coin-market-collector` is installed, enabled at boot and resolving outcomes.
+First full loop observed: discover -> snapshot -> close -> `resolve 1/1
+outcomes resolved`, recording an unsold lot at its list price with `sold=0`.
+
+After the first hours: 2,643 listings, 4,735 snapshots, 1 outcome, 1,084
+queued for review. The review queue is the exclusion rules working, not a
+fault - 242 mounted or sold as jewellery, 126 year not identified, 89 portrait
+ambiguous, 44 base metal or plated, 25 cased. Exactly the bias those rules
+exist to keep out of clearing prices.
+
+**Open defect: `UNIQUE constraint failed: listing.legacy_id`.** Ten partitions
+threw it in one sweep, clustered in `sovereign-bin-*`. The cause is in
+`src/store/repo.js`: `listing.legacy_id` is declared `UNIQUE` in
+`migrations.js`, but `upsertListing` only handles `ON CONFLICT(browse_id)`.
+When eBay returns the same physical listing under a different `browse_id`
+carrying a `legacy_id` already held, the insert violates a constraint the
+upsert does not cover, throws, and `discover.js` abandons the rest of that
+partition. So it is not cosmetic: each occurrence costs coverage, and lost
+discovery cannot be backfilled.
+
+Three ways out, and the choice is a data-model decision rather than a patch:
+drop the `UNIQUE` on `legacy_id` and treat `browse_id` as the sole identity
+(needs a table rebuild in SQLite); add a second `ON CONFLICT(legacy_id)`
+clause; or catch the constraint per listing and update by `legacy_id`. The
+first is right if one legacy item legitimately has several `browse_id`s,
+which the errors suggest it does.
+
+### 5a. User token — done
 
 **`deploy/` already contains what you need** — do not write your own. Three
 systemd units (verified with `systemd-analyze verify`) and

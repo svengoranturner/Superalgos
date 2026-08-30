@@ -47,10 +47,11 @@ tarball under `/usr/local/lib/nodejs`, with `/usr/local/bin/node` symlinked to i
 
 The unit files pass `systemd-analyze verify` with no syntax or directive errors.
 
-`coin-market-notify` has now **been run on the real Pi**: installed, enabled,
-listening on 127.0.0.1:34261, and answering both a challenge GET and a deletion
-POST correctly. The collector and dashboard units are still unrun, and their
-`ExecStart` paths are still placeholders until you edit them.
+`coin-market-notify` and `coin-market-collector` have now **been run on the
+real Pi**: both installed with the values above, enabled at boot, and doing
+their jobs - the endpoint answering a challenge GET and a deletion POST, the
+collector discovering, snapshotting and resolving outcomes. Only the dashboard
+unit is still unrun, and its `ExecStart` path is still a placeholder.
 
 Verification caught one genuine bug worth knowing about, because it is invisible
 at runtime: `StartLimitIntervalSec` was originally in `[Service]`, where systemd
