@@ -57,11 +57,15 @@ function extractYear (title) {
 
 function extractDenomination (title) {
     const t = title.toLowerCase()
-    /*  The gap tolerance matters. Sellers write "Quarter-Sovereign" and
-        "Quarter 2g Sovereign", and requiring the two words to be adjacent
-        sent both to FULL - pricing a quarter against a full sovereign's
-        7.99g of gold and manufacturing a 75% discount that is not there.
-        Those were real entries in the live opportunities panel. */
+    /*  The gap tolerance matters, and so does what is allowed IN the gap.
+        Sellers write "Quarter-Sovereign", "Quarter 2g Sovereign",
+        "1/2 (Half) Sovereign" and "quarter new design ,sovereign" - and a
+        gap class of word characters, spaces, hyphens and dots matched the
+        first two and not the last two, because brackets and commas were
+        missing from it. Both fell through to FULL and were priced against a
+        full sovereign's 7.99g of gold, which is how a genuine 1980 half
+        sovereign proof came to be suppressed from the opportunities panel
+        as "below melt - not this coin". */
     /*  The word after, not before. "Royal Mint 2013 Gold Proof Sovereign
         Half with Original Box" is a genuine half sovereign that was priced
         against a full sovereign's 7.99g of gold and duly appeared in the
@@ -72,8 +76,8 @@ function extractDenomination (title) {
 
     /*  "Qtr" is how dealers abbreviate it, and the Royal Mint's own listing
         titles use it - "Gold Proof Qtr Sovereign AGW 1.83g". */
-    if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
-    if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
+    if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w.,()&'/]{0,16}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
+    if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.,()&'/]{0,16}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     /*  The multi-weight sovereigns, which sellers write nine different ways.
 
         Adjacency was the bug: requiring the multiplier immediately before

@@ -380,6 +380,26 @@ test('a hyphenated or spaced quarter is still a quarter', () => {
     }
 })
 
+/*  Brackets and commas between the denomination word and "sovereign" broke
+    the match, because the gap class was only word characters, spaces,
+    hyphens and dots. A genuine 1980 half sovereign proof was priced against
+    a full sovereign's gold and duly suppressed from the opportunities panel
+    as "below melt - not this coin". */
+test('punctuation between the denomination and the word does not lose it', () => {
+    for (const [title, expected] of [
+        ['1980 Gold Proof 1/2 (Half) Sovereign - Box & COA', 'HALF'],
+        ['gold quarter new design ,sovereign coins gold', 'QUARTER'],
+        ['2013 Gold Proof Quarter (1/4) Sovereign Royal Mint', 'QUARTER'],
+        ["Victoria's Half (1/2) Sovereign 1887", 'HALF']
+    ]) {
+        assert.strictEqual(classify({ title }).attributes.denomination, expected, title)
+    }
+    /* and the gap is still bounded - this is two separate coins mentioned */
+    assert.strictEqual(
+        classify({ title: 'Half Crown 1946 and a nice boxed gold sovereign here' }).attributes.denomination,
+        'FULL')
+})
+
 /*  Nine seller phrasings for the multi-weight sovereigns all fell through
     to the FULL catch-all, because the multiplier had to sit immediately
     before the word. 87 live lots were priced against a half or a fifth of
