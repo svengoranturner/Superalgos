@@ -171,3 +171,85 @@ test('a local psql is used directly when there is no container in the way', () =
 test('an unknown source type names the ones that exist', () => {
     assert.throws(() => SPOT.newSpotSource({ type: 'mysql' }), /postgres/)
 })
+
+/*
+    Market hours.
+
+    eBay does not keep them and metals do. Auctions close all weekend while
+    spot has not moved since Friday, so a tolerance that knows nothing about
+    the closure withholds a premium for about fifty hours a week - including
+    Sunday evening, which is prime auction-closing time.
+*/
+
+test('the metals week runs Sunday evening to Friday evening, London time', () => {
+    /* Friday 2026-08-28: trading until 22:00 London, shut after. */
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-28T20:00:00Z'), false, 'Friday 21:00 London')
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-28T21:30:00Z'), true, 'Friday 22:30 London')
+    /* Saturday is shut throughout. */
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-29T12:00:00Z'), true)
+    /* Sunday: shut until 23:00 London, trading after. */
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-30T12:00:00Z'), true, 'Sunday midday')
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-30T22:30:00Z'), false, 'Sunday 23:30 London')
+    /* Midweek is open. */
+    assert.strictEqual(SPOT.marketClosedAt('2026-08-26T03:00:00Z'), false)
+})
+
+const { newDatabase: newSpotDb } = require('../src/store/db.js')
+
+function spotDb (rows) {
+    const db = newSpotDb(':memory:')
+    for (const [observedAt, price] of rows) {
+        db.prepare('INSERT INTO spot (metal, observed_at, gbp_per_oz, source) VALUES (?,?,?,?)')
+            .run('XAU', observedAt, price, 'metals.dev')
+    }
+    return db
+}
+
+/* Friday 2026-08-28 20:41Z - the last tick before the weekend close. */
+function lookupFixture () {
+    return spotDb([['2026-08-28T20:41:00.000Z', 3292.21]])
+}
+
+test('a weekend lot is priced off the Friday close, and says so', () => {
+    const db = lookupFixture()
+    const spotAt = SPOT.newSpotLookup(db, { toleranceMinutes: 90 })
+    const sunday = spotAt('2026-08-30T12:00:00Z')
+    assert.ok(sunday !== null, 'a shut market should not read as a missing price')
+    assert.strictEqual(sunday.gbpPerOz, 3292.21)
+    assert.strictEqual(sunday.carried, true)
+    db.close()
+})
+
+test('a price inside tolerance is not marked as carried', () => {
+    const db = lookupFixture()
+    const spotAt = SPOT.newSpotLookup(db, { toleranceMinutes: 90 })
+    const friday = spotAt('2026-08-28T21:00:00Z')
+    assert.ok(friday !== null)
+    assert.strictEqual(friday.carried, false)
+    db.close()
+})
+
+/*  The whole point of the tight tolerance is catching a dead feed. A closure
+    must not become a licence to serve week-old prices midweek. */
+test('a midweek gap still withholds the premium', () => {
+    const db = lookupFixture()
+    const spotAt = SPOT.newSpotLookup(db, { toleranceMinutes: 90 })
+    assert.strictEqual(spotAt('2026-09-02T12:00:00Z'), null, 'Wednesday, feed long dead')
+    db.close()
+})
+
+test('a closure does not resurrect a price older than the closure itself', () => {
+    /* Two weekends back - shut now, but this is a broken feed, not a closure. */
+    const db = spotDb([['2026-08-14T20:41:00.000Z', 3200.00]])
+    const spotAt = SPOT.newSpotLookup(db, { toleranceMinutes: 90 })
+    assert.strictEqual(spotAt('2026-08-30T12:00:00Z'), null)
+    db.close()
+})
+
+/*  Monday's open says nothing about Saturday's value. */
+test('prices are only ever carried forward, never backwards', () => {
+    const db = spotDb([['2026-08-31T06:00:00.000Z', 3300.00]])
+    const spotAt = SPOT.newSpotLookup(db, { toleranceMinutes: 90 })
+    assert.strictEqual(spotAt('2026-08-29T12:00:00Z'), null, 'Saturday must not borrow Monday')
+    db.close()
+})

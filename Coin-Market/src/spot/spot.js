@@ -450,9 +450,51 @@ exports.mirror = async function (db, source, options) {
     than being silently priced against a stale figure. A gap in the gold
     feed must never quietly corrupt price history.
 */
+/*
+    Is the metals market shut at this instant?
+
+    Metals trade from about 23:00 Sunday to 22:00 Friday, London time - the
+    week runs Sunday evening to Friday evening, not Monday to Friday. That is
+    the same window the portfolio app's refresh timer uses, and it is stated
+    in London time on purpose: New York's 18:00 open is 23:00 in London in
+    both BST and GMT, because both clocks shift together.
+
+    This matters because eBay does not keep market hours. Auctions close all
+    weekend - Sunday evening is prime closing time - while spot has not moved
+    since Friday. Without knowing the difference, every weekend lot looks like
+    a feed outage and gets no premium at all, which is roughly fifty hours a
+    week of blindness.
+*/
+const LONDON = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Europe/London', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23'
+})
+
+exports.marketClosedAt = function (whenIso) {
+    const date = new Date(whenIso)
+    if (!Number.isFinite(date.getTime())) { return false }
+
+    const parts = {}
+    for (const part of LONDON.formatToParts(date)) { parts[part.type] = part.value }
+
+    const minutes = Number(parts.hour) * 60 + Number(parts.minute)
+    if (parts.weekday === 'Sat') { return true }
+    if (parts.weekday === 'Fri') { return minutes >= 22 * 60 }
+    if (parts.weekday === 'Sun') { return minutes < 23 * 60 }
+    return false
+}
+
 exports.newSpotLookup = function (db, options) {
-    const config = Object.assign({ toleranceMinutes: 90 }, options || {})
+    const config = Object.assign({
+        toleranceMinutes: 90,
+        /*  How far back the Friday close may be carried across a closure.
+            The gap itself is about 49 hours; this leaves margin for the last
+            tick landing shortly before the close, and no more. Beyond it we
+            are not looking at a shut market, we are looking at a broken feed,
+            and the answer to that is still no price rather than a stale one. */
+        closureCarryMinutes: 54 * 60
+    }, options || {})
     const toleranceMs = config.toleranceMinutes * 60 * 1000
+    const carryMs = config.closureCarryMinutes * 60 * 1000
 
     const before = db.prepare(
         'SELECT observed_at, gbp_per_oz FROM spot WHERE metal = ? AND observed_at <= ? ORDER BY observed_at DESC LIMIT 1'
@@ -474,7 +516,30 @@ exports.newSpotLookup = function (db, options) {
             if (gap < bestGap) { bestGap = gap; best = candidate }
         }
 
-        if (best === null || bestGap > toleranceMs) { return null }
-        return { gbpPerOz: best.gbp_per_oz, observedAt: best.observed_at, gapMinutes: bestGap / 60000 }
+        if (best !== null && bestGap <= toleranceMs) {
+            return { gbpPerOz: best.gbp_per_oz, observedAt: best.observed_at, gapMinutes: bestGap / 60000, carried: false }
+        }
+
+        /*  Nothing close enough. If the market was shut at that moment, the
+            last price before it is not a stale reading - it is the price,
+            because nothing traded since. Carried forward only, never back:
+            Monday's open says nothing about what a lot was worth on Saturday.
+
+            Flagged as carried so a consumer can show it as such, in the same
+            spirit as marking daily closes coarser than intraday ticks. */
+        if (!exports.marketClosedAt(whenIso)) { return null }
+
+        const carried = before.get('XAU', whenIso)
+        if (!carried) { return null }
+
+        const carriedGap = target - new Date(carried.observed_at).getTime()
+        if (!(carriedGap >= 0) || carriedGap > carryMs) { return null }
+
+        return {
+            gbpPerOz: carried.gbp_per_oz,
+            observedAt: carried.observed_at,
+            gapMinutes: carriedGap / 60000,
+            carried: true
+        }
     }
 }
