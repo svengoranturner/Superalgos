@@ -314,22 +314,43 @@ fault - 242 mounted or sold as jewellery, 126 year not identified, 89 portrait
 ambiguous, 44 base metal or plated, 25 cased. Exactly the bias those rules
 exist to keep out of clearing prices.
 
-**Open defect: `UNIQUE constraint failed: listing.legacy_id`.** Ten partitions
-threw it in one sweep, clustered in `sovereign-bin-*`. The cause is in
-`src/store/repo.js`: `listing.legacy_id` is declared `UNIQUE` in
-`migrations.js`, but `upsertListing` only handles `ON CONFLICT(browse_id)`.
-When eBay returns the same physical listing under a different `browse_id`
-carrying a `legacy_id` already held, the insert violates a constraint the
-upsert does not cover, throws, and `discover.js` abandons the rest of that
-partition. So it is not cosmetic: each occurrence costs coverage, and lost
-discovery cannot be backfilled.
+**Fixed: `UNIQUE constraint failed: listing.legacy_id`.** Worth reading before
+touching identity in this schema again.
 
-Three ways out, and the choice is a data-model decision rather than a patch:
-drop the `UNIQUE` on `legacy_id` and treat `browse_id` as the sole identity
-(needs a table rebuild in SQLite); add a second `ON CONFLICT(legacy_id)`
-clause; or catch the constraint per listing and update by `legacy_id`. The
-first is right if one legacy item legitimately has several `browse_id`s,
-which the errors suggest it does.
+`legacy_id` was declared `UNIQUE`, and eBay does not guarantee that. A Browse
+id is `v1|<legacyItemId>|<variationId>`, so a multi-variation listing returns
+one row per variation, each with its own browse id, all sharing one legacy item
+number. Confirmed live before changing anything:
+
+    legacyItemId 327041911935 -> v1|327041911935|515924774139
+                              -> v1|327041911935|515924774151
+
+`upsertListing` only handles `ON CONFLICT(browse_id)`, so the second variation
+violated a constraint the upsert could not absorb, threw, and `discover.js`
+abandoned the rest of that partition.
+
+**The cost was never the duplicate - it was everything after it in that
+partition**, and the scale only became visible once fixed:
+
+| sweep | classified | to review | errors |
+|---|---|---|---|
+| before | 344 | 81 | 10 |
+| after | **4,992** | 1,561 | none |
+
+Migration `003-legacy-id-is-not-unique` rebuilds the table without the
+constraint; `browse_id` stays the identity and `legacy_id` keeps its index.
+The live database was checkpointed and backed up first - note that a plain
+copy of the `.db` is **not** a backup while a WAL file exists, which it did, at
+4 MB. Row counts came through the rebuild unchanged and `integrity_check`
+passed. 23 legacy ids now legitimately hold more than one browse id.
+
+**Dropping the constraint alone would have traded one bug for a worse one.**
+`pendingOutcomes` returned a row per browse id, so a multi-variation listing
+would have spent a Trading call per variation and written an outcome row per
+variation for a single physical sale - and every one of those would then be
+counted again in the clearing statistics. It now returns one row per legacy id,
+with a `NOT EXISTS` over siblings so that once any variation is resolved none
+of its siblings are offered again. One sale, one outcome.
 
 ### 5a. User token — done
 
