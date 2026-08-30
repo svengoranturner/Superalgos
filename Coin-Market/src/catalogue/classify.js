@@ -74,8 +74,32 @@ function extractDenomination (title) {
         titles use it - "Gold Proof Qtr Sovereign AGW 1.83g". */
     if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
     if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
-    if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t)) { return { denomination: 'DOUBLE', confidence: 1 } }
-    if (/\b(quintuple|five\s*pound|5\s*pound)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUINTUPLE', confidence: 1 } }
+    /*  The multi-weight sovereigns, which sellers write nine different ways.
+
+        Adjacency was the bug: requiring the multiplier immediately before
+        "sovereign" missed "5 POUNDS SOVEREIGN" (the plural breaks it),
+        "£5 GOLD SOVEREIGN" (the symbol), bare "5 Sovereign" and "2 SOV.".
+        All of them fell through to the FULL catch-all, so 87 live lots were
+        priced against a half or a fifth of the gold they actually contain -
+        and a £9,654 five-sovereign piece duly read 1146% over melt.
+
+        The negative lookbehind is not decoration: "Type 2 Sovereign" is a
+        portrait variety of an ordinary full sovereign, not a double. */
+    if (/\bquintuple\b/.test(t) ||
+        /(£\s*5|\b(five|5)\s*pounds?)[\s\-\w.,()]{0,16}?\bsov/.test(t) ||
+        /(?<!type\s)\b5\s*(gold\s*)?sovereign\b/.test(t)) {
+        return { denomination: 'QUINTUPLE', confidence: 1 }
+    }
+    /*  A piedfort is a sovereign struck at double thickness, so it carries a
+        double sovereign's gold. It is not literally a two-pound piece, but
+        this tool measures premium over gold content and the gold content is
+        what has to be right. */
+    if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t) ||
+        /\bpie(d)?fort\b/.test(t) ||
+        /(£\s*2|\b(two|2)\s*pounds?)[\s\-\w.,()]{0,16}?\bsov/.test(t) ||
+        /(?<!type\s)\b2\s*(gold\s*)?sov\b/.test(t)) {
+        return { denomination: 'DOUBLE', confidence: 1 }
+    }
     /*  A fraction the sovereign series does not mint - eighths, tenths,
         twentieths, sold as "Classics Remastered" style private issues. The
         Royal Mint's smallest sovereign is the quarter, so these are not

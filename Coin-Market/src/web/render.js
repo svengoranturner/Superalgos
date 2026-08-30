@@ -84,7 +84,7 @@ nav a.on { color:var(--ink); border-bottom-color:var(--ink) }
     review queue is worked through quickly, and anything that needs
     JavaScript to record a decision is something that can silently fail to
     record one. */
-.verdict { display:flex; gap:6px; align-items:center; justify-content:flex-end }
+.verdict { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:flex-end }
 button, select { font:inherit; font-size:12.5px; padding:3px 9px; border-radius:6px;
   border:1px solid var(--border); background:var(--surface); color:var(--ink); cursor:pointer }
 button:hover { background:color-mix(in srgb, var(--ink) 6%, transparent) }
