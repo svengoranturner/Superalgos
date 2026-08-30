@@ -76,3 +76,36 @@ test('non-numeric remaining values are ignored', async () => {
     })
     assert.strictEqual(await QUOTA.browseRemaining(auth, fetchImpl), 4900)
 })
+
+/*
+    Sweep error reporting.
+
+    The collector runs unattended for months. A bare count cannot distinguish
+    eight transient timeouts from one partition failing every sweep, and the
+    second is the one that quietly costs coverage.
+*/
+const SCHEDULER = require('../src/collect/scheduler.js')
+
+test('repeated errors are grouped with a count, most frequent first', () => {
+    const summary = SCHEDULER.summariseErrors([
+        'sovereign: timeout', 'sovereign: timeout', 'sovereign: timeout', 'britannia: 500'
+    ])
+    assert.match(summary, /^3x sovereign: timeout/)
+    assert.ok(summary.includes('britannia: 500'))
+})
+
+test('a single error is not given a redundant multiplier', () => {
+    assert.strictEqual(SCHEDULER.summariseErrors(['half-sovereign: budget exhausted']),
+        'half-sovereign: budget exhausted')
+})
+
+test('a storm of distinct errors is capped rather than flooding the journal', () => {
+    const many = ['a: x', 'b: x', 'c: x', 'd: x', 'e: x']
+    const summary = SCHEDULER.summariseErrors(many)
+    assert.ok(summary.includes('and 2 more'), summary)
+    assert.ok(summary.split(';').length <= 4, summary)
+})
+
+test('no errors summarise to an empty string', () => {
+    assert.strictEqual(SCHEDULER.summariseErrors([]), '')
+})

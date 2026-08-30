@@ -61,7 +61,10 @@ exports.newScheduler = function (parts, options) {
                         ? ' | TRUNCATED: ' + report.truncated.join(', ') +
                           ' (result set exceeded eBay 10,000 cap - narrow these partitions)'
                         : '') +
-                    (report.errors.length > 0 ? ' | errors: ' + report.errors.length : ''))
+                    (report.errors.length > 0
+                        ? ' | errors: ' + report.errors.length +
+                          ' (' + exports.summariseErrors(report.errors) + ')'
+                        : ''))
             })
 
             every(config.endingSoonMinutes, 'ending-soon', async () => {
@@ -111,4 +114,27 @@ exports.newScheduler = function (parts, options) {
             log('scheduler', 'stopped')
         }
     }
+}
+
+/*
+    Turns a pile of error strings into something an operator can act on.
+
+    A bare count is unactionable: "errors: 8" gives no way to tell eight
+    transient timeouts apart from one partition failing every single sweep,
+    and this runs unattended for months. Distinct messages, most frequent
+    first, capped so a storm cannot flood the journal.
+*/
+exports.summariseErrors = function (messages, limit) {
+    const counts = new Map()
+    for (const message of messages) {
+        const key = String(message)
+        counts.set(key, (counts.get(key) || 0) + 1)
+    }
+    const ordered = [...counts.entries()].sort((a, b) => b[1] - a[1])
+    const cap = limit === undefined ? 3 : limit
+    const shown = ordered.slice(0, cap).map(([message, n]) => (n > 1 ? n + 'x ' : '') + message)
+    if (ordered.length > shown.length) {
+        shown.push('and ' + (ordered.length - shown.length) + ' more')
+    }
+    return shown.join('; ')
 }
