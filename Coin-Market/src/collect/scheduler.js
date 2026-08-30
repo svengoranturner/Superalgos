@@ -23,6 +23,7 @@ exports.newScheduler = function (parts, options) {
         endingSoonMinutes: 5,
         resolveMinutes: 30,
         spotMinutes: 20,
+        reconcileMinutes: 30,
         purgeHours: 24
     }, options || {})
 
@@ -77,6 +78,26 @@ exports.newScheduler = function (parts, options) {
                         (report.gone > 0 ? ', ' + report.gone + ' past the 90-day window' : ''))
                 }
             })
+
+            /*  Our call count against eBay's, which is authoritative. Ours
+                rolls at UTC midnight while eBay's Browse window resets at
+                07:00, so without this the collector believes it has a fresh
+                quota for seven hours a day that it does not have. Optional:
+                if no reader was supplied the collector still runs, just on
+                its own estimate. */
+            if (typeof parts.browseRemaining === 'function') {
+                every(config.reconcileMinutes, 'quota', async () => {
+                    const remaining = await parts.browseRemaining()
+                    if (!Number.isFinite(remaining)) { return }
+                    const before = budget.remaining()
+                    budget.reconcile(remaining)
+                    const after = budget.remaining()
+                    if (after !== before) {
+                        log('quota', 'eBay reports ' + remaining + ' left; corrected ours ' +
+                            before + ' -> ' + after)
+                    }
+                })
+            }
 
             every(config.purgeHours * 60, 'retention', async () => {
                 const purged = repository.purgeExpired()

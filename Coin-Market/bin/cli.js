@@ -316,8 +316,11 @@ COMMANDS.run = {
             console.log('but final sale prices cannot be resolved. Run "coin-market auth-url" to fix.')
         }
 
+        const QUOTA = require('../src/ebay/quota.js')
+
         const scheduler = require('../src/collect/scheduler.js').newScheduler({
             db, repository, discoverer, resolver, budget,
+            browseRemaining: () => QUOTA.browseRemaining(auth),
             spotSource: SPOT.newSpotSource(settings.spot),
             coins: settings.coins
         }, settings.collector)
