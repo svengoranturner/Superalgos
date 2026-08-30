@@ -249,3 +249,61 @@ test('an endless listing not seen for days drops out rather than lingering', () 
     assert.ok(!repo.activeListings('GB.SOV.FULL').map(r => r.browseId).includes('v1|stale|0'))
     db.close()
 })
+
+/* ------------------------------------------------------- review queue */
+
+/*  The review queue query had no test at all, so a change to it passed a
+    green suite while being syntactically fine and semantically wrong. */
+function queueFixture () {
+    const { db, repository } = fixture()
+    const soon = new Date(Date.now() + DAY_MS).toISOString()
+
+    for (const [browseId, legacyId, title] of [
+        ['v1|q1|0', 'q1', 'Gold Sovereign 1911 uncertain portrait'],
+        ['v1|q2|0', 'q2', 'Sovereign something odd'],
+        ['v1|q3|0', 'q3', 'Gold Sovereign priced and flagged']
+    ]) {
+        repository.saveListing({
+            browseId, legacyId, title, buyingOptions: 'FIXED_PRICE', endTime: soon,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg',
+            categoryPath: 'Coins|Bullion', sellerFeedbackPct: 99.2, sellerFeedbackCnt: 410
+        })
+        repository.saveSnapshot(browseId, { price: 700, shipping: 4, observedAt: new Date().toISOString() })
+    }
+
+    /*  q3 is the case that matters: flagged for a human AND still counted in
+        the market statistics. */
+    repository.saveClassification('v1|q3|0', [{ key: 'GB.SOV.BULLION.FULL', level: 3 }], 0.5, 'title', 0.2354, {})
+
+    repository.queueForReview('v1|q1|0', 'Portrait type ambiguous for that year', 'GB.SOV.BULLION.FULL', 0.5)
+    repository.queueForReview('v1|q2|0', 'EXCLUDED: Not a coin', null, 0)
+    repository.queueForReview('v1|q3|0', 'Denomination not identified', 'GB.SOV.BULLION.FULL', 0.5)
+    return { db, repository }
+}
+
+test('the review queue carries everything a glance needs', () => {
+    const { db, repository } = queueFixture()
+    const rows = repository.reviewQueue(50)
+    assert.strictEqual(rows.length, 3)
+
+    const one = rows.find(r => r.legacyId === 'q1')
+    /*  Each of these costs no API call - it is already stored - and each
+        removes a reason to open a new tab. */
+    assert.strictEqual(one.imageUrl, 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg')
+    assert.strictEqual(one.categoryPath, 'Coins|Bullion')
+    assert.strictEqual(one.sellerFeedbackPct, 99.2)
+    assert.strictEqual(one.price, 700)
+    assert.strictEqual(one.shipping, 4)
+    db.close()
+})
+
+/*  Newest-first buried the listings that are actually making a number wrong
+    among the ones already dropped and shown only for auditability. */
+test('listings still counted in the statistics come first in the queue', () => {
+    const { db, repository } = queueFixture()
+    const rows = repository.reviewQueue(50)
+    assert.strictEqual(rows[0].legacyId, 'q3', 'the priced-and-flagged listing must lead')
+    assert.strictEqual(rows[0].priced, 1)
+    assert.ok(rows.slice(1).every(r => r.priced === 0))
+    db.close()
+})

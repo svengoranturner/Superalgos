@@ -316,6 +316,23 @@ exports.newRepository = function (db, options) {
                            should not have to be given twice. */
                        l.legacy_id AS legacyId,
                        lb.verdict AS verdict, lb.denomination AS labelledDenomination,
+                       /*  Everything a glance needs, so the queue can be
+                           worked without opening a tab per listing. All of
+                           it is already stored - none of this costs an API
+                           call. */
+                       l.image_url AS imageUrl, l.category_path AS categoryPath,
+                       l.condition_label AS conditionLabel, l.buying_options AS buyingOptions,
+                       l.seller_feedback_pct AS sellerFeedbackPct,
+                       l.seller_feedback_cnt AS sellerFeedbackCnt,
+                       l.end_time AS endTime,
+                       /*  Whether this listing is still counted in the
+                           market statistics. 686 of the uncertain ones are,
+                           and those are the only ones distorting a number
+                           on the front page - so they are the ones worth a
+                           human's attention first. */
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM listing_instrument li WHERE li.browse_id = r.browse_id
+                       ) THEN 1 ELSE 0 END AS priced,
                        /*  The asking price, so the review page can say what
                            it implies. A "gold sovereign" priced below its own
                            gold content is not a coin needing a decision - it
@@ -332,7 +349,11 @@ exports.newRepository = function (db, options) {
                     FROM listing_snapshot
                 ) s ON s.browse_id = r.browse_id AND s.rn = 1
                 WHERE r.resolved_at IS NULL
-                ORDER BY r.queued_at DESC LIMIT ?
+                /*  Impact before recency. A listing still counted in the
+                    market statistics is the only kind that can be making a
+                    number wrong, and newest-first buried those among 1,536
+                    already-dropped rows shown for auditability. */
+                ORDER BY priced DESC, r.queued_at DESC LIMIT ?
             `).all(limit || 50)
         },
 

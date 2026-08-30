@@ -4,6 +4,7 @@ const BROWSE = require('../ebay/browse.js')
 const { classify } = require('../catalogue/classify.js')
 const INSTRUMENTS = require('../catalogue/instruments.js')
 const EXCLUSIONS = require('../catalogue/exclusions.js')
+const LEARNED = require('../catalogue/learned.js')
 
 /*
     Discovery and snapshotting - which, on eBay's current API surface, are
@@ -58,20 +59,37 @@ exports.newDiscoverer = function (browseClient, repository, options) {
         let created = 0
         let reviewed = 0
 
+        /*  What the owner has already decided, read once per batch.
+
+            Without this a rule accepted today would not apply to anything
+            discovered tomorrow - the collector would keep re-admitting the
+            exact class of listing it had just been taught to reject, until
+            somebody remembered to reclassify. A teaching loop the collector
+            ignores is not a loop.
+        */
+        const labels = repository.labelIndex()
+        const learned = LEARNED.compile(repository.learnedRules())
+
         for (const item of items) {
             repository.saveListing(item, seenAt)
             repository.saveSnapshot(item.browseId, Object.assign({ observedAt: seenAt }, item))
 
+            const label = labels.get(item.legacyId) || null
+
             /*  The seller has already told eBay what kind of thing this is.
                 Checked before the title parser gets a say, because the
-                category is the stronger evidence by a distance. */
-            const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath)
-            if (wrongCategory !== null) {
-                repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
-                continue
+                category is the stronger evidence by a distance - but not
+                before a human, who has seen the listing and is better
+                evidence than a category the seller picked. */
+            if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
+                const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath)
+                if (wrongCategory !== null) {
+                    repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
+                    continue
+                }
             }
 
-            const result = classify({ title: item.title })
+            const result = classify({ title: item.title }, { label, learned })
 
             if (result.excluded !== null) {
                 /* Excluded lots are still stored - the dashboard shows what
@@ -93,7 +111,8 @@ exports.newDiscoverer = function (browseClient, repository, options) {
             }
             if (keys.length > 0) {
                 repository.saveClassification(
-                    item.browseId, keys, result.confidence, 'title',
+                    item.browseId, keys, result.confidence,
+                    result.labelled ? 'human' : 'title',
                     INSTRUMENTS.fineOzFor(result.attributes), result.attributes
                 )
                 created++
