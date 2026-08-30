@@ -418,6 +418,16 @@ exports.newRepository = function (db, options) {
                 entry.note, now, entry.source || 'human', quantity])
         },
 
+        /*  The title a decision should be recorded against. Looked up rather
+            than posted back, because a batch of thirty would otherwise carry
+            thirty hidden title fields for no reason. */
+        titleFor (legacyId) {
+            const row = db.prepare(
+                'SELECT title FROM listing WHERE legacy_id = ? ORDER BY last_seen DESC LIMIT 1'
+            ).get(legacyId)
+            return row === undefined ? null : row.title
+        },
+
         unlabel (legacyId) {
             return db.prepare('DELETE FROM listing_label WHERE legacy_id = ?').run(legacyId)
         },

@@ -92,6 +92,12 @@ button.yes { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%,
 button.no  { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
 button.plain { color:var(--ink-2) }
 .settled { color:var(--ink-2); font-size:12px }
+/*  The tick column. Kept narrow and first so a cull is one pass straight down
+    the left edge without the pointer leaving that column. */
+input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critical); cursor:pointer }
+.pick-spacer { display:block; width:16px }
+.bulkbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 12px }
+.bulkbar button { font-size:13px; padding:5px 12px }
 input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-radius:6px;
   border:1px solid var(--border); background:var(--surface); color:var(--ink) }
 .countries { display:flex; flex-wrap:wrap; gap:6px 14px; margin:10px 0 14px }
@@ -106,7 +112,7 @@ input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-
     wrong for a queue somebody has to read. Scoped class names, so the wide
     statistics table keeps the horizontal scroll it needs. */
 .queue { display:flex; flex-direction:column }
-.q { display:grid; grid-template-columns:56px minmax(0,1fr) auto; gap:14px;
+.q { display:grid; grid-template-columns:18px 56px minmax(0,1fr) auto; gap:12px;
   align-items:start; padding:11px 4px; border-bottom:1px solid var(--grid) }
 .q:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
 .q-shot { position:relative; width:56px; height:56px }
@@ -163,9 +169,9 @@ input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-
   border-radius:0 0 9px 9px; border-top:1px solid var(--border) }
 
 @media (max-width:760px) {
-  .q { grid-template-columns:44px minmax(0,1fr) }
+  .q { grid-template-columns:18px 44px minmax(0,1fr) }
   .q-shot, .q-shot img { width:44px; height:44px }
-  .q-side { grid-column:2; align-items:flex-start; text-align:left;
+  .q-side { grid-column:3; align-items:flex-start; text-align:left;
     flex-direction:row; flex-wrap:wrap; align-items:center }
   .q-big { left:0; top:52px; width:min(86vw,340px); height:min(86vw,340px) }
 }

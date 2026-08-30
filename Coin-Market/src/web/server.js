@@ -37,7 +37,10 @@ exports.start = function (opened, options) {
             let size = 0
             request.on('data', chunk => {
                 size += chunk.length
-                if (size > 64 * 1024) { request.destroy(); return }
+                /*  A section form posts a denomination and a quantity for
+                    every row it shows, so 250 rows is a few tens of KB - the
+                    old 64KB cap would have silently truncated a bulk cull. */
+                if (size > 2 * 1024 * 1024) { request.destroy(); return }
                 chunks.push(chunk)
             })
             request.on('end', () => {
@@ -56,7 +59,7 @@ exports.start = function (opened, options) {
         try {
             let html
             if (url.pathname === '/review') {
-                html = reviewPage(opened)
+                html = reviewPage(opened, url)
             } else if (url.pathname === '/listings') {
                 html = listingsPage(opened, url)
             } else if (url.pathname === '/teach') {
@@ -334,7 +337,19 @@ function newPlausibilityCell (spot) {
     }
 }
 
-function reviewPage (opened) {
+function reviewPage (opened, url) {
+    /*  Say what the last click did. A batch decision is the one action here
+        where you cannot see the result by looking at the row you pressed. */
+    const appliedCount = url === undefined ? 0 : Number(url.searchParams.get('applied'))
+    const appliedVerdict = url === undefined ? null : url.searchParams.get('verdict')
+    const applied = Number.isFinite(appliedCount) && appliedCount > 0
+        ? '<div class="card" style="border-color:var(--good)"><p style="margin:0">' +
+          '<strong>' + appliedCount + '</strong> listing' + (appliedCount === 1 ? '' : 's') +
+          ' marked ' + (appliedVerdict === LEARNED.VERDICT.SOVEREIGN
+              ? 'genuine' : 'not a sovereign') +
+          '. <span class="thin">Each one is undoable from its own row.</span></p></div>'
+        : ''
+
     /*  The whole queue, not a page of it - it is sorted by impact below and
         truncating before sorting would hide exactly the rows that matter. */
     /*  Fetch one more than we will admit to, so a full page can tell the
@@ -358,16 +373,43 @@ function reviewPage (opened) {
     const affecting = uncertain.filter(r => r.priced)
     const inert = uncertain.filter(r => !r.priced)
 
-    const list = (items, empty, cap) => items.length === 0
-        ? '<p class="thin">' + empty + '</p>'
-        : '<div class="card"><div class="queue">' +
-          items.slice(0, cap || 250).map(r => queueRow(r, verdictCell(r))).join('') +
-          '</div>' +
-          (items.length > (cap || 250)
-              ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + (cap || 250) +
-                ' of ' + items.length + '.</p>'
-              : '') +
-          '</div>'
+    /*
+        One form per section, so a decision can cover many rows.
+
+        The intended pass is: tick down the left-hand edge, hit one button to
+        cull; then go back over what is left setting denomination and quantity
+        where the row asks for it; then tick and accept. The per-row buttons
+        still work for one-offs, and the bar is repeated at the foot so a long
+        section does not mean scrolling back up to act on it.
+    */
+    const bar = (where) => '<div class="bulkbar">' +
+        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
+        'Not a sovereign &mdash; selected</button>' +
+        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
+        'Genuine &mdash; selected</button>' +
+        (where === 'top'
+            ? '<span class="thin">Tick down the left, then one click. ' +
+              'Anything you have not ticked is untouched.</span>'
+            : '') +
+        '</div>'
+
+    const list = (items, empty, cap) => {
+        if (items.length === 0) { return '<p class="thin">' + empty + '</p>' }
+        const shown = items.slice(0, cap || 250)
+        return '<form method="post" action="/apply">' +
+            '<input type="hidden" name="back" value="/review">' +
+            bar('top') +
+            '<div class="card"><div class="queue">' +
+            shown.map(r => queueRow(r, verdictCell(r))).join('') +
+            '</div>' +
+            (items.length > shown.length
+                ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + shown.length +
+                  ' of ' + items.length + '.</p>'
+                : '') +
+            '</div>' +
+            (shown.length > 6 ? bar('bottom') : '') +
+            '</form>'
+    }
 
     const settled = rows.filter(r => r.verdict).length
 
@@ -375,6 +417,7 @@ function reviewPage (opened) {
 <h1>Needs review</h1>
 <p class="sub">Listings the classifier would not price without a human decision. Every statistic
 in this tool is computed over what survives this filter, so it is shown rather than hidden.</p>
+${applied}
 
 <div class="card">
   <p class="thin" style="margin:0">Hover a photo to see it large. Mark one and it is settled for
@@ -533,47 +576,39 @@ function detectedDenomination (row) {
 }
 
 function callControls (row) {
-    if (!row.legacyId) { return '<span class="thin">—</span>' }
+    if (!row.legacyId) { return '<span class="thin">&mdash;</span>' }
     const id = escapeHtml(row.legacyId)
 
     if (row.verdict) {
         const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
             ? 'You said: genuine' +
-                (row.labelledQuantity > 1 ? ' \u00d7' + row.labelledQuantity : '') +
+                (row.labelledQuantity > 1 ? ' ×' + row.labelledQuantity : '') +
                 (row.labelledDenomination
                     ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
             : 'You said: not a sovereign'
         return '<span class="settled">' + said + '</span> ' +
-            '<form method="post" action="/unlabel" style="display:inline">' +
-            '<input type="hidden" name="legacyId" value="' + id + '">' +
-            '<input type="hidden" name="back" value="' + escapeHtml(row.back || '/review') + '">' +
-            '<button class="plain" title="Forget this decision">undo</button></form>'
+            '<button class="plain" name="undo" value="' + id + '" title="Forget this decision">undo</button>'
     }
 
     /*  Pre-selected to whatever the classifier already worked out, so the
         common case needs no interaction at all: clicking Genuine submits the
-        denomination it already had. The dropdown only asks a question when
-        it reads "denomination?", which is exactly when there is one to
-        answer. */
+        denomination it already had. The dropdown only asks a question when it
+        reads "denomination?", which is exactly when there is one to answer. */
     const detected = detectedDenomination(row)
     const options = DENOMINATION_OPTIONS
         .map(d => '<option value="' + d + '"' + (d === (detected || '') ? ' selected' : '') + '>' +
             (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
         .join('')
 
-    /*  Quantity is a plain number box defaulting to 1 and is ignored unless
-        changed - a multi-coin lot then prices against its own gold rather
-        than being thrown away or counted as one coin. */
-    return '<form class="verdict" method="post" action="/label">' +
-        '<input type="hidden" name="legacyId" value="' + id + '">' +
-        '<input type="hidden" name="title" value="' + escapeHtml(row.title) + '">' +
-        '<input type="hidden" name="back" value="' + escapeHtml(row.back || '/review') + '">' +
-        '<select name="denomination">' + options + '</select>' +
-        '<input class="qty" type="number" name="quantity" min="1" max="99" value="1" ' +
+    /*  Field names carry the listing id, because one form now covers the
+        whole section: the handler reads the denomination and quantity
+        belonging to each row it is acting on, whether that is this one row or
+        every ticked one. */
+    return '<select name="d_' + id + '">' + options + '</select>' +
+        '<input class="qty" type="number" name="q_' + id + '" min="1" max="99" value="1" ' +
         'title="How many of the same coin are in this lot. Leave at 1 unless it is a multiple.">' +
-        '<button class="yes" name="verdict" value="' + LEARNED.VERDICT.SOVEREIGN + '">Genuine</button>' +
-        '<button class="no" name="verdict" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">Not a sov</button>' +
-        '</form>'
+        '<button class="yes" name="genuine" value="' + id + '">Genuine</button>' +
+        '<button class="no" name="reject" value="' + id + '">Not a sov</button>'
 }
 
 function queueRow (row, verdictCell) {
@@ -625,7 +660,15 @@ function queueRow (row, verdictCell) {
         for the row. */
     const caption = escapeHtml(row.categoryPath || '')
 
+    /*  The tick box leads the row, so a cull is one pass straight down the
+        left-hand edge without the mouse leaving that column. */
+    const pick = row.legacyId && !row.verdict
+        ? '<input class="pick" type="checkbox" name="pick" value="' + escapeHtml(row.legacyId) + '" ' +
+          'title="Select this listing for a bulk decision">'
+        : '<span class="pick-spacer"></span>'
+
     return `<div class="q">
+  ${pick}
   <div class="q-shot"${big ? ' style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)"' : ''}>
     ${row.imageUrl
         ? '<img src="' + escapeHtml(row.imageUrl) + '" alt="" loading="lazy" decoding="async">'
@@ -641,7 +684,7 @@ function queueRow (row, verdictCell) {
   <div class="q-side">
     <div class="q-price"><span class="mono">${total > 0 ? gbp(total) : '—'}</span>
       ${verdictCell === undefined ? '' : verdictCell}</div>
-    ${callControls(row)}
+    <div class="verdict">${callControls(row)}</div>
   </div>
 </div>`
 }
@@ -696,12 +739,21 @@ function listingsPage (opened, url) {
         list that silently stops is a list you would wrongly believe you had
         worked through. */
     const CAP = 200
-    const list = (items) => '<div class="card"><div class="queue">' +
+    const bar = '<div class="bulkbar">' +
+        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
+        'Not a sovereign &mdash; selected</button>' +
+        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
+        'Genuine &mdash; selected</button></div>'
+
+    const list = (items) => '<form method="post" action="/apply">' +
+        '<input type="hidden" name="back" value="' + escapeHtml('/listings?key=' + key) + '">' +
+        bar +
+        '<div class="card"><div class="queue">' +
         items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
         (items.length > CAP
             ? '<p class="thin" style="margin:12px 0 0">Showing the dearest ' + CAP +
               ' of ' + items.length + '.</p>'
-            : '') + '</div>'
+            : '') + '</div>' + bar + '</form>'
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
@@ -755,6 +807,69 @@ function safeBack (value) {
 */
 function handlePost (opened, pathname, form) {
     const { db, repository } = opened
+
+    /*
+        One decision, or a whole ticked batch of them.
+
+        Both come through here because both come from the same form: the
+        section is one form so a cull can be a single click, and a per-row
+        button is just a batch of one that also carries its own denomination.
+    */
+    if (pathname === '/apply') {
+        const back = safeBack(form.get('back'))
+
+        const undo = form.get('undo')
+        if (undo) {
+            repository.unlabel(undo)
+            RECLASSIFY.one(db, repository, undo, { allowedCountries: allowedCountries(repository) })
+            return back
+        }
+
+        const single = form.get('genuine') || form.get('reject')
+        const verdict = form.get('genuine')
+            ? LEARNED.VERDICT.SOVEREIGN
+            : (form.get('reject') ? LEARNED.VERDICT.NOT_SOVEREIGN : form.get('bulk'))
+
+        if (!LEARNED.VERDICT[verdict]) { return back }
+
+        /*  A per-row button acts on its own row whether or not anything is
+            ticked; the bar acts on the ticks. Silently including the ticks in
+            a single-row click would be a nasty surprise. */
+        const ids = single ? [single] : form.getAll('pick')
+        if (ids.length === 0) { return back }
+
+        const chosen = allowedCountries(repository)
+        let applied = 0
+        for (const legacyId of ids) {
+            const title = repository.titleFor(legacyId)
+            if (title === null) { continue }
+            repository.label({
+                legacyId,
+                title,
+                verdict,
+                /*  Each row carries its own fields, so a batch accept still
+                    honours a denomination or quantity set on any row in it -
+                    the second pass and the third can be the same pass. */
+                denomination: verdict === LEARNED.VERDICT.SOVEREIGN
+                    ? (form.get('d_' + legacyId) || null)
+                    : null,
+                quantity: verdict === LEARNED.VERDICT.SOVEREIGN
+                    ? Number(form.get('q_' + legacyId)) || 1
+                    : 1
+            })
+            RECLASSIFY.one(db, repository, legacyId, { allowedCountries: chosen })
+            applied++
+        }
+
+        /*  A single rejection is worth generalising, and offering that is the
+            whole point of the teach page. A batch of thirty is not - there is
+            no one title it came from. */
+        if (single && verdict === LEARNED.VERDICT.NOT_SOVEREIGN) {
+            return '/teach?legacy=' + encodeURIComponent(single) + '&back=' + encodeURIComponent(back)
+        }
+        return back + (back.includes('?') ? '&' : '?') + 'applied=' + applied +
+            '&verdict=' + encodeURIComponent(verdict)
+    }
 
     if (pathname === '/label') {
         const verdict = form.get('verdict')
