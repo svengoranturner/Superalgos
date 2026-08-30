@@ -419,5 +419,23 @@ exports.MIGRATIONS = [
            --------------------------------------------------------------- */
         ALTER TABLE listing_label ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
         `
+    },
+    {
+        name: '008-lot-quantity-on-the-assignment',
+        sql: `
+        /* ---------------------------------------------------------------
+           How many coins this particular lot holds.
+
+           It has to live here and not on the instrument row, because fine_oz
+           the instrument is the gold in ONE coin and is shared by every
+           listing filed under that key - writing a three-coin lot's melt
+           there would change the melt for all of them.
+
+           So the instrument keeps saying what a sovereign is, and each
+           assignment says how many of them this lot contains. Every query
+           that reads a listing's melt multiplies the two.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing_instrument ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+        `
     }
 ]

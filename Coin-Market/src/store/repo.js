@@ -81,8 +81,9 @@ exports.newRepository = function (db, options) {
             VALUES (?,?,?,?,?,?,?,?,?,?)
         `),
         assignInstrument: db.prepare(`
-            INSERT OR REPLACE INTO listing_instrument (browse_id, key, confidence, method, verified, assigned_at)
-            VALUES (?,?,?,?,?,?)
+            INSERT OR REPLACE INTO listing_instrument
+                (browse_id, key, confidence, method, verified, assigned_at, quantity)
+            VALUES (?,?,?,?,?,?,?)
         `),
         upsertInstrument: db.prepare(`
             INSERT INTO instrument (key, level, display_name, metal, fine_oz, attributes)
@@ -155,12 +156,21 @@ exports.newRepository = function (db, options) {
         saveClassification (browseId, keys, confidence, method, fineOz, attributes) {
             const now = new Date().toISOString()
             const INSTRUMENTS = require('../catalogue/instruments.js')
+            /*  The instrument records what ONE of these coins is; the
+                assignment records how many of them this lot holds. Writing a
+                three-coin lot straight into instrument.fine_oz would have
+                changed the melt for every single coin filed under the same
+                key. */
+            const quantity = Number.isFinite(attributes && attributes.quantity) && attributes.quantity > 1
+                ? Math.floor(attributes.quantity)
+                : 1
             for (const entry of keys) {
                 bindAll(statements.upsertInstrument, [
                     entry.key, entry.level, INSTRUMENTS.displayName(entry.key),
                     'XAU', fineOz, JSON.stringify(attributes || {})
                 ])
-                bindAll(statements.assignInstrument, [browseId, entry.key, confidence, method, 0, now])
+                bindAll(statements.assignInstrument,
+                    [browseId, entry.key, confidence, method, 0, now, quantity])
             }
         },
 
@@ -223,7 +233,7 @@ exports.newRepository = function (db, options) {
                        o.shipping, o.bid_count AS bidCount, o.sale_type AS saleType,
                        o.sold, o.censored, l.title, l.seller_hash AS sellerHash,
                        l.seller_id_hash AS sellerIdHash, l.cert_number AS certNumber,
-                       l.start_time AS listedAt, i.fine_oz AS fineOz
+                       l.start_time AS listedAt, i.fine_oz * li.quantity AS fineOz
                 FROM listing_outcome o
                 JOIN listing_instrument li ON li.browse_id = o.browse_id
                 JOIN listing l ON l.browse_id = o.browse_id
@@ -272,7 +282,8 @@ exports.newRepository = function (db, options) {
                     ) WHERE rn = 1
                 )
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
-                       l.end_time AS endTime, l.item_web_url AS itemWebUrl, i.fine_oz AS fineOz,
+                       l.end_time AS endTime, l.item_web_url AS itemWebUrl,
+                       i.fine_oz * li.quantity AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount
                 FROM listing l
                 JOIN listing_instrument li ON li.browse_id = l.browse_id
@@ -492,7 +503,8 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.last_seen AS lastSeen, l.first_seen AS firstSeen,
                        l.item_country AS itemCountry,
-                       li.confidence, i.fine_oz AS fineOz,
+                       li.confidence, li.quantity AS lotQuantity,
+                       i.fine_oz * li.quantity AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount,
                        COALESCE(s.price, 0) + COALESCE(s.shipping, 0) AS totalCost,
                        1 AS priced,

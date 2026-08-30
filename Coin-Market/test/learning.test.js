@@ -84,11 +84,47 @@ test('a lot can be admitted at the right melt by saying how many coins it holds'
     assert.strictEqual(classify({ title }).excluded.code, 'PROOF_SET_OR_BUNDLE')
 
     const one = classify({ title }, { label: { verdict: LEARNED.VERDICT.SOVEREIGN } })
-    assert.strictEqual(INSTRUMENTS.fineOzFor(one.attributes), COINS.DENOMINATIONS.FULL.fineOz)
+    assert.strictEqual(one.attributes.quantity, undefined)
 
     const three = classify({ title }, { label: { verdict: LEARNED.VERDICT.SOVEREIGN, quantity: 3 } })
     assert.strictEqual(three.attributes.quantity, 3)
-    assert.ok(Math.abs(INSTRUMENTS.fineOzFor(three.attributes) - 3 * COINS.DENOMINATIONS.FULL.fineOz) < 1e-9)
+
+    /*  fineOzFor stays per-coin on purpose - it is written to the shared
+        instrument row, and tripling it there would redefine the melt for
+        every other sovereign filed under the same key. */
+    assert.strictEqual(INSTRUMENTS.fineOzFor(three.attributes), COINS.DENOMINATIONS.FULL.fineOz)
+})
+
+/*  The lot size rides on the assignment, and the melt a listing is measured
+    against is the coin times the lot. */
+test('a labelled lot is measured against its own gold, not a single coin', () => {
+    const { db, repository } = fixture()
+    repository.saveListing({
+        browseId: 'v1|lot|0', legacyId: 'lot', title: '3 x Gold Sovereign 1912 George V',
+        buyingOptions: 'FIXED_PRICE', endTime: new Date(Date.now() + DAY_MS).toISOString(),
+        itemCountry: 'GB'
+    })
+    repository.saveSnapshot('v1|lot|0', { price: 2300, shipping: 0 })
+    repository.label({
+        legacyId: 'lot', title: '3 x Gold Sovereign 1912 George V',
+        verdict: LEARNED.VERDICT.SOVEREIGN, denomination: 'FULL', quantity: 3
+    })
+    require('../src/catalogue/reclassify.js').one(db, repository, 'lot')
+
+    const key = db.prepare(
+        "SELECT key FROM listing_instrument WHERE browse_id = ? AND key LIKE '%.FULL'").get('v1|lot|0')
+    assert.ok(key !== undefined, 'the lot should be priced, not excluded')
+
+    const lot = repository.activeListings(key.key).find(r => r.browseId === 'v1|lot|0')
+    assert.ok(lot !== undefined, 'the lot should be an active listing under ' + key.key)
+    assert.ok(Math.abs(lot.fineOz - 3 * COINS.DENOMINATIONS.FULL.fineOz) < 1e-9,
+        'expected three sovereigns of gold, got ' + lot.fineOz)
+
+    /* And the instrument itself still describes one coin. */
+    const instrument = db.prepare('SELECT fine_oz FROM instrument WHERE key = ?').get(key.key)
+    assert.ok(Math.abs(instrument.fine_oz - COINS.DENOMINATIONS.FULL.fineOz) < 1e-9,
+        'the shared instrument must still describe a single sovereign')
+    db.close()
 })
 
 /* ------------------------------------------------------ learned rules */
