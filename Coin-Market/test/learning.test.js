@@ -259,3 +259,61 @@ test('a decision changes what gets priced', () => {
     assert.strictEqual(
         db.prepare('SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|10|0').n, 0)
 })
+
+/*  A verdict cannot affect any listing but its own, and rebuilding all five
+    thousand per click was slow enough on the Pi that the button timed out. */
+test('one verdict reclassifies one coin, not the whole store', () => {
+    const { db, repository } = fixture()
+    const soon = new Date(Date.now() + DAY_MS).toISOString()
+    for (const [browseId, legacyId, title] of [
+        ['v1|k1|0', 'k1', '1974 Gold Sovereign Elizabeth II'],
+        ['v1|k2|0', 'k2', '1911 Gold Sovereign George V London'],
+        /* A relist: same coin, second browse id. Both must be reclassified. */
+        ['v1|k1b|0', 'k1', '1974 Gold Sovereign Elizabeth II']
+    ]) {
+        repository.saveListing({ browseId, legacyId, title, buyingOptions: 'FIXED_PRICE', endTime: soon })
+    }
+
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.run(db, repository)
+    const otherBefore = db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|k2|0').n
+    assert.ok(otherBefore > 0)
+
+    repository.label({ legacyId: 'k1', title: '1974 Gold Sovereign Elizabeth II', verdict: LEARNED.VERDICT.NOT_SOVEREIGN })
+    const counts = RECLASSIFY.one(db, repository, 'k1')
+
+    assert.strictEqual(counts.total, 2, 'both browse ids of the relisted coin')
+    assert.strictEqual(counts.labelled, 2)
+    /* The labelled coin is out of the statistics, under both its ids. */
+    for (const id of ['v1|k1|0', 'v1|k1b|0']) {
+        assert.strictEqual(db.prepare(
+            'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get(id).n, 0, id)
+    }
+    /* And nothing else was touched. */
+    assert.strictEqual(db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|k2|0').n, otherBefore)
+    db.close()
+})
+
+/*  Undoing has to put it back, or a mis-click is unrecoverable without a
+    command line. */
+test('undoing a verdict restores the listing to the statistics', () => {
+    const { db, repository } = fixture()
+    repository.saveListing({
+        browseId: 'v1|u1|0', legacyId: 'u1', title: '1974 Gold Sovereign Elizabeth II',
+        buyingOptions: 'FIXED_PRICE', endTime: new Date(Date.now() + DAY_MS).toISOString()
+    })
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.run(db, repository)
+    const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|u1|0').n
+
+    repository.label({ legacyId: 'u1', title: 'x', verdict: LEARNED.VERDICT.NOT_SOVEREIGN })
+    RECLASSIFY.one(db, repository, 'u1')
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|u1|0').n, 0)
+
+    repository.unlabel('u1')
+    RECLASSIFY.one(db, repository, 'u1')
+    assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|u1|0').n, before)
+    db.close()
+})

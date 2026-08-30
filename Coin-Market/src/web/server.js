@@ -577,7 +577,10 @@ function handlePost (opened, pathname, form) {
                 an empty select must not be stored as a correction. */
             denomination: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('denomination') || null) : null
         })
-        RECLASSIFY.run(db, repository)
+        /*  One coin, not all five thousand. A verdict cannot affect any
+            listing but this one's, and a full rebuild per click is slow
+            enough on a Pi that people stop clicking. */
+        RECLASSIFY.one(db, repository, legacyId)
 
         /*  Back where the decision was made. A junk listing noticed on a
             market number should not dump you on the review page, or working
@@ -592,7 +595,7 @@ function handlePost (opened, pathname, form) {
         const legacyId = form.get('legacyId')
         if (legacyId) {
             repository.unlabel(legacyId)
-            RECLASSIFY.run(db, repository)
+            RECLASSIFY.one(db, repository, legacyId)
         }
         return safeBack(form.get('back'))
     }
