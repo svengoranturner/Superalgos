@@ -452,8 +452,8 @@ function queueRow (row, verdictCell) {
     <div class="q-meta">${meta.join('<span aria-hidden="true">·</span>')}</div>
   </div>
   <div class="q-side">
-    <div class="mono">${total > 0 ? gbp(total) : '—'}</div>
-    ${verdictCell === undefined ? '' : verdictCell}
+    <div class="q-price"><span class="mono">${total > 0 ? gbp(total) : '—'}</span>
+      ${verdictCell === undefined ? '' : verdictCell}</div>
     ${callControls(row)}
   </div>
 </div>`

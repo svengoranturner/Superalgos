@@ -115,7 +115,10 @@ button.plain { color:var(--ink-2) }
 .q-title a:hover { text-decoration:underline }
 .q-meta { margin-top:5px; display:flex; flex-wrap:wrap; gap:5px 10px; align-items:center;
   font-size:11.5px; color:var(--muted) }
-.q-side { display:flex; flex-direction:column; align-items:flex-end; gap:7px; text-align:right }
+/*  Two lines, not four. The queue is scanned, so row height is how many
+    listings fit on a screen. */
+.q-side { display:flex; flex-direction:column; align-items:flex-end; gap:6px; text-align:right }
+.q-price { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; justify-content:flex-end }
 
 /*  The preview, on hover or keyboard focus.
 
