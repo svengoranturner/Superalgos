@@ -68,7 +68,16 @@ td { padding:8px 10px; border-bottom:1px solid var(--grid); text-align:right; wh
 tbody tr:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
 .mono { font-variant-numeric:tabular-nums }
 .thin { color:var(--muted); font-size:12px }
+/*  A link has to look like one.
+
+    "a { color: inherit }" with no underline made every coin type on the
+    market page read as plain text, so the drill-down - and the auction /
+    Buy-It-Now filter that lives on it - was unreachable unless you happened
+    to click a word that gave no sign of being clickable. */
 a { color:inherit }
+td a, th a { text-decoration:underline; text-decoration-color:var(--axis);
+  text-underline-offset:3px }
+td a:hover { text-decoration-color:var(--ink) }
 .legend { display:flex; gap:18px; align-items:center; font-size:13px; color:var(--ink-2); margin-bottom:14px }
 .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:6px; vertical-align:-1px }
 .alert { border-left:3px solid var(--good); padding:12px 16px; margin-bottom:10px; background:var(--surface); border-radius:0 8px 8px 0 }

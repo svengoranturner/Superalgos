@@ -403,6 +403,38 @@ function newPlausibilityCell (spot) {
     }
 }
 
+/*
+    Auction / Buy-It-Now, as three links. Shared by the review queue and the
+    drill-down so the control looks and behaves the same in both, and so
+    neither can drift into filtering on a different column from the other.
+*/
+function saleTabs (basePath, current, params) {
+    return '<div class="tabs">' +
+        ['all', 'auction', 'bin'].map(option => {
+            const label = option === 'all' ? 'Everything'
+                : (option === 'auction' ? 'Auctions only' : 'Buy-It-Now only')
+            const query = Object.assign({}, params || {})
+            if (option !== 'all') { query.sale = option }
+            const search = Object.keys(query)
+                .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(query[k]))
+                .join('&')
+            const href = basePath + (search === '' ? '' : '?' + search)
+            return option === current
+                ? '<span class="tab on">' + label + '</span>'
+                : '<a class="tab" href="' + escapeHtml(href) + '">' + label + '</a>'
+        }).join('') + '</div>'
+}
+
+/*  A live listing is judged on how it is offered, a completed one on how it
+    actually sold. The review queue holds both. */
+function matchesSale (row, sale) {
+    if (sale !== 'auction' && sale !== 'bin') { return true }
+    const wasAuction = row.saleType !== null && row.saleType !== undefined
+        ? row.saleType === 'AUCTION'
+        : /AUCTION/i.test(String(row.buyingOptions || ''))
+    return sale === 'auction' ? wasAuction : !wasAuction
+}
+
 function reviewPage (opened, url) {
     /*  Say what the last click did. A batch decision is the one action here
         where you cannot see the result by looking at the row you pressed. */
@@ -429,10 +461,15 @@ function reviewPage (opened, url) {
     const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
 
-    for (const row of rows) { row.back = '/review' }
+    const sale = ['auction', 'bin'].includes(url === undefined ? null : url.searchParams.get('sale'))
+        ? url.searchParams.get('sale')
+        : 'all'
+    const filtered = rows.filter(r => matchesSale(r, sale))
+    const back = '/review' + (sale === 'all' ? '' : '?sale=' + sale)
+    for (const row of filtered) { row.back = back }
 
-    const excluded = rows.filter(r => (r.reason || '').startsWith('EXCLUDED'))
-    const uncertain = rows.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
+    const excluded = filtered.filter(r => (r.reason || '').startsWith('EXCLUDED'))
+    const uncertain = filtered.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
 
     /*  The ones still counted in a market number lead, because they are the
         only ones that can be making the front page wrong. */
@@ -463,7 +500,7 @@ function reviewPage (opened, url) {
         if (items.length === 0) { return '<p class="thin">' + empty + '</p>' }
         const shown = items.slice(0, cap || 250)
         return '<form method="post" action="/apply">' +
-            '<input type="hidden" name="back" value="/review">' +
+            '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
             bar('top') +
             '<div class="card"><div class="queue">' +
             shown.map(r => queueRow(r, verdictCell(r))).join('') +
@@ -477,7 +514,7 @@ function reviewPage (opened, url) {
             '</form>'
     }
 
-    const settled = rows.filter(r => r.verdict).length
+    const settled = filtered.filter(r => r.verdict).length
 
     return RENDER.page('Needs review - Coin Market', `
 <h1>Needs review</h1>
@@ -492,6 +529,14 @@ ${applied}
   <em>not a sovereign</em> and you are then offered a rule that generalises it, with the count of
   what it would catch and what it would break.
   ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
+</div>
+
+<div class="card">
+  ${saleTabs('/review', sale)}
+  <p class="thin" style="margin:10px 0 0">A live lot is filtered on how it is offered, a
+  completed one on how it actually sold. ${sale === 'bin'
+      ? 'No Buy-It-Now lot has a recorded outcome yet &mdash; they carry no end time, so the tool never learns whether they sold.'
+      : ''}</p>
 </div>
 
 <h2>Making a number wrong right now (${affecting.length})</h2>
@@ -875,17 +920,7 @@ moving the numbers on the front page.</p>
 </div>
 
 <div class="card">
-  <div class="tabs">
-    ${['all', 'auction', 'bin'].map(option => {
-        const label = option === 'all' ? 'Everything'
-            : (option === 'auction' ? 'Auctions only' : 'Buy-It-Now only')
-        const href = '/listings?key=' + encodeURIComponent(key) +
-            (option === 'all' ? '' : '&sale=' + option)
-        return option === sale
-            ? '<span class="tab on">' + label + '</span>'
-            : '<a class="tab" href="' + escapeHtml(href) + '">' + label + '</a>'
-    }).join('')}
-  </div>
+  ${saleTabs('/listings', sale, { key })}
   <p class="thin" style="margin:10px 0 0">A completed lot is filtered on how it actually sold, a
   live one on how it is offered. Note that no Buy-It-Now lot has a recorded outcome &mdash; they
   carry no end time, so the tool never learns whether they sold.</p>
