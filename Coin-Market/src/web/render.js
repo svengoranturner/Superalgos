@@ -78,6 +78,25 @@ a { color:inherit }
 nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
 nav a { color:var(--ink-2); text-decoration:none; padding-bottom:3px; border-bottom:2px solid transparent }
 nav a.on { color:var(--ink); border-bottom-color:var(--ink) }
+.badge.good { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }
+.badge.critical { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
+/*  The verdict controls. Deliberately plain buttons in a plain form: the
+    review queue is worked through quickly, and anything that needs
+    JavaScript to record a decision is something that can silently fail to
+    record one. */
+.verdict { display:flex; gap:6px; align-items:center; justify-content:flex-end }
+button, select { font:inherit; font-size:12.5px; padding:3px 9px; border-radius:6px;
+  border:1px solid var(--border); background:var(--surface); color:var(--ink); cursor:pointer }
+button:hover { background:color-mix(in srgb, var(--ink) 6%, transparent) }
+button.yes { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }
+button.no  { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
+button.plain { color:var(--ink-2) }
+.settled { color:var(--ink-2); font-size:12px }
+.proposal { border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px }
+.proposal .p { font-weight:560; font-size:15px }
+.proposal ul { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12px }
+.phrase { font-variant-numeric:tabular-nums; background:color-mix(in srgb, var(--ink) 7%, transparent);
+  padding:1px 6px; border-radius:4px }
 `
 
 exports.page = function (title, body) {
@@ -85,7 +104,7 @@ exports.page = function (title, body) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
 <body><div class="wrap">
-<nav><a href="/" class="on">Market</a><a href="/review">Needs review</a></nav>
+<nav><a href="/" class="on">Market</a><a href="/review">Needs review</a><a href="/rules">What you've taught it</a></nav>
 ${body}
 </div></body></html>`
 }

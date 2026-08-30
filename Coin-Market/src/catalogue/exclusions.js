@@ -32,7 +32,12 @@ const RULES = [
         reason: 'Mounted, or sold as jewellery',
         /* 9ct is decisive: a sovereign is 22ct, so 9ct in the title refers
            to the mount, not the coin. */
-        test: /\b(9\s?ct|mount(ed|s)?|pendant|necklace|chain|bracelet|brooch|cufflink|earring|ring\s+(?:size|mount)|jewellery|jewelry)\b/i
+        /*  "ring" was previously only matched next to "size" or "mount",
+            which missed 55 live listings - "Gold Sovereign Ring", "1982
+            Proof Half Sovereign Ring". A ring is a ring wherever the word
+            appears, and the same goes for the Sovereign-brand watches and
+            the 14k coin bezels. */
+        test: /\b(9\s?ct|mount(ed|s)?|pendant|necklace|chain|bracelet|brooch|cufflink|earring|ring|bezel|watch|wristwatch|jewellery|jewelry)\b/i
     },
     {
         code: 'ACCESSORY',
@@ -51,7 +56,61 @@ const RULES = [
            104. Both contain the word "sovereign" and neither is a coin, and
            at those prices they drag a premium median downwards as hard as a
            rarity drags it up. */
-        test: /\b(programme|program|book|1st\s+edition|first\s+edition|paperback|hardback|magazine|catalogue|catalog|leaflet|poster|postcard|newspaper|ticket|speedway|racecard|marsh|spink|krause|sunglasses|t-shirt|tshirt|hoodie|mug|spoon|plate|platter|saucer)\b/i
+        /*  "Hardy Gold Sovereign" is a fly reel, and there were 27 of them
+            in the pricing set. Sporting goods sit in their own category
+            tree, so the ancestry test would have caught them had eBay's
+            path been populated on every row - it is not, and a listing with
+            no path fails open by design. */
+        test: /\b(programme|program|book|1st\s+edition|first\s+edition|paperback|hardback|magazine|catalogue|catalog|leaflet|poster|postcard|newspaper|ticket|speedway|racecard|marsh|spink|krause|sunglasses|t-shirt|tshirt|hoodie|mug|spoon|plate|platter|saucer|reel|spool|fly\s?rod|fishing|tackle)\b/i
+    },
+    {
+        code: 'NOT_A_SOVEREIGN',
+        reason: 'Gold, but not a sovereign',
+        /*  Fineness is decisive and needs no keyword list. A sovereign is
+            22ct - 916 fine - by definition, so a title claiming 24ct or
+            .999 is describing something else: a Umicore bar, an Alderney
+            proof, a 1/20oz Britannia, a Pitcairn ten dollars. All 22 live
+            matches were checked by hand and none was a sovereign.
+
+            The loose form "999" is deliberately absent. It matches mintage
+            figures - "(999 mintage)", "Mintage 999" - and would have
+            deleted two genuine sovereigns. Only the decimal forms and an
+            explicit fineness word count. */
+        /*  No leading \b on the decimal form: sellers write ".9999" after a
+            space, and a boundary between two non-word characters does not
+            exist, so "\b\.999" silently matched "0.999" and never ".9999". */
+        test: /\b24\s?(ct|k|kt|carat)\b|\.999\d?\b|\b999\.9\b|\b999\s*(fine|purity)\b|\b(bars?|ingots?|wafer)\b|\b(umicore|pamp|valcambi|metalor|heraeus|argor)\b|\bguineas?\b|\bbritannia\b/i
+    },
+    {
+        code: 'FANTASY_ISSUE',
+        reason: 'A coin that was never struck as a sovereign',
+        /*  There is no Edward VIII sovereign. He abdicated before any
+            circulating coinage was issued; the handful of 1937 patterns are
+            seven-figure museum pieces that will never appear in a search
+            like this one. Every "Edward VIII sovereign" on the market is a
+            private fantasy strike - the live examples were a 1984 Straits
+            piece and a 1984 Gibraltar piece, both slabbed by NGC, which
+            grades fantasy issues as readily as coins.
+
+            Three live matches, all fantasy. If a genuine pattern ever does
+            appear it will be excluded and this reason will say why, which
+            is the right way round for something that cannot be priced from
+            comparables anyway. */
+        test: /\bedward\s*(viii|8th)\b/i
+    },
+    {
+        code: 'SUB_SOVEREIGN',
+        reason: 'Smaller than a quarter - not a sovereign denomination',
+        /*  The Royal Mint's smallest sovereign is the quarter. Eighths,
+            tenths and hundredths are private issues from Hattons and the
+            London Mint that borrow the name; 94 of them were sitting in the
+            review queue with no denomination, permanently, because the
+            classifier could only refuse to price them rather than say why.
+
+            Bounded to fractions the series does not mint and required to
+            sit near the word, so a limited-edition number like "1/50" is
+            not mistaken for a denomination. */
+        test: /(\b1\s*\/\s*([5-9]|1\d|20|100)\s*(th|nd|rd|st)?\b|[⅛⅑⅒]|\b(one[\s-])?(eighth|tenth|sixteenth|twentieth|hundredth)\b)[\s\-\w.,'()&]{0,32}?sov/i
     },
     {
         code: 'ABOUT_A_SOVEREIGN',
@@ -70,7 +129,11 @@ const RULES = [
     {
         code: 'PROOF_SET_OR_BUNDLE',
         reason: 'Multi-coin set or job lot',
-        test: /\b(job\s?lot|bulk|collection\s+of|set\s+of|\d+\s?[x×]\s?(?:gold\s+)?(?:full\s+|half\s+)?sovereign|sovereign\s+set|3[-\s]coin|4[-\s]coin|5[-\s]coin)\b/i
+        /*  Sellers spell the count out far more often than they use a
+            digit - "Three-Coin Set", "Four-coin Sovereign Collection" - and
+            the digit-only form missed 28 live multi-coin lots, each of
+            which was being priced as a single sovereign. */
+        test: /\b(job\s?lot|bulk|collection\s+of|set\s+of|\d+\s?[x×]\s?(?:gold\s+)?(?:full\s+|half\s+)?sovereign|sovereign\s+set|sovereign\s+collection|coins\s+sovereign|sovereign\s+lot|[3-9][-\s]coin|(two|three|four|five|six|seven|eight|nine|ten)[-\s]?coin)\b/i
     }
 ]
 

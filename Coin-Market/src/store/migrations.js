@@ -304,5 +304,67 @@ exports.MIGRATIONS = [
            --------------------------------------------------------------- */
         ALTER TABLE listing ADD COLUMN category_path TEXT;
         `
+    },
+    {
+        name: '005-human-labels-and-learned-rules',
+        sql: `
+        /* ---------------------------------------------------------------
+           Somewhere to put a human decision.
+
+           Every rule in exclusions.js is a guess made from outside the
+           market about what a sovereign is. A person who knows the market
+           can look at a title and answer in a second what a regex cannot
+           answer at all - that a "1984 Straits Edward VIII sovereign" is a
+           fantasy piece, that a Hardy Gold Sovereign is a fishing reel.
+           Until now there was nowhere for that answer to go, so the same
+           judgement had to be re-encoded by hand as another pattern.
+
+           The label carries its own copy of the title on purpose. Raw eBay
+           rows roll off under retention (see purgeExpired, which names the
+           tables it clears and does not name these two); the judgement is
+           ours and is kept. A label whose listing has expired is still a
+           training example.
+
+           Keyed on legacy_id rather than browse_id so a decision survives a
+           relist - the same coin re-listed is the same coin.
+           --------------------------------------------------------------- */
+        CREATE TABLE listing_label (
+            id           INTEGER PRIMARY KEY,
+            legacy_id    TEXT NOT NULL,
+            title        TEXT NOT NULL,
+            verdict      TEXT NOT NULL,
+            denomination TEXT,
+            note         TEXT,
+            labelled_at  TEXT NOT NULL,
+            source       TEXT NOT NULL DEFAULT 'human'
+        );
+        CREATE UNIQUE INDEX listing_label_legacy ON listing_label(legacy_id);
+        CREATE INDEX listing_label_verdict ON listing_label(verdict);
+
+        /* ---------------------------------------------------------------
+           A label fixes one listing. A rule generalises it.
+
+           Phrases are stored as literal text, never as a regex. They are
+           escaped and word-bounded at match time, so a rule can be read and
+           audited by the person who accepted it, and no stored string can
+           become a pathological pattern.
+
+           support and agreement record what the evidence looked like at the
+           moment the rule was accepted, so a rule that has since gone wrong
+           is diagnosable rather than merely wrong.
+           --------------------------------------------------------------- */
+        CREATE TABLE learned_rule (
+            id         INTEGER PRIMARY KEY,
+            phrase     TEXT NOT NULL,
+            kind       TEXT NOT NULL,
+            value      TEXT,
+            created_at TEXT NOT NULL,
+            from_label INTEGER,
+            support    INTEGER,
+            agreement  REAL,
+            enabled    INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE UNIQUE INDEX learned_rule_phrase ON learned_rule(phrase, kind);
+        `
     }
 ]

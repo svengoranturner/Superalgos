@@ -4,6 +4,9 @@ const HTTP = require('node:http')
 const RENDER = require('./render.js')
 const INSTRUMENTS = require('../catalogue/instruments.js')
 const ALERT_RULES = require('../alerts/rules.js')
+const LEARNED = require('../catalogue/learned.js')
+const CLASSIFY = require('../catalogue/classify.js')
+const RECLASSIFY = require('../catalogue/reclassify.js')
 
 const { escapeHtml, pct, gbp } = RENDER
 
@@ -19,17 +22,43 @@ exports.start = function (opened, options) {
 
     const server = HTTP.createServer((request, response) => {
         const url = new URL(request.url, 'http://' + config.host)
-        try {
-            const html = url.pathname === '/review'
-                ? reviewPage(opened)
-                : marketPage(opened, url)
-            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-            response.end(html)
-        } catch (err) {
+
+        const fail = (err) => {
             response.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
             response.end(RENDER.page('Error', '<h1>Something went wrong</h1><pre>' +
                 escapeHtml(err.stack || err.message) + '</pre>'))
         }
+
+        if (request.method === 'POST') {
+            /*  Bounded read. This binds to loopback and holds nothing but
+                the owner's own decisions, but an unbounded body on a
+                long-running process is a bad habit whatever the exposure. */
+            const chunks = []
+            let size = 0
+            request.on('data', chunk => {
+                size += chunk.length
+                if (size > 64 * 1024) { request.destroy(); return }
+                chunks.push(chunk)
+            })
+            request.on('end', () => {
+                try {
+                    const form = new URLSearchParams(Buffer.concat(chunks).toString('utf8'))
+                    const to = handlePost(opened, url.pathname, form)
+                    /*  See Other, so a refresh after a decision does not
+                        record it a second time. */
+                    response.writeHead(303, { Location: to })
+                    response.end()
+                } catch (err) { fail(err) }
+            })
+            return
+        }
+
+        try {
+            let html
+            if (url.pathname === '/review') { html = reviewPage(opened) } else if (url.pathname === '/teach') { html = teachPage(opened, url) } else if (url.pathname === '/rules') { html = rulesPage(opened) } else { html = marketPage(opened, url) }
+            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            response.end(html)
+        } catch (err) { fail(err) }
     })
 
     server.listen(config.port, config.host, () => {
@@ -255,31 +284,282 @@ function reviewPage (opened) {
             Math.round(v.percentOfMelt) + '% of melt</span>'
     }
 
+    /*
+        Your call.
+
+        Every rule in the classifier is a guess made from outside the market
+        about what a sovereign is, and the list of things that are not one
+        has no end - fishing reels, fantasy Edward VIII strikes, gold bars
+        with the word in the title. Somebody who knows the market answers
+        each of those without opening the listing. This is where that answer
+        goes, and it outranks everything the classifier decided.
+    */
+    const callCell = (row) => {
+        if (!row.legacyId) { return '<span class="thin">—</span>' }
+        const id = escapeHtml(row.legacyId)
+
+        if (row.verdict) {
+            const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
+                ? 'You said: genuine' + (row.labelledDenomination
+                    ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
+                : 'You said: not a sovereign'
+            return '<span class="settled">' + said + '</span> ' +
+                '<form method="post" action="/unlabel" style="display:inline">' +
+                '<input type="hidden" name="legacyId" value="' + id + '">' +
+                '<button class="plain" title="Forget this decision">undo</button></form>'
+        }
+
+        const options = ['', 'FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE']
+            .map(d => '<option value="' + d + '">' + (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
+            .join('')
+
+        return '<form class="verdict" method="post" action="/label">' +
+            '<input type="hidden" name="legacyId" value="' + id + '">' +
+            '<input type="hidden" name="title" value="' + escapeHtml(row.title) + '">' +
+            '<select name="denomination">' + options + '</select>' +
+            '<button class="yes" name="verdict" value="' + LEARNED.VERDICT.SOVEREIGN + '">Genuine</button>' +
+            '<button class="no" name="verdict" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">Not a sov</button>' +
+            '</form>'
+    }
+
     const excluded = rows.filter(r => (r.reason || '').startsWith('EXCLUDED'))
     const uncertain = rows.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
 
     const list = (items, empty) => items.length === 0
         ? '<p class="thin">' + empty + '</p>'
         : '<div class="card scroll"><table><thead><tr><th>Listing</th><th>Reason</th>' +
-          '<th>Does the price make sense?</th></tr></thead><tbody>' +
+          '<th>Does the price make sense?</th><th>Your call</th></tr></thead><tbody>' +
           items.map(r => `<tr><td>${r.itemWebUrl
               ? '<a href="' + escapeHtml(r.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(r.title) + '</a>'
               : escapeHtml(r.title)}</td><td class="thin">${escapeHtml(r.reason)}</td>` +
-              `<td>${verdictCell(r)}</td></tr>`).join('') +
+              `<td>${verdictCell(r)}</td><td>${callCell(r)}</td></tr>`).join('') +
           '</tbody></table></div>'
+
+    const settled = rows.filter(r => r.verdict).length
 
     return RENDER.page('Needs review — Coin Market', `
 <h1>Needs review</h1>
 <p class="sub">Listings the classifier would not price without a human decision. Every statistic
 in this tool is computed over what survives this filter, so it is shown rather than hidden.</p>
 
+<div class="card">
+  <p class="thin" style="margin:0">Mark one and it is settled for good — the decision is stored
+  against the coin, survives a relist, and outranks every rule in the classifier. Say
+  <em>not a sovereign</em> and you are then offered a rule that generalises it to the listings
+  nobody has looked at yet, with the count of what it would catch, to accept or refuse.
+  ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
+</div>
+
 <h2>Too uncertain to classify (${uncertain.length})</h2>
 ${list(uncertain, 'Nothing awaiting a decision.')}
 
 <h2>Deliberately excluded (${excluded.length})</h2>
 <p class="thin">Mounts, copies, cases and multi-coin lots. If something here looks wrongly
-dropped, the exclusion rules in <code>src/catalogue/exclusions.js</code> need adjusting —
-a bad rule quietly eating half the market is the failure mode worth watching for.</p>
+dropped, mark it genuine — that overrides the rule that dropped it, which is the failure mode
+worth watching for: a bad rule quietly eating half the market.</p>
 ${list(excluded, 'Nothing excluded.')}
+`)
+}
+
+/* ------------------------------------------------ recording a decision */
+
+/*
+    Every write goes through here and every write reclassifies. The loop is
+    only a loop if the front page changes when you make a call - a decision
+    that needs a command run afterwards to take effect is a decision most
+    people will stop making.
+*/
+function handlePost (opened, pathname, form) {
+    const { db, repository } = opened
+
+    if (pathname === '/label') {
+        const verdict = form.get('verdict')
+        const legacyId = form.get('legacyId')
+        if (!legacyId || !LEARNED.VERDICT[verdict]) { return '/review' }
+
+        repository.label({
+            legacyId,
+            title: form.get('title') || '',
+            verdict,
+            /*  A denomination is only meaningful alongside "genuine", and
+                an empty select must not be stored as a correction. */
+            denomination: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('denomination') || null) : null
+        })
+        RECLASSIFY.run(db, repository)
+
+        return verdict === LEARNED.VERDICT.NOT_SOVEREIGN
+            ? '/teach?legacy=' + encodeURIComponent(legacyId)
+            : '/review'
+    }
+
+    if (pathname === '/unlabel') {
+        const legacyId = form.get('legacyId')
+        if (legacyId) {
+            repository.unlabel(legacyId)
+            RECLASSIFY.run(db, repository)
+        }
+        return '/review'
+    }
+
+    if (pathname === '/rule') {
+        const phrase = (form.get('phrase') || '').trim()
+        if (phrase.length > 0) {
+            repository.saveLearnedRule({
+                phrase,
+                kind: LEARNED.VERDICT.NOT_SOVEREIGN,
+                support: Number(form.get('support')) || null,
+                agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
+            })
+            RECLASSIFY.run(db, repository)
+        }
+        return '/rules'
+    }
+
+    if (pathname === '/rule/delete') {
+        const id = Number(form.get('id'))
+        if (Number.isFinite(id)) {
+            repository.deleteLearnedRule(id)
+            RECLASSIFY.run(db, repository)
+        }
+        return '/rules'
+    }
+
+    return '/review'
+}
+
+/* ------------------------------------------------- generalising a call */
+
+function teachPage (opened, url) {
+    const { repository } = opened
+    const legacyId = url.searchParams.get('legacy')
+    const labels = repository.labels()
+    const label = labels.find(l => l.legacyId === legacyId)
+
+    if (label === undefined) {
+        return RENDER.page('Teach — Coin Market',
+            '<h1>Nothing to generalise</h1><p class="sub">That decision is no longer stored. ' +
+            '<a href="/review">Back to the review queue</a>.</p>')
+    }
+
+    const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
+
+    const cards = proposals.length === 0
+        ? '<p class="thin">Nothing in this title generalises — no phrase in it appears on enough ' +
+          'other listings to be worth a rule. The decision itself is still stored.</p>'
+        : proposals.map(p => `<div class="proposal">
+  <div class="p">Drop everything containing <span class="phrase">${escapeHtml(p.phrase)}</span></div>
+  <p class="thin" style="margin:6px 0 0">Matches <strong>${p.support}</strong> tracked listing${p.support === 1 ? '' : 's'}${p.conflicts.length > 0
+      ? ' — but contradicts <strong class="warn">' + p.conflicts.length + '</strong> you have already called genuine, so this phrase is too broad.'
+      : '.'}</p>
+  <ul>${p.samples.map(s => '<li>' + escapeHtml(s) + '</li>').join('')}</ul>
+  ${p.conflicts.length > 0 ? '<ul>' + p.conflicts.map(c => '<li class="warn">would also drop: ' + escapeHtml(c) + '</li>').join('') + '</ul>' : ''}
+  <form method="post" action="/rule" style="margin-top:10px">
+    <input type="hidden" name="phrase" value="${escapeHtml(p.phrase)}">
+    <input type="hidden" name="support" value="${p.support}">
+    <input type="hidden" name="agreement" value="${p.agreement === null ? '' : p.agreement}">
+    <button class="${p.conflicts.length > 0 ? 'plain' : 'yes'}">Accept this rule</button>
+  </form>
+</div>`).join('')
+
+    return RENDER.page('Teach — Coin Market', `
+<h1>Should that apply to others?</h1>
+<p class="sub">You marked <em>${escapeHtml(label.title)}</em> as not a sovereign. Here is what
+that decision could generalise to, ranked by how much it would catch without contradicting
+anything else you have said.</p>
+<div class="card">
+  <p class="thin" style="margin:0">Accepting a rule does not delete anything. Every listing it
+  drops still shows in the review queue with the rule named as the reason, and marking one
+  genuine overrides it. Take none of these and the single decision still stands.</p>
+</div>
+${cards}
+<p style="margin-top:18px"><a href="/review">No rule — just this listing</a></p>
+`)
+}
+
+/* ----------------------------------------------------- what it learned */
+
+function rulesPage (opened) {
+    const { repository } = opened
+    const rules = repository.learnedRules()
+    const labels = repository.labels()
+    const corpus = repository.titleCorpus()
+
+    /*
+        How often the pipeline reaches your conclusion on its own.
+
+        Measured with the labels withheld but the learned rules in place, so
+        it answers "would this have needed me?". It is not an out-of-sample
+        score: a rule accepted from a label will always reproduce that
+        label, and the number is flattered by exactly that much. It is still
+        the right thing to watch, because it only moves when the rules start
+        covering calls they were not built from.
+    */
+    const learned = LEARNED.compile(rules)
+    const decided = labels.filter(l => l.verdict !== LEARNED.VERDICT.UNSURE)
+    const agreed = decided.filter(l => {
+        const result = CLASSIFY.classify({ title: l.title }, { learned })
+        const machineSaysNot = result.excluded !== null
+        return machineSaysNot === (l.verdict === LEARNED.VERDICT.NOT_SOVEREIGN)
+    }).length
+
+    const ruleRows = rules.length === 0
+        ? '<p class="thin">No rules yet. They come from the review queue: mark something as not a ' +
+          'sovereign and you are offered the rule that generalises it.</p>'
+        : '<div class="card scroll"><table><thead><tr><th>Rule</th><th>Matches now</th>' +
+          '<th>When accepted</th><th></th></tr></thead><tbody>' +
+          rules.map(rule => {
+              const test = LEARNED.phrasePattern(rule.phrase)
+              const now = corpus.filter(row => test.test(row.title)).length
+              return `<tr>
+    <td>drop titles containing <span class="phrase">${escapeHtml(rule.phrase)}</span></td>
+    <td class="mono">${now}</td>
+    <td class="mono thin">${rule.support === null ? '—' : rule.support}</td>
+    <td><form method="post" action="/rule/delete" style="display:inline">
+      <input type="hidden" name="id" value="${rule.id}">
+      <button class="plain">remove</button></form></td>
+  </tr>`
+          }).join('') + '</tbody></table></div>'
+
+    const byVerdict = {
+        genuine: labels.filter(l => l.verdict === LEARNED.VERDICT.SOVEREIGN).length,
+        not: labels.filter(l => l.verdict === LEARNED.VERDICT.NOT_SOVEREIGN).length
+    }
+
+    return RENDER.page("What you've taught it — Coin Market", `
+<h1>What you've taught it</h1>
+<p class="sub">Your decisions, and the rules they generalised into. Everything here is
+reversible and nothing here is a black box — each rule is the phrase you accepted.</p>
+
+<div class="card hero">
+  <div><div class="n">${labels.length}</div><div class="l">coins you have judged
+    — ${byVerdict.genuine} genuine, ${byVerdict.not} not a sovereign</div></div>
+  <div><div class="n">${rules.length}</div><div class="l">rules generalised from them</div></div>
+  <div><div class="n">${decided.length === 0 ? '—' : Math.round(100 * agreed / decided.length) + '%'}</div>
+    <div class="l">of your calls the classifier now reaches on its own, with your labels withheld</div></div>
+</div>
+
+<h2>Rules</h2>
+${ruleRows}
+
+<h2>Your decisions (${labels.length})</h2>
+${labels.length === 0
+    ? '<p class="thin">Nothing judged yet.</p>'
+    : '<div class="card scroll"><table><thead><tr><th>Listing</th><th>Your call</th><th>When</th>' +
+      '</tr></thead><tbody>' + labels.slice(0, 200).map(l => `<tr>
+  <td>${escapeHtml(l.title)}</td>
+  <td>${l.verdict === LEARNED.VERDICT.SOVEREIGN
+      ? '<span class="badge good">genuine' + (l.denomination ? ' · ' + escapeHtml(String(l.denomination).toLowerCase()) : '') + '</span>'
+      : '<span class="badge critical">not a sovereign</span>'}</td>
+  <td class="mono thin">${escapeHtml(String(l.labelledAt).slice(0, 10))}</td>
+</tr>`).join('') + '</tbody></table></div>'}
+
+<h2>Why this and not a model</h2>
+<div class="card">
+  <p class="thin" style="margin:0">A statistical classifier trained on a few hundred labels
+  would be weaker than these rules and could not tell you why it dropped anything. Here every
+  exclusion traces back to a phrase you accepted, and every phrase back to a coin you judged.
+  The labels are the durable part: if a model is ever worth training, it trains on these
+  without you having to judge anything twice.</p>
+</div>
 `)
 }

@@ -3,6 +3,7 @@
 const COINS = require('./coins.js')
 const EXCLUSIONS = require('./exclusions.js')
 const CONDITIONS = require('./conditions.js')
+const LEARNED = require('./learned.js')
 
 /*
     Turns a free-text eBay listing into a structured attribute vector.
@@ -61,7 +62,17 @@ function extractDenomination (title) {
         sent both to FULL - pricing a quarter against a full sovereign's
         7.99g of gold and manufacturing a 75% discount that is not there.
         Those were real entries in the live opportunities panel. */
-    if (/(\bquarter\b|\b1\s*\/\s*4\b|¼)[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
+    /*  The word after, not before. "Royal Mint 2013 Gold Proof Sovereign
+        Half with Original Box" is a genuine half sovereign that was priced
+        against a full sovereign's 7.99g of gold and duly appeared in the
+        live opportunities panel as a bargain. Same defect as the quarter
+        below, one word order along. */
+    const reversed = t.match(/\bsovereign\s*[-,]?\s*(half|quarter|double)\b/)
+    if (reversed !== null) { return { denomination: reversed[1].toUpperCase(), confidence: 1 } }
+
+    /*  "Qtr" is how dealers abbreviate it, and the Royal Mint's own listing
+        titles use it - "Gold Proof Qtr Sovereign AGW 1.83g". */
+    if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
     if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t)) { return { denomination: 'DOUBLE', confidence: 1 } }
     if (/\b(quintuple|five\s*pound|5\s*pound)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUINTUPLE', confidence: 1 } }
@@ -78,7 +89,11 @@ function extractDenomination (title) {
         often as "1/8", and a word boundary after the digit does not match
         "8th". Missing it put a GBP 138 eighth into the full-sovereign
         pricing, where it is compared against 7.99g of gold. */
-    if (/\b1\s*\/\s*([5-9]|[1-9]\d+)\s*(th|nd|rd|st)?\b|[⅛⅑⅒]|\b(eighth|tenth|sixteenth|twentieth|hundredth)\b/.test(t)) {
+    /*  Bounded to the fractions the series does not mint, rather than any
+        1/N. An unbounded denominator also matched limited-edition numbering
+        - "Limited Edition 1/50" - and refused a denomination to a genuine
+        full sovereign. The exclusion rule carries the same bound. */
+    if (/\b1\s*\/\s*([5-9]|1\d|20|100)\s*(th|nd|rd|st)?\b|[⅛⅑⅒]|\b(eighth|tenth|sixteenth|twentieth|hundredth)\b/.test(t)) {
         return { denomination: null, confidence: 0 }
     }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }
@@ -299,14 +314,28 @@ function applyAspects (attrs, aspects) {
     Never throws on odd input - an unparseable title is a review item, not
     an error.
 */
-exports.classify = function (listing) {
+/*
+    context is optional and carries what a human has told us:
+      label   - a stored decision about this exact coin, which outranks
+                everything here.
+      learned - rules compiled from earlier decisions, which generalise them
+                to listings nobody has looked at.
+    Absent, this behaves exactly as it did before there was anywhere to put
+    a human decision.
+*/
+exports.classify = function (listing, context) {
 
     const title = String(listing.title || '')
     const aspects = listing.aspects || null
+    const learned = (context && context.learned) || null
+    const label = (context && context.label) || null
 
-    const excluded = EXCLUSIONS.screen(title, aspects)
+    const excluded = EXCLUSIONS.screen(title, aspects) ||
+        (learned === null ? null : learned.exclusionFor(title))
     if (excluded !== null) {
-        return { excluded, attributes: null, confidence: 0, needsReview: false, reasons: [excluded.reason] }
+        return LEARNED.apply(
+            { excluded, attributes: null, confidence: 0, needsReview: false, reasons: [excluded.reason] },
+            label)
     }
 
     const yearResult = extractYear(title)
@@ -336,6 +365,18 @@ exports.classify = function (listing) {
     }
 
     attributes = applyAspects(attributes, aspects)
+
+    /*  A denomination someone taught us, for the titles no rule reads -
+        applied before the aspects-derived confidence is judged, and below a
+        seller's own structured Denomination aspect, which is better
+        evidence than either of us guessing from a title. */
+    if (learned !== null && attributes.confidence.denomination < 1) {
+        const taught = learned.denominationFor(title)
+        if (taught !== null) {
+            attributes.denomination = taught
+            attributes.confidence.denomination = 1
+        }
+    }
 
     /*
         Standardised condition descriptors outrank both the aspects and the
@@ -384,13 +425,13 @@ exports.classify = function (listing) {
        grade mapping is now incomplete - that needs a human, not a default. */
     const unknownBand = fromDescriptors !== null && fromDescriptors.source === 'descriptor_unknown'
 
-    return {
+    return LEARNED.apply({
         excluded: null,
         attributes,
         confidence: Number(overall.toFixed(3)),
         needsReview: overall < 0.7 || attributes.denomination === null || unknownBand,
         reasons
-    }
+    }, label)
 }
 
 exports.extractYear = extractYear

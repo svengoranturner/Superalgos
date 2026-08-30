@@ -310,6 +310,12 @@ exports.newRepository = function (db, options) {
             return db.prepare(`
                 SELECT r.browse_id AS browseId, r.reason, r.best_guess AS bestGuess,
                        r.confidence, l.title, l.item_web_url AS itemWebUrl,
+                       /*  The stable identity of the coin, which is what a
+                           human decision is recorded against - browse_id
+                           changes when a seller relists and a verdict
+                           should not have to be given twice. */
+                       l.legacy_id AS legacyId,
+                       lb.verdict AS verdict, lb.denomination AS labelledDenomination,
                        /*  The asking price, so the review page can say what
                            it implies. A "gold sovereign" priced below its own
                            gold content is not a coin needing a decision - it
@@ -319,6 +325,7 @@ exports.newRepository = function (db, options) {
                        s.price, s.shipping
                 FROM review_queue r
                 JOIN listing l ON l.browse_id = r.browse_id
+                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN (
                     SELECT browse_id, price, shipping,
                            ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
@@ -329,7 +336,95 @@ exports.newRepository = function (db, options) {
             `).all(limit || 50)
         },
 
-        /* Retention: raw eBay rows roll off, derived statistics stay. */
+        /* ------------------------------------------------- human labels */
+
+        /*
+            One decision per coin, keyed on legacy_id so it survives a
+            relist. Re-labelling overwrites: a person changing their mind is
+            a correction, not a second opinion to be averaged with the first.
+        */
+        label (entry) {
+            const now = entry.labelledAt || new Date().toISOString()
+            return bindAll(db.prepare(`
+                INSERT INTO listing_label
+                    (legacy_id, title, verdict, denomination, note, labelled_at, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(legacy_id) DO UPDATE SET
+                    title = excluded.title, verdict = excluded.verdict,
+                    denomination = excluded.denomination, note = excluded.note,
+                    labelled_at = excluded.labelled_at, source = excluded.source
+            `), [entry.legacyId, entry.title, entry.verdict, entry.denomination,
+                entry.note, now, entry.source || 'human'])
+        },
+
+        unlabel (legacyId) {
+            return db.prepare('DELETE FROM listing_label WHERE legacy_id = ?').run(legacyId)
+        },
+
+        labels () {
+            return db.prepare(`
+                SELECT legacy_id AS legacyId, title, verdict, denomination, note,
+                       labelled_at AS labelledAt, source
+                FROM listing_label ORDER BY labelled_at DESC
+            `).all()
+        },
+
+        /*
+            Labels indexed for the classifier's hot path. Returned as a Map
+            rather than queried per listing: reclassify walks thousands of
+            rows and a statement per row on a Pi is the difference between
+            seconds and minutes.
+        */
+        labelIndex () {
+            const map = new Map()
+            for (const row of this.labels()) { map.set(row.legacyId, row) }
+            return map
+        },
+
+        /*
+            Every distinct title currently tracked. This is what a proposed
+            rule is measured against, so the count shown next to it is the
+            number of real listings it would actually affect.
+        */
+        titleCorpus () {
+            return db.prepare(`
+                SELECT legacy_id AS legacyId, MIN(title) AS title
+                FROM listing WHERE legacy_id IS NOT NULL GROUP BY legacy_id
+            `).all()
+        },
+
+        learnedRules () {
+            return db.prepare(`
+                SELECT id, phrase, kind, value, created_at AS createdAt,
+                       from_label AS fromLabel, support, agreement, enabled
+                FROM learned_rule ORDER BY created_at DESC
+            `).all()
+        },
+
+        saveLearnedRule (rule) {
+            return bindAll(db.prepare(`
+                INSERT INTO learned_rule
+                    (phrase, kind, value, created_at, from_label, support, agreement, enabled)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                ON CONFLICT(phrase, kind) DO UPDATE SET
+                    value = excluded.value, support = excluded.support,
+                    agreement = excluded.agreement, enabled = 1
+            `), [String(rule.phrase).trim().toLowerCase(), rule.kind, rule.value,
+                rule.createdAt || new Date().toISOString(), rule.fromLabel,
+                rule.support, rule.agreement])
+        },
+
+        deleteLearnedRule (id) {
+            return db.prepare('DELETE FROM learned_rule WHERE id = ?').run(id)
+        },
+
+        /* Retention: raw eBay rows roll off, derived statistics stay.
+
+           listing_label and learned_rule are absent from the table list
+           below on purpose. Raw eBay item data is theirs and expires; a
+           judgement someone made about it is ours and is kept, so a label
+           remains a training example after the listing it came from has
+           gone. */
         purgeExpired (nowIso) {
             const now = nowIso || new Date().toISOString()
             const doomed = db.prepare('SELECT browse_id FROM listing WHERE expires_at < ?').all(now)

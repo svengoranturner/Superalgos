@@ -138,76 +138,16 @@ COMMANDS.reclassify = {
     describe: 'Re-run classification over every stored listing (after a rule change)',
     async run (args) {
         const { db, repository } = open(args[0])
-        const CLASSIFY = require('../src/catalogue/classify.js').classify
+        const counts = require('../src/catalogue/reclassify.js').run(db, repository)
 
-        /*  Classification is derived, so it can always be rebuilt from the
-            stored titles. That matters whenever a rule changes: without this
-            the old keys linger beside the new ones and the same coin is
-            counted under both, which is worse than either alone.
-
-            Only derived tables are cleared. Listings, snapshots and outcomes
-            - everything that cost an API call or can never be re-observed -
-            are untouched. */
-        const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n
-        db.exec('DELETE FROM listing_instrument')
-        db.exec('DELETE FROM instrument')
-        db.exec('DELETE FROM review_queue')
-        try { db.exec('DELETE FROM instrument_stat') } catch (err) { /* older stores may not have it */ }
-
-        const EXCLUSIONS = require('../src/catalogue/exclusions.js')
-
-        const listings = db.prepare(
-            'SELECT browse_id AS browseId, title, category_path AS categoryPath FROM listing').all()
-        let classified = 0
-        let reviewed = 0
-        let excluded = 0
-        let wrongCategory = 0
-
-        for (const listing of listings) {
-            /*  Same order as discovery: eBay's own category before the title
-                parser, because it is the stronger evidence. */
-            const offCategory = EXCLUSIONS.screenCategory(listing.categoryPath)
-            if (offCategory !== null) {
-                repository.queueForReview(listing.browseId, 'EXCLUDED: ' + offCategory.reason, null, 0)
-                wrongCategory++
-                continue
-            }
-
-            const result = CLASSIFY({ title: listing.title })
-
-            if (result.excluded !== null) {
-                repository.queueForReview(listing.browseId, 'EXCLUDED: ' + result.excluded.reason, null, 0)
-                excluded++
-                continue
-            }
-
-            const keys = INSTRUMENTS.keysFor(result.attributes)
-            if (keys.length === 0 || result.needsReview) {
-                repository.queueForReview(
-                    listing.browseId,
-                    result.reasons.join('; ') || 'Low confidence',
-                    keys.length > 0 ? keys[keys.length - 1].key : null,
-                    result.confidence
-                )
-                reviewed++
-            }
-            if (keys.length > 0) {
-                repository.saveClassification(
-                    listing.browseId, keys, result.confidence, 'title',
-                    INSTRUMENTS.fineOzFor(result.attributes), result.attributes
-                )
-                classified++
-            }
-        }
-
-        console.log('Reclassified ' + listings.length + ' stored listings')
-        console.log('  assignments : ' + before + ' -> ' +
-            db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n)
-        console.log('  classified  : ' + classified)
-        console.log('  off-category: ' + wrongCategory)
-        console.log('  excluded    : ' + excluded)
-        console.log('  to review   : ' + reviewed)
-        console.log('  instruments : ' + db.prepare('SELECT COUNT(*) AS n FROM instrument').get().n)
+        console.log('Reclassified ' + counts.total + ' stored listings')
+        console.log('  assignments : ' + counts.assignmentsBefore + ' -> ' + counts.assignmentsAfter)
+        console.log('  classified  : ' + counts.classified)
+        console.log('  off-category: ' + counts.wrongCategory)
+        console.log('  excluded    : ' + counts.excluded)
+        console.log('  to review   : ' + counts.reviewed)
+        console.log('  your calls  : ' + counts.labelled)
+        console.log('  instruments : ' + counts.instruments)
         db.close()
     }
 }

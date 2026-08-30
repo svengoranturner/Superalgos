@@ -239,7 +239,11 @@ test('the genuine Double Sovereign is not caught by the commemorative rule', () 
     assert.strictEqual(EXCLUSIONS.screen('1887 Victoria Double Sovereign two pound sovereign', null), null)
 })
 
-test('an eighth or tenth sovereign is not a full sovereign', () => {
+/*  These were previously only refused a denomination, which parked 94 of
+    them in the review queue permanently: the classifier could decline to
+    price them but had no way to say why. The Royal Mint's smallest
+    sovereign is the quarter, so they are excluded with a reason instead. */
+test('an eighth or tenth sovereign is not a sovereign at all', () => {
     for (const title of [
         '2025 King Charles III Classics Remastered 1/8 Sovereign 22ct Gold',
         /*  Sellers write the ordinal as often as the bare fraction, and a
@@ -250,8 +254,16 @@ test('an eighth or tenth sovereign is not a full sovereign', () => {
         '1/10th Gold Proof Sovereign',
         'Tenth Sovereign gold coin'
     ]) {
-        assert.strictEqual(classify({ title }).attributes.denomination, null, title)
+        assert.strictEqual(classify({ title }).excluded.code, 'SUB_SOVEREIGN', title)
     }
+})
+
+/*  A limited-edition number is not a denomination. Bounding the fractions
+    to the ones the series does not mint is what keeps "1/50" out. */
+test('an edition number is not mistaken for a fraction of a sovereign', () => {
+    const c = classify({ title: '2017 Gold Proof Sovereign Limited Edition 1/50 Royal Mint' })
+    assert.strictEqual(c.excluded, null)
+    assert.strictEqual(c.attributes.denomination, 'FULL')
 })
 
 test('a quarter and a half are still recognised', () => {
@@ -361,9 +373,80 @@ test('a hyphenated or spaced quarter is still a quarter', () => {
     for (const title of [
         'Charles III 2023 PF69 FDI Quarter-Sovereign Coronation',
         '2013 Gold Proof Limited Edition Quarter 2g Sovereign-Box & COA',
-        'RARE House of Windsor Edward VIII 22ct Gold Quarter proof Sovereign'
+        /*  "Qtr" is the Royal Mint's own abbreviation on listing titles. */
+        '2012 Royal Mint QE II Diamond Jubilee Gold Proof Qtr Sovereign AGW 1.83g Box COA'
     ]) {
         assert.strictEqual(classify({ title }).attributes.denomination, 'QUARTER', title)
+    }
+})
+
+/*  The word after, not before. This was a genuine half sovereign priced
+    against a full sovereign's gold, sitting in the live opportunities
+    panel as a bargain. */
+test('a denomination written after the word sovereign still counts', () => {
+    for (const [title, expected] of [
+        ['Royal Mint 2013 Gold Proof Sovereign Half with Original Box and Certificate', 'HALF'],
+        ['2003 Gold Sovereign Half Proof Coin NGC PF70 Ultra Cameo Royal Mint', 'HALF'],
+        ['2024 Gold Sovereign Quarter NGC MS69 Britain Royal Mint', 'QUARTER']
+    ]) {
+        assert.strictEqual(classify({ title }).attributes.denomination, expected, title)
+    }
+})
+
+/*  There is no Edward VIII sovereign. He abdicated before any circulating
+    coinage; every one on the market is a private fantasy strike, and NGC
+    slabs those as readily as coins so the grade is no help. */
+test('an Edward VIII sovereign is a fantasy piece', () => {
+    for (const title of [
+        '1984 STRAITS RARE 200 MINTED 1 SOVEREIGN EDWARD VIII NGC PROOF 69 CAMEO',
+        '1984 (1936) GOLD GIBRALTAR 200 MINTED SOVEREIGN EDWARD VIII NGC PROOF 68 UC',
+        'RARE House of Windsor Edward VIII 22ct Gold Quarter proof Sovereign'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded.code, 'FANTASY_ISSUE', title)
+    }
+    /* Edward VII, one numeral shorter, is a real and common sovereign. */
+    assert.strictEqual(classify({ title: '1907 Edward VII Gold Sovereign' }).excluded, null)
+})
+
+/*  A sovereign is 22ct by definition, so the fineness alone settles it -
+    no keyword list required, and it catches bars, Britannias and foreign
+    proofs that share nothing but the word "sovereign" in the title. */
+test('fineness that is not 22ct means it is not a sovereign', () => {
+    for (const title of [
+        '5g 24k 24ct Gold Umicore Bar Bullion Sovereign Antique Vintage',
+        '2023 Great Britain .9999 Gold 1/10 oz Gem BU Royal Coat of Arms',
+        'GOLD COIN- Pitcarn Islands 10 Dollar 1999 HMS Bounty 0.999 fine gold 1.224g'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded.code, 'NOT_A_SOVEREIGN', title)
+    }
+})
+
+/*  A mintage figure is not a fineness. The loose "999" form would have
+    deleted both of these, which are genuine sovereigns. */
+test('a mintage of 999 is not a claim about purity', () => {
+    for (const title of [
+        '2022 St George & The Dragon Gold Matte Proof Sovereign. Mintage 999',
+        '2026 queen elizabeth II centenary gold proof half sovereign (999 mintage)'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded, null, title)
+    }
+})
+
+/*  27 Hardy fly reels and 55 rings were being priced as coins. */
+test('reels, rings and watches are not coins', () => {
+    assert.strictEqual(classify({ title: 'HARDY GOLD SOVEREIGN 9/10 SALMON FLY FISHING REEL' }).excluded.code, 'NOT_A_COIN')
+    assert.strictEqual(classify({ title: '2001 Queen Elizabeth II Half Sovereign Ring 9.64g Size W' }).excluded.code, 'JEWELLERY')
+    assert.strictEqual(classify({ title: 'Sovereign Vintage Ladies Watch Swiss Made' }).excluded.code, 'JEWELLERY')
+})
+
+/*  Sellers spell the count out far more often than they use a digit. */
+test('a spelled-out coin count is still a multi-coin set', () => {
+    for (const title of [
+        'Sovereign 2026 Three-Coin Gold Proof Set Limited Edition 650 Worldwide',
+        '2007 UK Gold Proof Four-coin Sovereign Collection (Boxed)',
+        'Gold Coins Sovereign Lot Perth Mint 125. Jubilee 2024 Australia'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded.code, 'PROOF_SET_OR_BUNDLE', title)
     }
 })
 
@@ -383,5 +466,5 @@ test('a plain sovereign is still full, and a double still double', () => {
 test('typographic fractions are read as denominations', () => {
     assert.strictEqual(classify({ title: '2012 ¼ Sovereign Elizabeth II Diamond Jubilee BU' }).attributes.denomination, 'QUARTER')
     assert.strictEqual(classify({ title: '½ Sovereign 1982' }).attributes.denomination, 'HALF')
-    assert.strictEqual(classify({ title: '⅛ Sovereign 2022 gold proof' }).attributes.denomination, null)
+    assert.strictEqual(classify({ title: '⅛ Sovereign 2022 gold proof' }).excluded.code, 'SUB_SOVEREIGN')
 })
