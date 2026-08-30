@@ -61,8 +61,33 @@ easier and more reliable than dragging. Final order:
 | # | Route | Path | Service |
 |---|---|---|---|
 | 1 | metalhead.gold | `^/ebay/account-deletion$` | `http://localhost:34261` |
-| 2 | metalhead.gold | `*` | `http://127.0.0.1:8000` |
-| 3 | www.metalhead.gold | `*` | `http://127.0.0.1:8000` |
+| 2 | metalhead.gold | `^/ebay/oauth-return$` | `http://localhost:34261` |
+| 3 | metalhead.gold | `*` | `http://127.0.0.1:8000` |
+| 4 | www.metalhead.gold | `*` | `http://127.0.0.1:8000` |
+
+## 1a. The OAuth return path
+
+Route 2 exists so eBay has somewhere to send the browser after you approve the
+consent screen. It needs no code: the deletion endpoint answers any GET without
+a `challenge_code` with a plain `200` and a line of text, so the redirect lands
+on a bare page and the `?code=...` sits in the address bar for `auth-code`.
+
+The obvious alternative — pointing the RuName at `https://metalhead.gold/` —
+was rejected deliberately. That path is Access-gated, so the redirect bounces
+through the login and the authorization code can be lost in the round trip. The
+failure would look like eBay's fault and would not be.
+
+On the Access side this is **a second destination on the same bypass
+application**, not a new one, so both paths share the single Bypass policy.
+
+Checked after the change, and the negative case matters most:
+
+| Request | Result |
+|---|---|
+| `/ebay/oauth-return?code=...` | **200**, endpoint text |
+| `/ebay/account-deletion` | **200**, still working |
+| `/` and `www` root | **302** to Access login, still gated |
+| `/ebay/something-else` | **302** — the bypass is two exact paths, **not** the `/ebay/` prefix |
 
 ## 2. Access bypass — the step that is easy to miss
 

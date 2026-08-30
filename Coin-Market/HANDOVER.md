@@ -292,8 +292,18 @@ The tunnel config is the one artefact written blind — merge it into the existi
 
 **A RuName is the prerequisite, and it is not yet set** — `ebay.ruName` is
 still `YOUR-RUNAME`, which `auth-url` now refuses rather than printing a consent
-URL eBay would reject. Create one at developer.ebay.com under the keyset, then
-`node bin/cli.js init --runame=<the RuName> --force=`. Do it before any listings
+URL eBay would reject.
+
+Create it at **developer.ebay.com → User Tokens (eBay Sign-In)**, production
+keyset, **OAuth (new security)** selected → *Get a Token from eBay via Your
+Application* → **+ Add eBay Redirect URL**. eBay asks for a legal address first.
+
+**Use `https://metalhead.gold/ebay/oauth-return` as the redirect URL.** That
+route is already live and Access-bypassed (`deploy/cloudflared-ingress.md` §1a).
+Do not point it at `https://metalhead.gold/`: that is Access-gated, and the
+authorization code can be lost in the login bounce.
+
+Then `node bin/cli.js init --runame=<the RuName> --force=`. Do it before any listings
 are collected: `init` regenerates the seller salt, which is harmless while the
 store is empty and orphans every seller hash once it is not.
 
