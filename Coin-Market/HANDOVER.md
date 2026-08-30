@@ -776,22 +776,72 @@ prompted this was a genuine sovereign photographed in a pendant, with no
 than the fault. The page now says "nothing here generalises safely" and
 explains why, instead of offering six ways to break the market.
 
-## Item location
+## Item location - stored, shown, and deliberately NOT filtered
 
 eBay sends `itemLocation.country` on every search summary and it was being
-thrown away, so a lot in Cyprus looked exactly like one in Birmingham -
-different postage, different buyer pool, different clearing price. Migration
-006 adds `listing.item_country`; `screenLocation()` drops anything known to be
-outside GB, and the permitted list is a parameter.
+thrown away, so a lot in Cyprus looked exactly like one in Birmingham.
+Migration 006 adds `listing.item_country`; it costs no extra API calls,
+coverage reached 5,175 of 5,490 rows within an hour of the collector
+restarting, and the country shows as a red badge on any row outside GB.
 
-**It fails open, and that is the design.** Every row stored before the column
-existed is NULL until the next sweep re-sees it, so unknown means "not known
-yet" and never "foreign" - the other way round, one migration empties the
-market. There is a test pinning exactly that. Costs no extra API calls; the
-field was already in the response.
+**Screening on it is off by default, and that default is load-bearing.**
 
-Rows also show how long a lot has sat unsold, which is the evidence for
-"priced badly" rather than "rare".
+I shipped `screenLocation` defaulting to GB-only. In a single pass it took
+the priced corpus from **3,490 to 2,049** - 1,441 listings, of which **1,268
+classify cleanly as genuine sovereigns**. 744 were Australian: Sydney,
+Melbourne and Perth mint coins are British sovereigns and the scarcest part
+of the series. Rare 1859, 1863 and 1867 Sydney sovereigns went with them, and
+`GB.SOV.COLLECTOR.HALF.VIC_YOUNG_SHIELD` fell from 165 live listings to 31 -
+the very instrument this document describes as sitting inside one dealer's
+genuine Sydney Mint stock.
+
+That is the same mistake migration 004 documents at the category level, where
+an allow-list of leaf categories discarded 2,491 Australian sovereigns. Same
+error, one column and one screen along, made by someone who had just written
+the warning.
+
+`screenLocation(country)` now screens nothing. It only acts when a caller
+passes an explicit allow-list, and there is a test pinning that for CY, AU, US
+and GB alike. If the filter is ever turned on, the cost today is:
+
+| instrument | now | GB-only |
+|---|---|---|
+| `GB.SOV.COLLECTOR.HALF` | 1,068 | 376 |
+| `GB.SOV.COLLECTOR.FULL` | 1,645 | 1,036 |
+| `GB.SOV.COLLECTOR.HALF.EDWARD_VII` | 191 | 37 |
+
+## The melt floor, and what it may and may not say
+
+A live auction routinely opens below the gold value to attract bids, so under
+melt is the normal state of an auction that has not run yet. Calling it "below
+melt - not this coin" is a false alarm that teaches you to ignore the column;
+45 review rows were affected. A running auction now gets its own verdict.
+
+Two corrections to my own first attempt at that, both from an adversarial
+pass:
+
+- **Do not test the floor against a projection.** Testing
+  `alert.projectedFinal` instead of the current bid was backwards twice over:
+  the closing uplift moves the number UP, making the floor stricter rather
+  than kinder, and a point estimate off a seventeen-sample median has no
+  business deciding whether a coin is genuine. The floor sits on a price
+  somebody has actually offered.
+- **`assess()` returns `underMelt` as well as `impossible`.** The
+  assumed-denomination guard keyed on `impossible`, and `AUCTION_UNDER_MELT`
+  is deliberately not impossible - so 44 live under-melt auctions fell through
+  and rendered as a bare "denomination unknown".
+
+Evidence for the rule itself is strong: across 3,508 auction snapshots inside
+the final two hours, **not one** was under 0.85x melt, and of the sold
+auctions the minimum ratio was 1.044. An auction climbs over the floor before
+it closes. A finished auction's price is settled, so the floor applies to it
+with full force.
+
+**The verdict only speaks when it knows the denomination.** The quarter
+fallback is a floor and a floor works downwards only: nothing under a
+quarter's gold can be any sovereign. Read upwards it is nonsense - an ordinary
+full sovereign measured against a quarter reads 400% and was labelled "far
+above melt - rarity or error". That badge was on **1,346 of 2,674 rows**.
 
 ## Decisions not to undo
 
