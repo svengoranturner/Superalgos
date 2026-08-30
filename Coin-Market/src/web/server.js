@@ -55,7 +55,17 @@ exports.start = function (opened, options) {
 
         try {
             let html
-            if (url.pathname === '/review') { html = reviewPage(opened) } else if (url.pathname === '/teach') { html = teachPage(opened, url) } else if (url.pathname === '/rules') { html = rulesPage(opened) } else { html = marketPage(opened, url) }
+            if (url.pathname === '/review') {
+                html = reviewPage(opened)
+            } else if (url.pathname === '/listings') {
+                html = listingsPage(opened, url)
+            } else if (url.pathname === '/teach') {
+                html = teachPage(opened, url)
+            } else if (url.pathname === '/rules') {
+                html = rulesPage(opened)
+            } else {
+                html = marketPage(opened, url)
+            }
             response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
             response.end(html)
         } catch (err) { fail(err) }
@@ -113,7 +123,9 @@ function marketPage (opened, url) {
         const f = m.fairValue
         const l = m.liquidity
         return `<tr>
-      <td>${escapeHtml(INSTRUMENTS.displayName(e.row.key))}</td>
+      <td><a href="/listings?key=${encodeURIComponent(e.row.key)}"
+        title="See the individual listings behind these numbers, and dismiss any that are wrong"
+        >${escapeHtml(INSTRUMENTS.displayName(e.row.key))}</a></td>
       <td class="mono">${f.n}</td>
       <td class="mono">${pct(f.p50)}</td>
       <td class="mono">${f.sufficient ? pct(f.p25) + ' – ' + pct(f.p75) : '—'}</td>
@@ -245,123 +257,273 @@ ${opportunityHtml}
     return RENDER.page('Coin Market', body)
 }
 
-function reviewPage (opened) {
-    const rows = opened.repository.reviewQueue(200)
+/*
+    What the price implies about whether this is a sovereign at all.
+
+    Gold has a floor, so a "gold sovereign" offered below its own metal
+    content is not a coin needing a decision - it is something else wearing
+    the word. Shared by the review queue and the drill-down.
+
+    Where the classifier managed a best guess, its denomination gives the
+    right melt to measure against. Where it did not, the quarter is used -
+    the smallest sovereign struck - so the verdict is the conservative one.
+*/
+function newPlausibilityCell (spot) {
     const PLAUSIBILITY = require('../analytics/plausibility.js')
     const COINS = require('../catalogue/coins.js')
 
-    const spot = opened.spotAt(new Date().toISOString())
-
-    /*
-        What the price implies about whether this is a sovereign at all.
-
-        Where the classifier managed a best guess, its denomination gives the
-        right melt to measure against. Where it did not, the quarter is used -
-        the smallest sovereign struck - so the verdict is the conservative
-        one: anything under a quarter's gold content cannot be any sovereign,
-        whatever the title says.
-    */
-    const verdictFor = (row) => {
-        if (spot === null) { return null }
+    return (row) => {
+        if (spot === null) { return '' }
         const total = (row.price || 0) + (row.shipping || 0)
-        const guessed = typeof row.bestGuess === 'string'
-            ? row.bestGuess.split('.').find(part => COINS.DENOMINATIONS[part] !== undefined)
-            : undefined
-        const denomination = COINS.DENOMINATIONS[guessed] || COINS.DENOMINATIONS.QUARTER
-        const assessed = PLAUSIBILITY.assess(total, denomination.fineOz, spot.gbpPerOz)
-        if (assessed === null) { return null }
-        return Object.assign({ measuredAgainst: denomination.label, assumed: guessed === undefined }, assessed)
-    }
 
-    const verdictCell = (row) => {
-        const v = verdictFor(row)
-        if (v === null) { return '<span class="thin">—</span>' }
-        const tone = v.impossible ? 'critical' : 'good'
-        return '<span class="badge ' + tone + '" title="' +
-            escapeHtml(v.detail + ' Measured against a ' + v.measuredAgainst +
-                (v.assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
+        let fineOz = Number.isFinite(row.fineOz) ? row.fineOz : null
+        let measuredAgainst = 'the coin it is classified as'
+        let assumed = false
+
+        if (fineOz === null) {
+            const guessed = typeof row.bestGuess === 'string'
+                ? row.bestGuess.split('.').find(part => COINS.DENOMINATIONS[part] !== undefined)
+                : undefined
+            const denomination = COINS.DENOMINATIONS[guessed] || COINS.DENOMINATIONS.QUARTER
+            fineOz = denomination.fineOz
+            measuredAgainst = denomination.label
+            assumed = guessed === undefined
+        }
+
+        const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz)
+        if (v === null) { return '' }
+        return '<span class="badge ' + (v.impossible ? 'critical' : 'good') + '" title="' +
+            escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
+                (assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
             '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
             Math.round(v.percentOfMelt) + '% of melt</span>'
     }
+}
 
-    /*
-        Your call.
+function reviewPage (opened) {
+    /*  The whole queue, not a page of it - it is sorted by impact below and
+        truncating before sorting would hide exactly the rows that matter. */
+    const rows = opened.repository.reviewQueue(3000)
+    const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
 
-        Every rule in the classifier is a guess made from outside the market
-        about what a sovereign is, and the list of things that are not one
-        has no end - fishing reels, fantasy Edward VIII strikes, gold bars
-        with the word in the title. Somebody who knows the market answers
-        each of those without opening the listing. This is where that answer
-        goes, and it outranks everything the classifier decided.
-    */
-    const callCell = (row) => {
-        if (!row.legacyId) { return '<span class="thin">—</span>' }
-        const id = escapeHtml(row.legacyId)
-
-        if (row.verdict) {
-            const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
-                ? 'You said: genuine' + (row.labelledDenomination
-                    ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
-                : 'You said: not a sovereign'
-            return '<span class="settled">' + said + '</span> ' +
-                '<form method="post" action="/unlabel" style="display:inline">' +
-                '<input type="hidden" name="legacyId" value="' + id + '">' +
-                '<button class="plain" title="Forget this decision">undo</button></form>'
-        }
-
-        const options = ['', 'FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE']
-            .map(d => '<option value="' + d + '">' + (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
-            .join('')
-
-        return '<form class="verdict" method="post" action="/label">' +
-            '<input type="hidden" name="legacyId" value="' + id + '">' +
-            '<input type="hidden" name="title" value="' + escapeHtml(row.title) + '">' +
-            '<select name="denomination">' + options + '</select>' +
-            '<button class="yes" name="verdict" value="' + LEARNED.VERDICT.SOVEREIGN + '">Genuine</button>' +
-            '<button class="no" name="verdict" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">Not a sov</button>' +
-            '</form>'
-    }
+    for (const row of rows) { row.back = '/review' }
 
     const excluded = rows.filter(r => (r.reason || '').startsWith('EXCLUDED'))
     const uncertain = rows.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
 
-    const list = (items, empty) => items.length === 0
+    /*  The ones still counted in a market number lead, because they are the
+        only ones that can be making the front page wrong. */
+    const affecting = uncertain.filter(r => r.priced)
+    const inert = uncertain.filter(r => !r.priced)
+
+    const list = (items, empty, cap) => items.length === 0
         ? '<p class="thin">' + empty + '</p>'
-        : '<div class="card scroll"><table><thead><tr><th>Listing</th><th>Reason</th>' +
-          '<th>Does the price make sense?</th><th>Your call</th></tr></thead><tbody>' +
-          items.map(r => `<tr><td>${r.itemWebUrl
-              ? '<a href="' + escapeHtml(r.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(r.title) + '</a>'
-              : escapeHtml(r.title)}</td><td class="thin">${escapeHtml(r.reason)}</td>` +
-              `<td>${verdictCell(r)}</td><td>${callCell(r)}</td></tr>`).join('') +
-          '</tbody></table></div>'
+        : '<div class="card"><div class="queue">' +
+          items.slice(0, cap || 250).map(r => queueRow(r, verdictCell(r))).join('') +
+          '</div>' +
+          (items.length > (cap || 250)
+              ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + (cap || 250) +
+                ' of ' + items.length + '.</p>'
+              : '') +
+          '</div>'
 
     const settled = rows.filter(r => r.verdict).length
 
-    return RENDER.page('Needs review — Coin Market', `
+    return RENDER.page('Needs review - Coin Market', `
 <h1>Needs review</h1>
 <p class="sub">Listings the classifier would not price without a human decision. Every statistic
 in this tool is computed over what survives this filter, so it is shown rather than hidden.</p>
 
 <div class="card">
-  <p class="thin" style="margin:0">Mark one and it is settled for good — the decision is stored
-  against the coin, survives a relist, and outranks every rule in the classifier. Say
-  <em>not a sovereign</em> and you are then offered a rule that generalises it to the listings
-  nobody has looked at yet, with the count of what it would catch, to accept or refuse.
+  <p class="thin" style="margin:0">Hover a photo to see it large. Mark one and it is settled for
+  good &mdash; the decision is stored against the coin, survives a relist, outranks every rule in
+  the classifier, and the collector applies it to listings it finds tomorrow. Say
+  <em>not a sovereign</em> and you are then offered a rule that generalises it, with the count of
+  what it would catch and what it would break.
   ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
 </div>
 
-<h2>Too uncertain to classify (${uncertain.length})</h2>
-${list(uncertain, 'Nothing awaiting a decision.')}
+<h2>Making a number wrong right now (${affecting.length})</h2>
+<p class="thin">Flagged as uncertain, but still counted in the market statistics. These are the
+ones behind anything that looks wrong on the front page.</p>
+${list(affecting, 'Nothing uncertain is currently being priced.')}
+
+<h2>Uncertain, but not being priced (${inert.length})</h2>
+${list(inert, 'Nothing else awaiting a decision.', 150)}
 
 <h2>Deliberately excluded (${excluded.length})</h2>
 <p class="thin">Mounts, copies, cases and multi-coin lots. If something here looks wrongly
-dropped, mark it genuine — that overrides the rule that dropped it, which is the failure mode
-worth watching for: a bad rule quietly eating half the market.</p>
-${list(excluded, 'Nothing excluded.')}
+dropped, mark it genuine &mdash; that overrides the rule that dropped it, which is the failure
+mode worth watching for: a bad rule quietly eating half the market.</p>
+${list(excluded, 'Nothing excluded.', 150)}
+`)
+}
+
+/* ------------------------------------------------------- one listing */
+
+/*
+    One row of the work queue, shared by the review page and the drill-down
+    from a market number - a listing you can see is wrong should be
+    dismissable from wherever you noticed it, with the same controls.
+
+    Built as a list rather than a table because eBay titles run to 84
+    characters and a column wide enough for one pushed the whole page
+    sideways.
+*/
+
+const DENOMINATION_OPTIONS = ['', 'FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE']
+
+/*  eBay serves the same photo at several widths off one URL. We store the
+    225px thumbnail; 500px is 40KB and is plenty to tell a coin from a
+    fishing reel. Verified against the CDN rather than assumed. */
+function largerImage (url) {
+    if (typeof url !== 'string' || url === '') { return null }
+    return url.replace(/\/s-l\d+\.(jpg|jpeg|png|webp)$/i, '/s-l500.$1')
+}
+
+function leafCategory (path) {
+    if (typeof path !== 'string' || path === '') { return null }
+    const parts = path.split('>').map(p => p.trim()).filter(p => p.length > 0)
+    return parts.length === 0 ? null : parts[parts.length - 1]
+}
+
+function callControls (row) {
+    if (!row.legacyId) { return '<span class="thin">—</span>' }
+    const id = escapeHtml(row.legacyId)
+
+    if (row.verdict) {
+        const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
+            ? 'You said: genuine' + (row.labelledDenomination
+                ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
+            : 'You said: not a sovereign'
+        return '<span class="settled">' + said + '</span> ' +
+            '<form method="post" action="/unlabel" style="display:inline">' +
+            '<input type="hidden" name="legacyId" value="' + id + '">' +
+            '<input type="hidden" name="back" value="' + escapeHtml(row.back || '/review') + '">' +
+            '<button class="plain" title="Forget this decision">undo</button></form>'
+    }
+
+    const options = DENOMINATION_OPTIONS
+        .map(d => '<option value="' + d + '">' + (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
+        .join('')
+
+    return '<form class="verdict" method="post" action="/label">' +
+        '<input type="hidden" name="legacyId" value="' + id + '">' +
+        '<input type="hidden" name="title" value="' + escapeHtml(row.title) + '">' +
+        '<input type="hidden" name="back" value="' + escapeHtml(row.back || '/review') + '">' +
+        '<select name="denomination">' + options + '</select>' +
+        '<button class="yes" name="verdict" value="' + LEARNED.VERDICT.SOVEREIGN + '">Genuine</button>' +
+        '<button class="no" name="verdict" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">Not a sov</button>' +
+        '</form>'
+}
+
+function queueRow (row, verdictCell) {
+    const big = largerImage(row.imageUrl)
+    const total = (row.price || 0) + (row.shipping || 0)
+
+    const meta = []
+    if (row.reason) { meta.push('<span class="badge">' + escapeHtml(row.reason) + '</span>') }
+    if (row.priced) { meta.push('<span class="badge">counted in the statistics</span>') }
+    const leaf = leafCategory(row.categoryPath)
+    if (leaf !== null) { meta.push(escapeHtml(leaf)) }
+    if (row.conditionLabel) { meta.push(escapeHtml(row.conditionLabel)) }
+    if (row.buyingOptions) { meta.push(escapeHtml(String(row.buyingOptions).toLowerCase().replace(/[|,]/g, ' / ').replace(/_/g, ' '))) }
+    if (Number.isFinite(row.sellerFeedbackPct)) {
+        meta.push('seller ' + row.sellerFeedbackPct.toFixed(1) + '%' +
+            (Number.isFinite(row.sellerFeedbackCnt) ? ' (' + row.sellerFeedbackCnt + ')' : ''))
+    }
+
+    /*  The full category path in the caption, because it is the single most
+        useful thing for judging a listing at a glance and it is too long
+        for the row. */
+    const caption = escapeHtml(row.categoryPath || '')
+
+    return `<div class="q">
+  <div class="q-shot"${big ? ' style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)"' : ''}>
+    ${row.imageUrl
+        ? '<img src="' + escapeHtml(row.imageUrl) + '" alt="" loading="lazy" decoding="async">'
+        : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'}
+    ${big ? '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' : ''}
+  </div>
+  <div class="q-main">
+    <div class="q-title">${row.itemWebUrl
+        ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(row.title) + '</a>'
+        : escapeHtml(row.title)}</div>
+    <div class="q-meta">${meta.join('<span aria-hidden="true">·</span>')}</div>
+  </div>
+  <div class="q-side">
+    <div class="mono">${total > 0 ? gbp(total) : '—'}</div>
+    ${verdictCell === undefined ? '' : verdictCell}
+    ${callControls(row)}
+  </div>
+</div>`
+}
+
+/* -------------------------------------------- the listings behind one number */
+
+/*
+    Drill-down from a market statistic to the lots that produced it.
+
+    The front page shows aggregates and the review queue is keyed on doubt,
+    not on which coin type a listing landed in - so a listing you could see
+    was wrong from the market page had nowhere to be dismissed from. The
+    same verdict controls appear here, and a decision returns you here
+    rather than to the review queue.
+*/
+function listingsPage (opened, url) {
+    const { repository, view } = opened
+    const key = url.searchParams.get('key')
+    if (key === null || key === '') {
+        return RENDER.page('Listings - Coin Market',
+            '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>')
+    }
+
+    const rows = repository.listingsForInstrument(key, 400)
+    const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
+    for (const row of rows) { row.back = '/listings?key=' + encodeURIComponent(key) }
+
+    const name = INSTRUMENTS.displayName(key)
+    const market = view.forInstrument(key)
+    const settled = rows.filter(r => r.verdict).length
+    const flagged = rows.filter(r => r.reason).length
+
+    return RENDER.page(name + ' - Coin Market', `
+<h1>${escapeHtml(name)}</h1>
+<p class="sub">Every listing counted under this coin type. Anything here that is not this coin is
+moving the numbers on the front page.</p>
+
+<div class="card hero">
+  <div><div class="n">${rows.length}</div><div class="l">listings counted here</div></div>
+  <div><div class="n">${pct(market.liquidity.medianAskPremium)}</div>
+    <div class="l">median asking premium over gold content</div></div>
+  <div><div class="n">${flagged}</div><div class="l">already flagged as uncertain</div></div>
+  ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged</div></div>' : ''}
+</div>
+
+<p class="thin">Highest asking price first &mdash; a lot priced far from its neighbours is both
+the most likely to be wrong and the most visible when it is. Hover a photo to see it large.</p>
+<div class="card"><div class="queue">
+${rows.map(r => queueRow(r, verdictCell(r))).join('')}
+</div></div>
+
+<p style="margin-top:18px"><a href="/">Back to the market</a></p>
 `)
 }
 
 /* ------------------------------------------------ recording a decision */
+
+/*
+    Only ever our own pages. The value comes back through a form field, and
+    a redirect target taken from input without checking is how an open
+    redirect happens - even on a loopback-only service, it is not a habit
+    worth having.
+*/
+function safeBack (value) {
+    if (typeof value !== 'string' || !value.startsWith('/')) { return '/review' }
+    if (value.startsWith('//')) { return '/review' }
+    const path = value.split('?')[0]
+    return ['/review', '/listings', '/rules', '/'].includes(path) ? value : '/review'
+}
 
 /*
     Every write goes through here and every write reclassifies. The loop is
@@ -387,9 +549,13 @@ function handlePost (opened, pathname, form) {
         })
         RECLASSIFY.run(db, repository)
 
+        /*  Back where the decision was made. A junk listing noticed on a
+            market number should not dump you on the review page, or working
+            through one coin type means losing your place every time. */
+        const back = safeBack(form.get('back'))
         return verdict === LEARNED.VERDICT.NOT_SOVEREIGN
-            ? '/teach?legacy=' + encodeURIComponent(legacyId)
-            : '/review'
+            ? '/teach?legacy=' + encodeURIComponent(legacyId) + '&back=' + encodeURIComponent(back)
+            : back
     }
 
     if (pathname === '/unlabel') {
@@ -398,7 +564,7 @@ function handlePost (opened, pathname, form) {
             repository.unlabel(legacyId)
             RECLASSIFY.run(db, repository)
         }
-        return '/review'
+        return safeBack(form.get('back'))
     }
 
     if (pathname === '/rule') {
@@ -412,7 +578,7 @@ function handlePost (opened, pathname, form) {
             })
             RECLASSIFY.run(db, repository)
         }
-        return '/rules'
+        return form.get('back') ? safeBack(form.get('back')) : '/rules'
     }
 
     if (pathname === '/rule/delete') {
@@ -442,6 +608,7 @@ function teachPage (opened, url) {
     }
 
     const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
+    const back = safeBack(url.searchParams.get('back'))
 
     const cards = proposals.length === 0
         ? '<p class="thin">Nothing in this title generalises — no phrase in it appears on enough ' +
@@ -457,6 +624,7 @@ function teachPage (opened, url) {
   ${p.breaks > 0 ? '<ul>' + p.breakSamples.map(s => '<li class="warn">priced today, would stop: ' + escapeHtml(s) + '</li>').join('') + '</ul>' : ''}
   ${p.conflicts.length > 0 ? '<ul>' + p.conflicts.map(c => '<li class="warn">you called this genuine: ' + escapeHtml(c) + '</li>').join('') + '</ul>' : ''}
   <form method="post" action="/rule" style="margin-top:10px">
+    <input type="hidden" name="back" value="${escapeHtml(back)}">
     <input type="hidden" name="phrase" value="${escapeHtml(p.phrase)}">
     <input type="hidden" name="support" value="${p.support}">
     <input type="hidden" name="agreement" value="${p.agreement === null ? '' : p.agreement}">
@@ -475,7 +643,7 @@ anything else you have said.</p>
   genuine overrides it. Take none of these and the single decision still stands.</p>
 </div>
 ${cards}
-<p style="margin-top:18px"><a href="/review">No rule — just this listing</a></p>
+<p style="margin-top:18px"><a href="${escapeHtml(back)}">No rule &mdash; just this listing</a></p>
 `)
 }
 

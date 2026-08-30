@@ -92,6 +92,61 @@ button.yes { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%,
 button.no  { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
 button.plain { color:var(--ink-2) }
 .settled { color:var(--ink-2); font-size:12px }
+/*  The work queue: a list, not a table.
+
+    eBay titles run to 70 characters at the median and 84 at the longest,
+    and a table column wide enough for one of those pushed the whole page
+    sideways - the global "table { min-width:720px }" and
+    "td { white-space:nowrap }" are right for the market statistics and
+    wrong for a queue somebody has to read. Scoped class names, so the wide
+    statistics table keeps the horizontal scroll it needs. */
+.queue { display:flex; flex-direction:column }
+.q { display:grid; grid-template-columns:56px minmax(0,1fr) auto; gap:14px;
+  align-items:start; padding:11px 4px; border-bottom:1px solid var(--grid) }
+.q:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
+.q-shot { position:relative; width:56px; height:56px }
+.q-shot img { width:56px; height:56px; object-fit:cover; border-radius:6px; display:block;
+  border:1px solid var(--border); background:var(--plane) }
+/*  minmax(0,1fr) above and min-width:0 here are the two rules that actually
+    stop a long title forcing the grid wider than the viewport. */
+.q-main { min-width:0 }
+.q-title { font-size:13.5px; line-height:1.35; overflow-wrap:anywhere }
+.q-title a { text-decoration:none }
+.q-title a:hover { text-decoration:underline }
+.q-meta { margin-top:5px; display:flex; flex-wrap:wrap; gap:5px 10px; align-items:center;
+  font-size:11.5px; color:var(--muted) }
+.q-side { display:flex; flex-direction:column; align-items:flex-end; gap:7px; text-align:right }
+
+/*  The preview, on hover or keyboard focus.
+
+    eBay sends x-frame-options: SAMEORIGIN, so the listing page itself
+    cannot be shown here - but the photo is what a glance is actually for,
+    and we already store its URL for every listing.
+
+    The large image is named ONLY inside the hover rule, so the browser
+    never fetches it until asked. Two hundred rows would otherwise pull
+    about 8MB on page load. The delay is deliberate: without it, running an
+    eye down the list flashes a preview per row. */
+.q-big { position:absolute; left:66px; top:-6px; z-index:40; width:340px; height:340px;
+  border-radius:10px; border:1px solid var(--border); pointer-events:none;
+  background:var(--surface) center/contain no-repeat;
+  box-shadow:0 12px 34px rgba(0,0,0,0.30);
+  opacity:0; visibility:hidden;
+  transition:opacity 110ms ease 0s, visibility 0s linear 110ms }
+.q:hover .q-big, .q:focus-within .q-big {
+  background-image:var(--shot); opacity:1; visibility:visible;
+  transition:opacity 110ms ease 260ms, visibility 0s linear 260ms }
+.q-big .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; font-size:11.5px;
+  color:var(--ink-2); background:color-mix(in srgb, var(--surface) 88%, transparent);
+  border-radius:0 0 9px 9px; border-top:1px solid var(--border) }
+
+@media (max-width:760px) {
+  .q { grid-template-columns:44px minmax(0,1fr) }
+  .q-shot, .q-shot img { width:44px; height:44px }
+  .q-side { grid-column:2; align-items:flex-start; text-align:left;
+    flex-direction:row; flex-wrap:wrap; align-items:center }
+  .q-big { left:0; top:52px; width:min(86vw,340px); height:min(86vw,340px) }
+}
 .proposal { border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px }
 .proposal .p { font-weight:560; font-size:15px }
 .proposal ul { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12px }

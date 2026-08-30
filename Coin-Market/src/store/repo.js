@@ -425,6 +425,46 @@ exports.newRepository = function (db, options) {
             `).all()
         },
 
+        /*
+            The individual listings behind one number on the market page.
+
+            Without this there is no way to reach a junk listing that is
+            polluting an asking premium: the front page shows aggregates and
+            the review queue is keyed on doubt, not on which coin type a
+            listing landed in. Something you can see is wrong but cannot
+            dismiss from where you noticed it may as well not be reviewable.
+
+            Ordered by asking price, because a lot priced far from its
+            neighbours is both the most likely to be wrong and the most
+            visible when it is.
+        */
+        listingsForInstrument (key, limit) {
+            return db.prepare(`
+                SELECT l.legacy_id AS legacyId, l.title, l.item_web_url AS itemWebUrl,
+                       l.image_url AS imageUrl, l.category_path AS categoryPath,
+                       l.condition_label AS conditionLabel, l.buying_options AS buyingOptions,
+                       l.seller_feedback_pct AS sellerFeedbackPct,
+                       l.seller_feedback_cnt AS sellerFeedbackCnt,
+                       l.end_time AS endTime, l.last_seen AS lastSeen,
+                       li.fine_oz AS fineOz, li.confidence,
+                       lb.verdict, lb.denomination AS labelledDenomination,
+                       q.reason,
+                       s.price, s.shipping, 1 AS priced
+                FROM listing_instrument li
+                JOIN listing l ON l.browse_id = li.browse_id
+                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
+                LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
+                LEFT JOIN (
+                    SELECT browse_id, price, shipping,
+                           ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
+                    FROM listing_snapshot
+                ) s ON s.browse_id = l.browse_id AND s.rn = 1
+                WHERE li.key = ?
+                ORDER BY (COALESCE(s.price, 0) + COALESCE(s.shipping, 0)) DESC
+                LIMIT ?
+            `).all(key, limit || 200)
+        },
+
         learnedRules () {
             return db.prepare(`
                 SELECT id, phrase, kind, value, created_at AS createdAt,
