@@ -291,17 +291,6 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
                 LEFT JOIN latest s ON s.browse_id = l.browse_id
                 WHERE li.key = ?1
-                  /*  Auction or Buy-It-Now, for live and completed alike. A
-                      completed lot is judged on how it actually sold, a live
-                      one on how it is offered - which is not the same
-                      question and must not use the same column. */
-                  AND (?5 = 'all'
-                       OR (?5 = 'auction' AND (
-                             (o.sale_type IS NOT NULL AND o.sale_type = 'AUCTION') OR
-                             (o.sale_type IS NULL AND l.buying_options LIKE '%AUCTION%')))
-                       OR (?5 = 'bin' AND (
-                             (o.sale_type IS NOT NULL AND o.sale_type <> 'AUCTION') OR
-                             (o.sale_type IS NULL AND l.buying_options NOT LIKE '%AUCTION%'))))
                   AND o.browse_id IS NULL
                   AND (l.end_time IS NULL OR l.end_time > ?2)
                   AND l.last_seen > ?3
@@ -561,6 +550,17 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
                 WHERE li.key = ?1
+                  /*  Auction or Buy-It-Now, for live and completed alike. A
+                      completed lot is judged on how it actually sold, a live
+                      one on how it is offered - which is not the same
+                      question and must not use the same column. */
+                  AND (?5 = 'all'
+                       OR (?5 = 'auction' AND (
+                             (o.sale_type IS NOT NULL AND o.sale_type = 'AUCTION') OR
+                             (o.sale_type IS NULL AND l.buying_options LIKE '%AUCTION%')))
+                       OR (?5 = 'bin' AND (
+                             (o.sale_type IS NOT NULL AND o.sale_type <> 'AUCTION') OR
+                             (o.sale_type IS NULL AND l.buying_options NOT LIKE '%AUCTION%'))))
                 /*  Completed sales first, always.
 
                     They are few - tens against thousands - and they are the
