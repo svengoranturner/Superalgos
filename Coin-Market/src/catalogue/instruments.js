@@ -33,7 +33,27 @@ exports.keyAt = function (attributes, level) {
     if (attributes === null || attributes === undefined) { return null }
     if (attributes.denomination === null || attributes.denomination === undefined) { return null }
 
-    const parts = [attributes.series || 'GB.SOV', attributes.denomination]
+    /*
+        Bullion and collector coins are separate instruments, not the same
+        instrument at different prices.
+
+        eBay's sellers split by format: bullion-grade sovereigns go to
+        auction, while proofs, slabbed pieces, branch mints and pre-1871
+        coins are listed buy-it-now at collector prices. Pooling them made
+        the headline compare auction clearing against numismatic asks - a
+        median ask of 62.8% over melt where bullion runs nearer 13% - which
+        reads as an enormous opportunity that does not exist.
+
+        COINS.isBullionPool already drew this line and nothing used it. The
+        pool sits immediately after the series so it divides at EVERY level:
+        GB.SOV.BULLION.FULL and GB.SOV.COLLECTOR.FULL never mix, and neither
+        do their year and mint refinements.
+
+        Absent bullionPool reads as bullion. classify.js always sets it; the
+        default only matters for callers building attributes by hand.
+    */
+    const pool = attributes.bullionPool === false ? 'COLLECTOR' : 'BULLION'
+    const parts = [attributes.series || 'GB.SOV', pool, attributes.denomination]
 
     for (const field of LEVEL_FIELDS[level]) {
         const value = attributes[field]
@@ -72,20 +92,26 @@ exports.gradeLabel = function (band) {
 
 exports.displayName = function (key) {
     const parts = key.split('.')
-    /* parts[0..1] are the series prefix 'GB','SOV' */
-    const denomination = COINS.DENOMINATIONS[parts[2]]
-    const bits = [denomination === undefined ? parts[2] : denomination.label]
+    /* parts[0..1] are the series prefix 'GB','SOV'; parts[2] is the pool. */
+    const pool = parts[2]
+    const denomination = COINS.DENOMINATIONS[parts[3]]
+    const bits = [denomination === undefined ? parts[3] : denomination.label]
 
-    if (parts[3] !== undefined) {
-        const portrait = COINS.PORTRAIT_BY_CODE.get(parts[3])
-        bits.push(portrait === undefined ? parts[3] : portrait.label)
+    if (parts[4] !== undefined) {
+        const portrait = COINS.PORTRAIT_BY_CODE.get(parts[4])
+        bits.push(portrait === undefined ? parts[4] : portrait.label)
     }
-    if (parts[4] !== undefined) { bits.push(parts[4]) }
-    if (parts[5] !== undefined) {
-        const mint = COINS.MINTS[parts[5]]
-        bits.push(mint === undefined ? parts[5] : mint.label)
+    if (parts[5] !== undefined) { bits.push(parts[5]) }
+    if (parts[6] !== undefined) {
+        const mint = COINS.MINTS[parts[6]]
+        bits.push(mint === undefined ? parts[6] : mint.label)
     }
-    if (parts[6] !== undefined) { bits.push(exports.gradeLabel(parts[6])) }
+    if (parts[7] !== undefined) { bits.push(exports.gradeLabel(parts[7])) }
 
-    return bits.join(' · ')
+    /*  Both pools are labelled, not just the collector one. An unlabelled
+        "Sovereign" is exactly the ambiguity this split exists to remove. */
+    const label = bits.join(' · ')
+    if (pool === 'COLLECTOR') { return label + ' (collector)' }
+    if (pool === 'BULLION') { return label + ' (bullion)' }
+    return label
 }

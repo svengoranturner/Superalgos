@@ -111,12 +111,14 @@ test('structured aspects beat the title parser', () => {
 test('instrument keys nest from general to specific', () => {
     const result = classify({ title: '1900 Victoria Old Head Gold Sovereign Melbourne Mint' })
     const keys = INSTRUMENTS.keysFor(result.attributes)
+    /* Melbourne is a branch mint, so this coin is not in the bullion pool -
+       the split shows up from the very first level. */
     assert.deepStrictEqual(keys.map(k => k.key), [
-        'GB.SOV.FULL',
-        'GB.SOV.FULL.VIC_OLD',
-        'GB.SOV.FULL.VIC_OLD.1900',
-        'GB.SOV.FULL.VIC_OLD.1900.M',
-        'GB.SOV.FULL.VIC_OLD.1900.M.RAW_UNSPECIFIED'
+        'GB.SOV.COLLECTOR.FULL',
+        'GB.SOV.COLLECTOR.FULL.VIC_OLD',
+        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900',
+        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900.M',
+        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900.M.RAW_UNSPECIFIED'
     ])
 })
 
@@ -128,7 +130,7 @@ test('an unknown attribute truncates the key chain instead of inventing a bucket
         mint: null, gradeBand: 'RAW_BU'
     })
     assert.strictEqual(keys.length, 3)
-    assert.strictEqual(keys[keys.length - 1].key, 'GB.SOV.FULL.GEORGE_V.1912')
+    assert.strictEqual(keys[keys.length - 1].key, 'GB.SOV.BULLION.FULL.GEORGE_V.1912')
 })
 
 test('the bullion pool excludes proofs, high slabs and branch mints', () => {
@@ -139,4 +141,64 @@ test('the bullion pool excludes proofs, high slabs and branch mints', () => {
     assert.strictEqual(pool({ gradeBand: 'SLAB_MS65_PLUS' }), false)
     assert.strictEqual(pool({ mint: 'M' }), false)
     assert.strictEqual(pool({ year: 1850 }), false)
+})
+
+/*
+    Bullion and collector coins are separate instruments.
+
+    Sellers split by format - bullion to auction, proofs and slabs and branch
+    mints to buy-it-now at collector prices - so pooling them compared auction
+    clearing against numismatic asks and invented an opportunity that was not
+    there.
+*/
+
+test('a plain London bullion sovereign lands in the bullion pool', () => {
+    const keys = INSTRUMENTS.keysFor({
+        series: 'GB.SOV', denomination: 'FULL', portrait: 'GEORGE_V', year: 1912,
+        mint: 'LON', gradeBand: 'RAW_UNSPECIFIED', bullionPool: true
+    })
+    assert.ok(keys[0].key.startsWith('GB.SOV.BULLION.'), keys[0].key)
+})
+
+test('a proof, a slab and a branch mint all land in the collector pool', () => {
+    for (const attrs of [
+        { finish: 'PROOF', mint: 'LON', year: 1980 },
+        { gradeBand: 'SLAB_MS65_PLUS', mint: 'LON', year: 1980 },
+        { mint: 'M', year: 1900 },
+        { mint: 'LON', year: 1850 }
+    ]) {
+        const full = Object.assign({ series: 'GB.SOV', denomination: 'FULL' }, attrs)
+        full.bullionPool = COINS.isBullionPool(full)
+        assert.ok(INSTRUMENTS.keyAt(full, 0).startsWith('GB.SOV.COLLECTOR.'),
+            JSON.stringify(attrs) + ' -> ' + INSTRUMENTS.keyAt(full, 0))
+    }
+})
+
+/*  The two pools must never resolve to the same key at any depth, or the
+    headline silently re-pools them. */
+test('the pools stay separate at every level of the hierarchy', () => {
+    const base = {
+        series: 'GB.SOV', denomination: 'FULL', portrait: 'GEORGE_V', year: 1912,
+        mint: 'LON', gradeBand: 'RAW_UNSPECIFIED'
+    }
+    const bullion = INSTRUMENTS.keysFor(Object.assign({}, base, { bullionPool: true })).map(k => k.key)
+    const collector = INSTRUMENTS.keysFor(Object.assign({}, base, { bullionPool: false })).map(k => k.key)
+    assert.strictEqual(bullion.length, collector.length)
+    for (let i = 0; i < bullion.length; i++) {
+        assert.notStrictEqual(bullion[i], collector[i])
+    }
+    assert.strictEqual(collector.filter(k => bullion.includes(k)).length, 0)
+})
+
+test('both pools are named, so no instrument reads as an unqualified sovereign', () => {
+    assert.match(INSTRUMENTS.displayName('GB.SOV.BULLION.FULL'), /bullion/i)
+    assert.match(INSTRUMENTS.displayName('GB.SOV.COLLECTOR.FULL'), /collector/i)
+})
+
+test('display names still resolve portrait, mint and grade past the pool segment', () => {
+    const name = INSTRUMENTS.displayName('GB.SOV.COLLECTOR.FULL.VIC_OLD.1900.M.SLAB_MS63')
+    assert.match(name, /1900/)
+    assert.match(name, /MS63/)
+    assert.ok(!name.includes('VIC_OLD'), 'portrait code should render as a label: ' + name)
+    assert.ok(!name.includes('.M.'), name)
 })
