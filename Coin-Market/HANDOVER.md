@@ -1006,6 +1006,60 @@ And the plural bug again: `capsule` carried a trailing word boundary, so
 "Capsules" never matched it at all and a listing selling ten of them read as a
 coin. Every noun in that file is worth checking for this.
 
+## Six pools, not two
+
+One COLLECTOR bucket put a GBP 10,000 1832 William IV beside an ordinary
+branch-mint Victorian and a modern Royal Mint proof, and reported one median
+asking premium over all three. That number described none of them: it read
+71% over melt against sales clearing at 8.6%, and most of the 62-point
+"spread" was the gap between two populations rather than between asking and
+clearing.
+
+The reason a coin is not bullion is now the pool it trades in. Every reason is
+an observable property - date, mint, finish, whether someone paid to grade it -
+and never its price, which would be circular. Precedence is EARLY, GRADED,
+PROOF, BRANCH, UNATTRIBUTED, BULLION: date first, because a pre-1871 sovereign
+is scarce whether or not anyone slabbed it.
+
+Full sovereigns, after the split:
+
+| pool | live | asks | clears | spread |
+|---|---|---|---|---|
+| bullion | 341 | 37.0% | 6.6% | 30.4pp |
+| branch mint | 119 | 43.0% | 6.5% | 36.4pp |
+| unattributed | 215 | 40.2% | 8.4% | 31.7pp |
+| proof | 254 | 72.2% | - | - |
+| graded | 215 | 81.6% | - | - |
+| pre-1871 | 198 | **215.6%** | - | - |
+
+The pre-1871 coins were the distortion, and 215.6% is a true statement about
+them. The three ordinary pools now sit in a coherent 37-43% band.
+
+**The cost is real and one-sided.** Splitting fragments an already thin
+clearing sample: proof, graded and pre-1871 have fewer than three sales each
+and so show no clearing price at all. That is honest rather than new - those
+coins were never selling, and pooling them with ordinary sovereigns hid the
+fact behind a median made entirely of ordinary sales. The blanks fill in as
+each pool records its own sales.
+
+Sale prices barely differ by pool - GBP 795 to 911 across bullion, branch,
+early and unattributed, with only graded above at GBP 1,175. **The
+contamination was entirely on the asks side**, which is exactly why the spread
+was the number that lied.
+
+## A space cost 52 mints
+
+The compact dealer form wanted the mark glued to the year - "1887S" - but
+sellers write "1919 P" as often. 52 live listings had an unread mint for want
+of a space in the pattern: 1918 I Bombay, 1880 M Melbourne, 1871 S Sydney,
+1927 SA Pretoria. A coin whose mint goes unread does not merely lack a field,
+it lands in the wrong pool for the wrong reason - which is why branch mint went
+from 2 sales to 4.
+
+The trailing word boundary is what makes the space safe: in "1887 Sovereign"
+the S is followed by "overeign", so no boundary follows it and the letter is
+not taken. Checked against 4,000 live titles with no false reading.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
