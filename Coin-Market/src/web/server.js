@@ -151,6 +151,7 @@ function marketPage (opened, url) {
         a derived number is easier to trust when the thing it came from is
         visible above it.
     */
+    const composition = repository.marketComposition()
     const sales = repository.recentSales(15)
     const spotNow = opened.spotAt(new Date().toISOString())
     const salesHtml = sales.length === 0
@@ -274,6 +275,22 @@ ${suppressed > 0 ? '<p class="thin">' + suppressed + ' lot' + (suppressed === 1 
   ' hidden: priced below their own gold content, so they cannot be the coin the title claims. ' +
   'They are on the <a href="/review">review page</a> with the reason.</p>' : ''}
 ${opportunityHtml}
+
+<h2>What the tracked market is made of</h2>
+<div class="card">
+  ${RENDER.compositionChart(composition)}
+  <p class="thin" style="margin:14px 0 0">
+    <strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing is
+    Good-'Til-Cancelled and carries no end time, so it never becomes eligible for outcome
+    resolution &mdash; every one of the ${composition.auctionSold + composition.auctionUnsold}
+    completed lots here is an auction. So the clearing prices describe the auction market, the
+    asking prices are ${Math.round(100 * composition.liveBin / (composition.liveBin + composition.liveAuction))}%
+    Buy-It-Now, and the spread between them compares two markets rather than two ends of one.
+    ${composition.binVanished > 0
+        ? '<strong>' + composition.binVanished + '</strong> Buy-It-Now listings have gone quiet ' +
+          'without being resolved; each has either sold or been withdrawn and we cannot yet tell which.'
+        : ''}</p>
+</div>
 
 <h2>What has actually sold (${sales.length})</h2>
 <p class="thin">Completed auctions with a hammer price. Every clearing figure on this page is
@@ -782,10 +799,14 @@ function listingsPage (opened, url) {
             '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>')
     }
 
-    const rows = repository.listingsForInstrument(key, 500)
+    const sale = ['auction', 'bin'].includes(url.searchParams.get('sale'))
+        ? url.searchParams.get('sale')
+        : 'all'
+    const rows = repository.listingsForInstrument(key, 500, sale)
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
     for (const row of rows) {
-        row.back = '/listings?key=' + encodeURIComponent(key)
+        row.back = '/listings?key=' + encodeURIComponent(key) +
+            (sale === 'all' ? '' : '&sale=' + sale)
         /*  The drill-down knows the instrument from the URL, so the controls
             can pre-select the denomination here too. */
         row.instrumentKey = key
@@ -826,7 +847,8 @@ function listingsPage (opened, url) {
         'Genuine &mdash; selected</button></div>'
 
     const list = (items) => '<form method="post" action="/apply">' +
-        '<input type="hidden" name="back" value="' + escapeHtml('/listings?key=' + key) + '">' +
+        '<input type="hidden" name="back" value="' +
+        escapeHtml('/listings?key=' + key + (sale === 'all' ? '' : '&sale=' + sale)) + '">' +
         bar +
         '<div class="card"><div class="queue">' +
         items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
@@ -850,6 +872,23 @@ moving the numbers on the front page.</p>
     <div class="l">of them never flagged for review &mdash; they classified confidently, so this
       page is the only way to reach them</div></div>
   ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged</div></div>' : ''}
+</div>
+
+<div class="card">
+  <div class="tabs">
+    ${['all', 'auction', 'bin'].map(option => {
+        const label = option === 'all' ? 'Everything'
+            : (option === 'auction' ? 'Auctions only' : 'Buy-It-Now only')
+        const href = '/listings?key=' + encodeURIComponent(key) +
+            (option === 'all' ? '' : '&sale=' + option)
+        return option === sale
+            ? '<span class="tab on">' + label + '</span>'
+            : '<a class="tab" href="' + escapeHtml(href) + '">' + label + '</a>'
+    }).join('')}
+  </div>
+  <p class="thin" style="margin:10px 0 0">A completed lot is filtered on how it actually sold, a
+  live one on how it is offered. Note that no Buy-It-Now lot has a recorded outcome &mdash; they
+  carry no end time, so the tool never learns whether they sold.</p>
 </div>
 
 <h2>Sold &mdash; what someone actually paid (${sold.length})</h2>

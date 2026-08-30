@@ -98,6 +98,25 @@ input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critic
 .pick-spacer { display:block; width:16px }
 .bulkbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 12px }
 .bulkbar button { font-size:13px; padding:5px 12px }
+/*  Composition bars. Plain flex rather than SVG: the quantity is a share of
+    a whole, a rectangle divided by percentage says exactly that, and it
+    reflows on a phone without any viewBox arithmetic. */
+.comp { display:flex; flex-direction:column; gap:14px }
+.comp-row { display:grid; grid-template-columns:minmax(120px,170px) minmax(0,1fr); gap:14px; align-items:center }
+.comp-label { font-size:13px; color:var(--ink-2) }
+.comp-label b { color:var(--ink); font-weight:560 }
+.comp-bar { display:flex; height:30px; border-radius:6px; overflow:hidden; background:var(--grid) }
+.comp-bar span { display:flex; align-items:center; justify-content:center; font-size:11.5px;
+  color:#fff; white-space:nowrap; overflow:hidden; min-width:0 }
+.comp-bar span.pale { color:var(--ink-2); background:var(--grid) }
+.comp-bar span.hatch { color:var(--ink-2);
+  background:repeating-linear-gradient(135deg, var(--grid) 0 7px, transparent 7px 14px) }
+.tabs { display:flex; flex-wrap:wrap; gap:8px }
+.tab { display:inline-block; font-size:13px; padding:5px 12px; border-radius:99px;
+  border:1px solid var(--border); color:var(--ink-2); text-decoration:none }
+a.tab:hover { background:color-mix(in srgb, var(--ink) 6%, transparent) }
+.tab.on { color:var(--ink); border-color:var(--ink); font-weight:560 }
+.comp-key { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:var(--ink-2); margin-top:4px }
 input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-radius:6px;
   border:1px solid var(--border); background:var(--surface); color:var(--ink) }
 .countries { display:flex; flex-wrap:wrap; gap:6px 14px; margin:10px 0 14px }
@@ -204,6 +223,63 @@ ${body}
     between two points on one shared axis, plus the spread of clearing
     prices around it. One axis (premium over melt); never two.
 */
+/*
+    What the tracked market is made of: live against ended, auction against
+    Buy-It-Now, sold against unsold.
+
+    Deliberately shows the hole. Every completed outcome in the store is an
+    auction, because a Buy-It-Now listing is Good-'Til-Cancelled, carries no
+    end time, and so never becomes eligible for outcome resolution. Drawing
+    that as a zero sell-through would be a lie - it is unobserved, and the
+    bar is hatched to say so rather than left off the chart, because a
+    missing bar reads as nothing to see.
+*/
+exports.compositionChart = function (c) {
+    const live = c.liveAuction + c.liveBin
+    const ended = c.auctionSold + c.auctionUnsold
+
+    const seg = (value, total, colour, label, title) => {
+        if (value <= 0) { return '' }
+        const share = (value / total) * 100
+        /*  One style attribute, not two - a second is ignored, and the
+            ignored one here was the width. */
+        const cls = colour === null ? ' class="hatch"' : ''
+        const background = colour === null ? '' : 'background:' + colour + ';'
+        return '<span' + cls + ' title="' + escapeHtml(title) + '"' +
+            ' style="' + background + 'flex:0 0 ' + share.toFixed(2) + '%">' +
+            (share > 12 ? escapeHtml(label) : '') + '</span>'
+    }
+
+    const row = (label, count, bar) =>
+        '<div class="comp-row"><div class="comp-label"><b>' + escapeHtml(label) + '</b><br>' +
+        (count === null ? '' : count.toLocaleString('en-GB') + ' listings') +
+        '</div><div class="comp-bar">' + bar + '</div></div>'
+
+    const sellThrough = ended > 0 ? Math.round((c.auctionSold / ended) * 100) : null
+
+    return '<div class="comp">' +
+        row('On sale now', live,
+            seg(c.liveBin, live, 'var(--ask)', 'Buy-It-Now ' + c.liveBin.toLocaleString('en-GB'),
+                c.liveBin + ' Buy-It-Now listings') +
+            seg(c.liveAuction, live, 'var(--clearing)', 'Auction ' + c.liveAuction,
+                c.liveAuction + ' auctions')) +
+        row('Auctions ended', ended,
+            seg(c.auctionSold, ended, 'var(--good)', 'Sold ' + c.auctionSold,
+                c.auctionSold + ' sold — ' + sellThrough + '% sell-through') +
+            seg(c.auctionUnsold, ended, 'var(--critical)', 'Unsold ' + c.auctionUnsold,
+                c.auctionUnsold + ' ended without a bid high enough to sell')) +
+        row('Buy-It-Now ended', null,
+            seg(1, 1, null, 'not observed — see below',
+                'A Buy-It-Now listing has no end time, so it never enters outcome resolution')) +
+        '</div>' +
+        '<div class="comp-key">' +
+        '<span><span class="swatch" style="background:var(--ask)"></span>Buy-It-Now</span>' +
+        '<span><span class="swatch" style="background:var(--clearing)"></span>Auction</span>' +
+        '<span><span class="swatch" style="background:var(--good)"></span>Sold</span>' +
+        '<span><span class="swatch" style="background:var(--critical)"></span>Unsold</span>' +
+        '</div>'
+}
+
 exports.premiumChart = function (rows) {
     if (rows.length === 0) { return '<p class="thin">No instrument has enough sales yet.</p>' }
 
