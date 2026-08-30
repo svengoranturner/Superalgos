@@ -52,7 +52,13 @@ exports.keyAt = function (attributes, level) {
         Absent bullionPool reads as bullion. classify.js always sets it; the
         default only matters for callers building attributes by hand.
     */
-    const pool = attributes.bullionPool === false ? 'COLLECTOR' : 'BULLION'
+    /*  Six pools, not two. A single COLLECTOR bucket reported one median
+        across a GBP 10,000 1832 William IV, an ordinary branch-mint
+        Victorian and a modern proof - a number that described none of them.
+        See COINS.poolFor. The boolean is the fallback for attribute vectors
+        built by hand. */
+    const pool = attributes.pool ||
+        (attributes.bullionPool === false ? 'COLLECTOR' : 'BULLION')
     const parts = [attributes.series || 'GB.SOV', pool, attributes.denomination]
 
     for (const field of LEVEL_FIELDS[level]) {
@@ -117,10 +123,9 @@ exports.displayName = function (key) {
     }
     if (parts[7] !== undefined) { bits.push(exports.gradeLabel(parts[7])) }
 
-    /*  Both pools are labelled, not just the collector one. An unlabelled
+    /*  Every pool is labelled, not just the unusual ones. An unlabelled
         "Sovereign" is exactly the ambiguity this split exists to remove. */
     const label = bits.join(' · ')
-    if (pool === 'COLLECTOR') { return label + ' (collector)' }
-    if (pool === 'BULLION') { return label + ' (bullion)' }
-    return label
+    const poolLabel = COINS.POOLS[pool]
+    return poolLabel === undefined ? label : label + ' (' + poolLabel + ')' 
 }

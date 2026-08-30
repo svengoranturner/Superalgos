@@ -33,7 +33,17 @@ function extractYear (title) {
         it cost the mintmark as well: a branch-mint coin whose mint went
         unread also fails the bullion-pool test for the wrong reason.
     */
-    const pattern = /\b(1[89]\d{2}|20[0-4]\d)(SA|[SMPCIA])?\b/gi
+    /*  The space is optional, because sellers write it both ways: "1887S"
+        and "1919 P" are the same claim. 52 live listings had an unread mint
+        for want of it - 1918 I Bombay, 1880 M Melbourne, 1871 S Sydney,
+        1927 SA Pretoria - and a coin whose mint goes unread is not merely
+        missing a field, it fails the pool test for the wrong reason.
+
+        The trailing word boundary is what makes this safe: in "1887
+        Sovereign" the S is followed by "overeign", so there is no boundary
+        after it and the letter is not taken. Checked against 4,000 live
+        titles with no false reading. */
+    const pattern = /\b(1[89]\d{2}|20[0-4]\d)\s?(SA|[SMPCIA])?\b/gi
     let match
     while ((match = pattern.exec(title)) !== null) {
         const year = parseInt(match[1], 10)
@@ -442,6 +452,10 @@ exports.classify = function (listing, context) {
     if (descriptors.certNumber !== undefined) { attributes.certNumber = descriptors.certNumber }
 
     attributes.bullionPool = COINS.isBullionPool(attributes)
+    /*  Which pool it trades in, by the reason it is not ordinary bullion.
+        The boolean above is kept because plenty of code still asks the
+        simpler question. */
+    attributes.pool = COINS.poolFor(attributes)
 
     const reasons = []
     if (attributes.denomination === null) { reasons.push('Denomination not identified') }

@@ -113,12 +113,15 @@ test('instrument keys nest from general to specific', () => {
     const keys = INSTRUMENTS.keysFor(result.attributes)
     /* Melbourne is a branch mint, so this coin is not in the bullion pool -
        the split shows up from the very first level. */
+    /*  BRANCH, not one undifferentiated COLLECTOR bucket: a Melbourne coin
+        is scarce for a reason that is written on it, and that reason is the
+        pool it trades in. */
     assert.deepStrictEqual(keys.map(k => k.key), [
-        'GB.SOV.COLLECTOR.FULL',
-        'GB.SOV.COLLECTOR.FULL.VIC_OLD',
-        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900',
-        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900.M',
-        'GB.SOV.COLLECTOR.FULL.VIC_OLD.1900.M.RAW_UNSPECIFIED'
+        'GB.SOV.BRANCH.FULL',
+        'GB.SOV.BRANCH.FULL.VIC_OLD',
+        'GB.SOV.BRANCH.FULL.VIC_OLD.1900',
+        'GB.SOV.BRANCH.FULL.VIC_OLD.1900.M',
+        'GB.SOV.BRANCH.FULL.VIC_OLD.1900.M.RAW_UNSPECIFIED'
     ])
 })
 
@@ -160,7 +163,30 @@ test('a plain London bullion sovereign lands in the bullion pool', () => {
     assert.ok(keys[0].key.startsWith('GB.SOV.BULLION.'), keys[0].key)
 })
 
-test('a proof, a slab and a branch mint all land in the collector pool', () => {
+test('each reason a coin is not bullion is its own pool', () => {
+    /*  One COLLECTOR bucket reported a single median across a GBP 10,000
+        1832 William IV, an ordinary branch-mint Victorian and a modern
+        proof - a number that described none of them. */
+    for (const [attrs, pool] of [
+        [{ finish: 'PROOF', mint: 'LON', year: 1980 }, 'PROOF'],
+        [{ gradeBand: 'SLAB_MS65_PLUS', mint: 'LON', year: 1980 }, 'GRADED'],
+        [{ mint: 'M', year: 1900 }, 'BRANCH'],
+        [{ mint: 'LON', year: 1850 }, 'EARLY'],
+        [{ mint: null, year: 1900 }, 'UNATTRIBUTED'],
+        [{ mint: 'LON', year: null }, 'UNATTRIBUTED']
+    ]) {
+        const full = Object.assign({ series: 'GB.SOV', denomination: 'FULL' }, attrs)
+        full.pool = COINS.poolFor(full)
+        assert.strictEqual(full.pool, pool, JSON.stringify(attrs))
+        assert.ok(INSTRUMENTS.keyAt(full, 0).startsWith('GB.SOV.' + pool + '.'),
+            JSON.stringify(attrs) + ' -> ' + INSTRUMENTS.keyAt(full, 0))
+    }
+    /*  Date beats grade: a pre-1871 sovereign is scarce whether or not
+        anyone paid to slab it. */
+    assert.strictEqual(COINS.poolFor({ year: 1832, gradeBand: 'SLAB_MS64', mint: 'LON' }), 'EARLY')
+})
+
+test('a proof, a slab and a branch mint are all outside the bullion pool', () => {
     for (const attrs of [
         { finish: 'PROOF', mint: 'LON', year: 1980 },
         { gradeBand: 'SLAB_MS65_PLUS', mint: 'LON', year: 1980 },
@@ -168,8 +194,8 @@ test('a proof, a slab and a branch mint all land in the collector pool', () => {
         { mint: 'LON', year: 1850 }
     ]) {
         const full = Object.assign({ series: 'GB.SOV', denomination: 'FULL' }, attrs)
-        full.bullionPool = COINS.isBullionPool(full)
-        assert.ok(INSTRUMENTS.keyAt(full, 0).startsWith('GB.SOV.COLLECTOR.'),
+        full.pool = COINS.poolFor(full)
+        assert.ok(!INSTRUMENTS.keyAt(full, 0).startsWith('GB.SOV.BULLION.'),
             JSON.stringify(attrs) + ' -> ' + INSTRUMENTS.keyAt(full, 0))
     }
 })

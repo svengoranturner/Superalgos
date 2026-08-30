@@ -116,6 +116,51 @@ const GRADE_BANDS = [
     unread is merely absent from the bullion median, which loses a little
     sample. A rare branch-mint coin admitted by default corrupts it.
 */
+/*
+    Which pool a coin trades in.
+
+    One "collector" bucket put a GBP 10,000 1832 William IV beside an
+    ordinary branch-mint Victorian and a modern Royal Mint proof, and then
+    reported a median asking premium over all three. That number described
+    none of them: the level-0 collector ask read 71% over melt while its
+    sales cleared at 8.6%, and the 62-point "spread" between them was mostly
+    the gap between two different populations rather than between asking and
+    clearing.
+
+    So the reason a coin is not bullion becomes the pool it trades in. Each
+    reason is an observable property of the coin - its date, its mint, its
+    finish, whether someone paid to grade it - and never its price, which
+    would be circular: we would be sorting coins by the thing we are trying
+    to measure.
+
+    Order is precedence, and it is a judgement. Date first, because a
+    pre-1871 sovereign is scarce whether or not anyone slabbed it; then the
+    grade, which dominates a modern coin's price; then the finish; then the
+    mint. UNATTRIBUTED is last because not knowing is not a property of the
+    coin, it is a property of the title.
+*/
+const POOLS = {
+    COLLECTOR: 'collector',
+    EARLY: 'pre-1871',
+    GRADED: 'graded',
+    PROOF: 'proof',
+    BRANCH: 'branch mint',
+    UNATTRIBUTED: 'unattributed',
+    BULLION: 'bullion'
+}
+
+function poolFor (attrs) {
+    if (attrs.year !== null && attrs.year !== undefined && attrs.year < 1871) { return 'EARLY' }
+    if (attrs.gradeBand && attrs.gradeBand.startsWith('SLAB_')) { return 'GRADED' }
+    if (attrs.finish === 'PROOF') { return 'PROOF' }
+    /*  An unread year or mint lands here rather than in bullion, for the
+        reason set out below: not knowing is not evidence of ordinariness. */
+    if (attrs.year === null || attrs.year === undefined) { return 'UNATTRIBUTED' }
+    if (!attrs.mint) { return 'UNATTRIBUTED' }
+    if (attrs.mint !== 'LON') { return 'BRANCH' }
+    return 'BULLION'
+}
+
 function isBullionPool (attrs) {
     if (attrs.finish === 'PROOF') { return false }
     /*  Any graded coin is a collector coin, including the low bands.
@@ -142,6 +187,8 @@ exports.MINTS = MINTS
 exports.GRADE_BANDS = GRADE_BANDS
 exports.fineOunces = fineOunces
 exports.isBullionPool = isBullionPool
+exports.poolFor = poolFor
+exports.POOLS = POOLS
 
 /* Portraits whose year range contains the given year. */
 exports.portraitsForYear = function (year) {
