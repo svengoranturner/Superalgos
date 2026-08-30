@@ -380,6 +380,36 @@ test('a hyphenated or spaced quarter is still a quarter', () => {
     }
 })
 
+/*  Nine seller phrasings for the multi-weight sovereigns all fell through
+    to the FULL catch-all, because the multiplier had to sit immediately
+    before the word. 87 live lots were priced against a half or a fifth of
+    the gold they actually contain, and a GBP 9,654 five-sovereign piece
+    duly read 1146% over melt. */
+test('a five-pound or two-pound sovereign is not a full sovereign', () => {
+    for (const [title, expected] of [
+        ['1989 Great Britain Gold 5 Sovereign NGC PF70 Ultra Cameo', 'QUINTUPLE'],
+        /* the plural in POUNDS is what broke the old adjacency rule */
+        ['2014 GOLD 375 MINTED GREAT BRITAIN 5 POUNDS SOVEREIGN NGC PF 70 UC', 'QUINTUPLE'],
+        ['KING EDWARD VII 1902 £5 GOLD SOVEREIGN', 'QUINTUPLE'],
+        ['1893 Great Britain Victoria Gold £2 Sovereign MS65 Graded By PCGS', 'DOUBLE'],
+        ['UK - GREAT BRITAIN , GOLD 2 SOV. CORONATION 2023', 'DOUBLE'],
+        ['1988 GOLD GREAT BRITAIN 2 POUNDS SOVEREIGN PROOF', 'DOUBLE'],
+        /*  A piedfort is struck at double thickness, so it carries a double
+            sovereign's gold - which is the quantity this tool measures. */
+        ['2017 Piedfort Proof Full Gold Sovereign Only 3400 Issued', 'DOUBLE'],
+        ['Great Britain 2018 Piefort Sovereign 0.47 Oz AGW Gold Proof Coin NGC PF70', 'DOUBLE']
+    ]) {
+        assert.strictEqual(classify({ title }).attributes.denomination, expected, title)
+    }
+})
+
+/*  "Type 2" is a portrait variety of an ordinary full sovereign. Without the
+    lookbehind the multi-weight rule eats it and doubles its melt. */
+test('a portrait variety number is not a multiplier', () => {
+    assert.strictEqual(classify({ title: 'Victoria 1893 Type 2 Sovereign Old Head' }).attributes.denomination, 'FULL')
+    assert.strictEqual(classify({ title: '1974 Gold Sovereign Elizabeth II' }).attributes.denomination, 'FULL')
+})
+
 /*  The word after, not before. This was a genuine half sovereign priced
     against a full sovereign's gold, sitting in the live opportunities
     panel as a bargain. */
