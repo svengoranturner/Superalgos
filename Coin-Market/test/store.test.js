@@ -195,3 +195,57 @@ test('separate listings are still resolved separately', () => {
     assert.strictEqual(repo.pendingOutcomes(50).length, 2)
     db.close()
 })
+
+/*
+    The ask side.
+
+    Good-'Til-Cancelled fixed-price listings have no end time, and testing
+    end_time > now is false for NULL - which silently excluded almost every
+    ask from the very spread the tool exists to measure.
+*/
+function askFixture () {
+    const db = newDatabase(':memory:')
+    const repo = newRepository(db, { sellerSalt: 'salt' })
+    const now = Date.now()
+    const seen = new Date(now - 60 * 60 * 1000).toISOString()
+    /* saveListing takes the observation time as its SECOND argument; a
+       lastSeen on the object itself is ignored. */
+    repo.saveListing({
+        browseId: 'v1|gtc|0', legacyId: 'gtc', marketplace: 'EBAY_GB', title: 'Gold Sovereign',
+        buyingOptions: 'FIXED_PRICE', currency: 'GBP', endTime: null
+    }, seen)
+    repo.saveListing({
+        browseId: 'v1|auction|0', legacyId: 'auction', marketplace: 'EBAY_GB', title: 'Gold Sovereign',
+        buyingOptions: 'AUCTION', currency: 'GBP',
+        endTime: new Date(now + 3600 * 1000).toISOString()
+    }, seen)
+    repo.saveListing({
+        browseId: 'v1|stale|0', legacyId: 'stale', marketplace: 'EBAY_GB', title: 'Gold Sovereign',
+        buyingOptions: 'FIXED_PRICE', currency: 'GBP', endTime: null
+    }, new Date(now - 8 * 86400000).toISOString())
+    for (const id of ['v1|gtc|0', 'v1|auction|0', 'v1|stale|0']) {
+        repo.saveSnapshot(id, { observedAt: seen, price: 500, shipping: 0, bidCount: 0 })
+        repo.saveClassification(id, [{ key: 'GB.SOV.FULL', level: 1 }], 0.9, 'test', 0.2354, {})
+    }
+    return { db, repo }
+}
+
+test('a Good-Til-Cancelled listing with no end time counts as an active ask', () => {
+    const { db, repo } = askFixture()
+    const ids = repo.activeListings('GB.SOV.FULL').map(r => r.browseId)
+    assert.ok(ids.includes('v1|gtc|0'), 'NULL end_time must not exclude the ask')
+    db.close()
+})
+
+test('a live auction is still active', () => {
+    const { db, repo } = askFixture()
+    assert.ok(repo.activeListings('GB.SOV.FULL').map(r => r.browseId).includes('v1|auction|0'))
+    db.close()
+})
+
+/*  Without an end time, last_seen is the only signal a listing has gone. */
+test('an endless listing not seen for days drops out rather than lingering', () => {
+    const { db, repo } = askFixture()
+    assert.ok(!repo.activeListings('GB.SOV.FULL').map(r => r.browseId).includes('v1|stale|0'))
+    db.close()
+})

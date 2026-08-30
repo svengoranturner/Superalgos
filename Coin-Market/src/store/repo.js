@@ -229,6 +229,22 @@ exports.newRepository = function (db, options) {
             `).all(key, sinceIso)
         },
 
+        /*
+            Live listings for one instrument, which is the whole ask side of
+            the spread.
+
+            end_time IS NULL counts as active. A Good-'Til-Cancelled
+            fixed-price listing has no end time at all, and testing
+            `end_time > now` is false for NULL - so the old form silently
+            excluded 93% of the store (4,841 of 5,204 rows) and with it
+            almost every ask. The tool exists to compare where auctions clear
+            against what sellers ask, and the asks were invisible.
+
+            last_seen is what keeps that honest. Without an end time there is
+            no other signal that a listing has gone, so one that has not
+            appeared in a sweep for a day is treated as finished rather than
+            lingering in the ask sample forever.
+        */
         activeListings (key) {
             return db.prepare(`
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
@@ -243,9 +259,16 @@ exports.newRepository = function (db, options) {
                            ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
                     FROM listing_snapshot
                 ) s ON s.browse_id = l.browse_id AND s.rn = 1
-                WHERE li.key = ? AND o.browse_id IS NULL AND l.end_time > ?
-                ORDER BY l.end_time ASC
-            `).all(key, new Date().toISOString())
+                WHERE li.key = ?
+                  AND o.browse_id IS NULL
+                  AND (l.end_time IS NULL OR l.end_time > ?)
+                  AND l.last_seen > ?
+                ORDER BY l.end_time IS NULL, l.end_time ASC
+            `).all(
+                key,
+                new Date().toISOString(),
+                new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString()
+            )
         },
 
         /* Snapshot/final-price pairs that teach the uplift curve. */
