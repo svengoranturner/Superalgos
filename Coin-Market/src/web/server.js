@@ -485,6 +485,12 @@ function queueRow (row, verdictCell) {
     if (leaf !== null && (reason === null || !reason.short.endsWith(leaf))) {
         meta.push(escapeHtml(leaf))
     }
+    /*  Only when it is known and not the home market - a GB badge on every
+        row would be noise, and a blank one on the 5,400 rows stored before
+        this column existed would look like a finding. */
+    if (row.itemCountry && String(row.itemCountry).toUpperCase() !== 'GB') {
+        meta.push('<span class="badge critical">in ' + escapeHtml(String(row.itemCountry).toUpperCase()) + '</span>')
+    }
     if (row.conditionLabel) { meta.push(escapeHtml(row.conditionLabel)) }
     if (row.buyingOptions) { meta.push(escapeHtml(String(row.buyingOptions).toLowerCase().replace(/[|,]/g, ' / ').replace(/_/g, ' '))) }
     /*  Auction-only, and present on just 7.6% of the queue for that reason -

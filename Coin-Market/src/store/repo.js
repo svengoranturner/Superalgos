@@ -47,18 +47,20 @@ exports.newRepository = function (db, options) {
 
     const statements = {
         upsertListing: db.prepare(`
-            INSERT INTO listing (browse_id, legacy_id, marketplace, title, category_id, category_path, condition_label,
+            INSERT INTO listing (browse_id, legacy_id, marketplace, title, category_id, category_path, item_country, condition_label,
                                  buying_options, currency, seller_hash, seller_id_hash,
                                  seller_feedback_pct, seller_feedback_cnt,
                                  item_web_url, image_url, start_time, end_time, first_seen, last_seen, expires_at,
                                  cert_number, grading_company, grade_numeric, grade_letter, condition_band)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(browse_id) DO UPDATE SET
                 last_seen = excluded.last_seen,
                 end_time = COALESCE(excluded.end_time, listing.end_time),
                 legacy_id = COALESCE(excluded.legacy_id, listing.legacy_id),
                 buying_options = excluded.buying_options,
                 category_path = COALESCE(excluded.category_path, listing.category_path),
+                /* Backfilled on the next sweep; never cleared back to NULL. */
+                item_country = COALESCE(excluded.item_country, listing.item_country),
                 expires_at = excluded.expires_at,
                 /* Backfill identity and condition detail as eBay starts
                    supplying them, without clobbering what we already hold. */
@@ -111,7 +113,8 @@ exports.newRepository = function (db, options) {
 
             bindAll(statements.upsertListing, [
                 listing.browseId, listing.legacyId, listing.marketplace || 'EBAY_GB',
-                listing.title, listing.categoryId, listing.categoryPath || null, listing.conditionLabel,
+                listing.title, listing.categoryId, listing.categoryPath || null,
+                listing.itemCountry || null, listing.conditionLabel,
                 listing.buyingOptions, listing.currency || 'GBP',
                 hashSeller(username), hashSeller(listing.sellerUserId),
                 listing.sellerFeedbackPct, listing.sellerFeedbackCount,
@@ -341,6 +344,7 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.first_seen AS firstSeen,
+                       l.item_country AS itemCountry,
                        /*  Whether this listing is still counted in the
                            market statistics. 686 of the uncertain ones are,
                            and those are the only ones distorting a number
@@ -482,6 +486,7 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.last_seen AS lastSeen, l.first_seen AS firstSeen,
+                       l.item_country AS itemCountry,
                        li.confidence, i.fine_oz AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount,
                        COALESCE(s.price, 0) + COALESCE(s.shipping, 0) AS totalCost,

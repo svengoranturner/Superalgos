@@ -198,6 +198,29 @@ exports.screenCategory = function (categoryPath) {
     }
 }
 
+/*
+    Where the coin is.
+
+    A lot in Cyprus is a different market from one in Birmingham - different
+    postage, different buyer pool, different clearing price - and averaging
+    the two produces a premium that describes neither.
+
+    Fails OPEN, and that is the whole design. Every listing stored before
+    this column existed has a NULL country until the next sweep re-sees it,
+    so an unknown location must mean "not known yet" and never "foreign".
+    The other way round, one migration would empty the market.
+*/
+exports.screenLocation = function (country, allowed) {
+    if (country === undefined || country === null || country === '') { return null }
+    const permitted = allowed === undefined ? ['GB'] : allowed
+    if (permitted.includes(String(country).toUpperCase())) { return null }
+
+    return {
+        code: 'NOT_UK',
+        reason: 'Listed outside the UK (' + String(country).toUpperCase() + ')'
+    }
+}
+
 exports.screen = function (title, aspects) {
 
     for (const rule of RULES) {

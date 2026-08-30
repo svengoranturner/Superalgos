@@ -518,3 +518,30 @@ test('typographic fractions are read as denominations', () => {
     assert.strictEqual(classify({ title: '½ Sovereign 1982' }).attributes.denomination, 'HALF')
     assert.strictEqual(classify({ title: '⅛ Sovereign 2022 gold proof' }).excluded.code, 'SUB_SOVEREIGN')
 })
+
+/*  A lot in Cyprus is a different market from one in Birmingham - different
+    postage, buyer pool and clearing price - and averaging the two describes
+    neither. */
+test('a listing outside the UK is screened out by its location', () => {
+    const cy = EXCLUSIONS.screenLocation('CY')
+    assert.strictEqual(cy.code, 'NOT_UK')
+    assert.match(cy.reason, /CY/)
+    assert.strictEqual(EXCLUSIONS.screenLocation('GB'), null)
+    assert.strictEqual(EXCLUSIONS.screenLocation('gb'), null)
+})
+
+/*  The load-bearing one. Every listing stored before the column existed has
+    a NULL country until the next sweep re-sees it, so unknown must mean
+    "not known yet" and never "foreign" - the other way round, one migration
+    empties the entire market. */
+test('an unknown location is never treated as foreign', () => {
+    for (const unknown of [null, undefined, '']) {
+        assert.strictEqual(EXCLUSIONS.screenLocation(unknown), null,
+            'unknown location must fail open, got a screen for ' + JSON.stringify(unknown))
+    }
+})
+
+test('the permitted country list can be widened without code changes', () => {
+    assert.strictEqual(EXCLUSIONS.screenLocation('IE', ['GB', 'IE']), null)
+    assert.strictEqual(EXCLUSIONS.screenLocation('US', ['GB', 'IE']).code, 'NOT_UK')
+})

@@ -169,6 +169,10 @@ exports.normaliseSummary = function (summary) {
             .map(category => category.categoryName)
             .filter(Boolean)
             .join(' > ') || null,
+        /*  Two-letter country the item ships from. eBay sends it on every
+            summary at no extra cost; without it a lot in Cyprus is
+            indistinguishable from one in Birmingham. */
+        itemCountry: summary.itemLocation ? (summary.itemLocation.country || null) : null,
         conditionLabel: summary.condition || null,
         buyingOptions: (summary.buyingOptions || []).join(','),
         price: money(summary.price),

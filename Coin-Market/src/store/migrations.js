@@ -366,5 +366,26 @@ exports.MIGRATIONS = [
         );
         CREATE UNIQUE INDEX learned_rule_phrase ON learned_rule(phrase, kind);
         `
+    },
+    {
+        name: '006-item-country',
+        sql: `
+        /* ---------------------------------------------------------------
+           Where the coin actually is.
+
+           eBay sends itemLocation.country on every search summary and we
+           were throwing it away, so a lot sitting in Cyprus looked exactly
+           like one in Birmingham. That is a different market - different
+           postage, different buyer pool, different clearing price - and
+           mixing them makes the premium wrong in a way no title rule can
+           see.
+
+           Every existing row is NULL until the next sweep re-sees it, so
+           anything reading this column MUST treat NULL as "not known yet"
+           and never as "foreign". Failing closed here would delete the
+           entire corpus from the statistics in one migration.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN item_country TEXT;
+        `
     }
 ]

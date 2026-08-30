@@ -39,7 +39,8 @@ function classifyOne (listing, label, learned, repository, counts) {
         category the seller picked, and a review queue that quietly
         re-raises a settled question is a review queue nobody uses. */
     if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
-        const offCategory = EXCLUSIONS.screenCategory(listing.categoryPath)
+        const offCategory = EXCLUSIONS.screenCategory(listing.categoryPath) ||
+            EXCLUSIONS.screenLocation(listing.itemCountry)
         if (offCategory !== null) {
             repository.queueForReview(listing.browseId, 'EXCLUDED: ' + offCategory.reason, null, 0)
             counts.wrongCategory++
@@ -118,7 +119,7 @@ exports.run = function (db, repository) {
         const learned = LEARNED.compile(repository.learnedRules())
 
         const listings = db.prepare(
-            'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath FROM listing'
+            'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry FROM listing'
         ).all()
         counts.total = listings.length
 
@@ -147,7 +148,7 @@ exports.run = function (db, repository) {
 exports.one = function (db, repository, legacyId) {
 
     const listings = db.prepare(
-        'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath ' +
+        'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry ' +
         'FROM listing WHERE legacy_id = ?').all(legacyId)
 
     const counts = emptyCounts()

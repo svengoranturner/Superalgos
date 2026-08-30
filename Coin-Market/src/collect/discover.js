@@ -82,7 +82,8 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 before a human, who has seen the listing and is better
                 evidence than a category the seller picked. */
             if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
-                const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath)
+                const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath) ||
+                    EXCLUSIONS.screenLocation(item.itemCountry)
                 if (wrongCategory !== null) {
                     repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
                     continue
