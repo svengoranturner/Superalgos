@@ -358,12 +358,24 @@ exports.classify = function (listing, context) {
     const learned = (context && context.learned) || null
     const label = (context && context.label) || null
 
-    const excluded = EXCLUSIONS.screen(title, aspects) ||
-        (learned === null ? null : learned.exclusionFor(title))
-    if (excluded !== null) {
-        return LEARNED.apply(
-            { excluded, attributes: null, confidence: 0, needsReview: false, reasons: [excluded.reason] },
-            label)
+    /*  A confirmed coin skips the exclusion rules entirely rather than being
+        excluded and then restored.
+
+        Restoring afterwards threw away everything the parser knew: a
+        three-coin lot marked genuine came back with no year, no portrait and
+        no denomination, so confirming it created three more questions. The
+        rules exist to guess in the absence of a human, and there is a human
+        here. */
+    const confirmed = label !== null && label.verdict === LEARNED.VERDICT.SOVEREIGN
+
+    if (!confirmed) {
+        const excluded = EXCLUSIONS.screen(title, aspects) ||
+            (learned === null ? null : learned.exclusionFor(title))
+        if (excluded !== null) {
+            return LEARNED.apply(
+                { excluded, attributes: null, confidence: 0, needsReview: false, reasons: [excluded.reason] },
+                label)
+        }
     }
 
     const yearResult = extractYear(title)

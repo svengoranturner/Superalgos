@@ -335,6 +335,7 @@ exports.newRepository = function (db, options) {
                            should not have to be given twice. */
                        l.legacy_id AS legacyId,
                        lb.verdict AS verdict, lb.denomination AS labelledDenomination,
+                       lb.quantity AS labelledQuantity,
                        /*  Everything a glance needs, so the queue can be
                            worked without opening a tab per listing. All of
                            it is already stored - none of this costs an API
@@ -390,16 +391,20 @@ exports.newRepository = function (db, options) {
         */
         label (entry) {
             const now = entry.labelledAt || new Date().toISOString()
+            const quantity = Number.isFinite(entry.quantity) && entry.quantity >= 1
+                ? Math.floor(entry.quantity)
+                : 1
             return bindAll(db.prepare(`
                 INSERT INTO listing_label
-                    (legacy_id, title, verdict, denomination, note, labelled_at, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (legacy_id, title, verdict, denomination, note, labelled_at, source, quantity)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(legacy_id) DO UPDATE SET
                     title = excluded.title, verdict = excluded.verdict,
                     denomination = excluded.denomination, note = excluded.note,
-                    labelled_at = excluded.labelled_at, source = excluded.source
+                    labelled_at = excluded.labelled_at, source = excluded.source,
+                    quantity = excluded.quantity
             `), [entry.legacyId, entry.title, entry.verdict, entry.denomination,
-                entry.note, now, entry.source || 'human'])
+                entry.note, now, entry.source || 'human', quantity])
         },
 
         unlabel (legacyId) {
@@ -409,7 +414,7 @@ exports.newRepository = function (db, options) {
         labels () {
             return db.prepare(`
                 SELECT legacy_id AS legacyId, title, verdict, denomination, note,
-                       labelled_at AS labelledAt, source
+                       labelled_at AS labelledAt, source, quantity
                 FROM listing_label ORDER BY labelled_at DESC
             `).all()
         },
@@ -493,6 +498,7 @@ exports.newRepository = function (db, options) {
                        1 AS priced,
                        q.reason,
                        lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.quantity AS labelledQuantity,
                        /*  The same three conditions as activeListings: no
                            resolved outcome, not past its end time (a NULL
                            end time is Good-Til-Cancelled and counts as
@@ -523,6 +529,37 @@ exports.newRepository = function (db, options) {
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
                 limit || 200
             )
+        },
+
+        /* -------------------------------------------------- settings */
+
+        setting (key, fallback) {
+            const row = db.prepare('SELECT value FROM setting WHERE key = ?').get(key)
+            if (row === undefined) { return fallback }
+            try { return JSON.parse(row.value) } catch (err) { return fallback }
+        },
+
+        setSetting (key, value) {
+            return bindAll(db.prepare(`
+                INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                              updated_at = excluded.updated_at
+            `), [key, JSON.stringify(value), new Date().toISOString()])
+        },
+
+        /*  Which countries the corpus actually contains, with counts, so the
+            cost of narrowing the filter is visible before it is paid rather
+            than discovered afterwards. */
+        countryCounts () {
+            return db.prepare(`
+                SELECT COALESCE(l.item_country, '??') AS country,
+                       COUNT(*) AS listings,
+                       COUNT(DISTINCT li.browse_id) AS priced
+                FROM listing l
+                LEFT JOIN listing_instrument li ON li.browse_id = l.browse_id
+                GROUP BY 1
+                ORDER BY listings DESC
+            `).all()
         },
 
         learnedRules () {

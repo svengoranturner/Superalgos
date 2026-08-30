@@ -74,9 +74,23 @@ exports.keysFor = function (attributes) {
     return keys
 }
 
+/*
+    The gold in the lot, not in the coin.
+
+    Almost always the same thing, because almost every lot is one coin. Where
+    somebody has told us a lot holds several of the same coin, the melt it
+    should be measured against is that many coins' worth - otherwise a
+    genuine three-sovereign lot reads as one sovereign at three times the
+    price, which is exactly the mistake that put fake bargains on the front
+    page from the other direction.
+*/
 exports.fineOzFor = function (attributes) {
     const denomination = COINS.DENOMINATIONS[attributes.denomination]
-    return denomination === undefined ? null : denomination.fineOz
+    if (denomination === undefined) { return null }
+    const quantity = Number.isFinite(attributes.quantity) && attributes.quantity > 1
+        ? Math.floor(attributes.quantity)
+        : 1
+    return denomination.fineOz * quantity
 }
 
 const GRADE_LABELS = {

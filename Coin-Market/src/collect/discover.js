@@ -44,6 +44,23 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                     filter.price = '[' + band[0] + '..' + band[1] + ']'
                     filter.priceCurrency = config.currency
                 }
+                /*  Ask eBay for the countries we will actually buy from.
+
+                    This is the cheap half of the filter. A Browse search is
+                    billed per call and returns 200 listings a call, so a
+                    result set a third smaller is a third fewer calls - and
+                    the ones we skip were going to be screened out at
+                    classification time anyway.
+
+                    It is also the blind half: a listing excluded here is
+                    never seen, so it cannot appear in the review queue and
+                    cannot be argued with. That is why the same list is
+                    applied again at classification, where it is visible and
+                    reversible, and why an empty list here means "ask for
+                    everything" rather than "ask for nothing". */
+                if (config.allowedCountries.length > 0) {
+                    filter.itemLocationCountry = config.allowedCountries
+                }
                 queries.push({
                     name: partition.name + (band ? '-' + band[0] + '-' + band[1] : ''),
                     query: {

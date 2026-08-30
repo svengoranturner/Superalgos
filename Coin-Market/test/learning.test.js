@@ -7,6 +7,8 @@ const { newDatabase } = require('../src/store/db.js')
 const { newRepository } = require('../src/store/repo.js')
 const LEARNED = require('../src/catalogue/learned.js')
 const { classify } = require('../src/catalogue/classify.js')
+const INSTRUMENTS = require('../src/catalogue/instruments.js')
+const COINS = require('../src/catalogue/coins.js')
 
 const DAY_MS = 86400000
 
@@ -49,12 +51,44 @@ test('confirming a coin rescues it from an exclusion rule', () => {
     the wrong denomination is how a real sovereign came to read "below
     melt". It stays in the queue until that question is answered too. */
 test('a confirmed coin with no denomination is still not priceable', () => {
-    const rescued = classify({ title: 'Sovereign Ring' }, {
+    const rescued = classify({ title: '22ct gold coin from a house clearance' }, {
         label: { verdict: LEARNED.VERDICT.SOVEREIGN }
     })
     assert.strictEqual(rescued.excluded, null)
     assert.strictEqual(rescued.needsReview, true)
     assert.match(rescued.reasons[0], /which denomination/)
+})
+
+/*  Confirming used to exclude and then restore, which threw away everything
+    the parser knew: a lot marked genuine came back with no year, no portrait
+    and no denomination, so answering one question created three. The rules
+    exist to guess in the absence of a human, and there is a human here. */
+test('confirming a coin keeps what the parser already worked out', () => {
+    const title = '1911 Gold Half Sovereign George V Ring Mount'
+    assert.strictEqual(classify({ title }).excluded.code, 'JEWELLERY')
+
+    const confirmed = classify({ title }, { label: { verdict: LEARNED.VERDICT.SOVEREIGN } })
+    assert.strictEqual(confirmed.excluded, null)
+    assert.strictEqual(confirmed.attributes.denomination, 'HALF', 'no need to re-pick the denomination')
+    assert.strictEqual(confirmed.attributes.year, 1911)
+    assert.strictEqual(confirmed.attributes.portrait, 'GEORGE_V')
+    assert.strictEqual(confirmed.needsReview, false)
+})
+
+/*  A multi-coin lot is excluded by default because a job lot's per-coin price
+    is not a single-coin sale. That is a default, not a law - somebody can see
+    it is three of the same coin, and then it prices against three coins worth
+    of gold. */
+test('a lot can be admitted at the right melt by saying how many coins it holds', () => {
+    const title = '3 x Gold Sovereign 1912 George V'
+    assert.strictEqual(classify({ title }).excluded.code, 'PROOF_SET_OR_BUNDLE')
+
+    const one = classify({ title }, { label: { verdict: LEARNED.VERDICT.SOVEREIGN } })
+    assert.strictEqual(INSTRUMENTS.fineOzFor(one.attributes), COINS.DENOMINATIONS.FULL.fineOz)
+
+    const three = classify({ title }, { label: { verdict: LEARNED.VERDICT.SOVEREIGN, quantity: 3 } })
+    assert.strictEqual(three.attributes.quantity, 3)
+    assert.ok(Math.abs(INSTRUMENTS.fineOzFor(three.attributes) - 3 * COINS.DENOMINATIONS.FULL.fineOz) < 1e-9)
 })
 
 /* ------------------------------------------------------ learned rules */

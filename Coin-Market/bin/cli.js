@@ -318,8 +318,14 @@ COMMANDS.run = {
         const browse = BROWSE.newBrowseClient(auth, {
             marketplaceId: settings.ebay.marketplaceId, budget
         })
+        /*  Read from the store, not the settings file: the dashboard writes
+            this and the collector reads it, so it has to live where both can
+            see it. Re-read on every sweep, so changing it on the page takes
+            effect on the next one without a restart. */
         const discoverer = require('../src/collect/discover.js').newDiscoverer(browse, repository, {
-            marketplace: settings.ebay.marketplaceId, currency: settings.coins.currency
+            marketplace: settings.ebay.marketplaceId,
+            currency: settings.coins.currency,
+            allowedCountries: repository.setting('allowedCountries', []) || []
         })
 
         /* Outcome resolution needs a user token. Without one the collector

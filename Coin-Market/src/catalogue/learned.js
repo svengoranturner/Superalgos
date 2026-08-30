@@ -277,6 +277,20 @@ exports.apply = function (classification, label) {
             attributes.confidence.denomination = 1
         }
 
+        /*  How many coins are in the lot.
+
+            Left alone, this is 1 and nothing changes. Set, it says the lot
+            is that many of the same coin, and the melt it is measured
+            against becomes that many coins' worth - which is the only way a
+            genuine three-sovereign lot can be priced without pretending it
+            is one sovereign at three times the price.
+
+            Not guessed from the title: detectQuantity already does that and
+            its answer is to exclude. This is the override. */
+        if (Number.isFinite(label.quantity) && label.quantity > 1) {
+            attributes.quantity = Math.floor(label.quantity)
+        }
+
         /*  Confirmed genuine, but a denomination is still required before it
             can be priced - melt against the wrong coin is how a real
             sovereign came to read "below melt". Confirming does not mean

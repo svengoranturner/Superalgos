@@ -207,6 +207,7 @@ function marketPage (opened, url) {
     const body = `
 <h1>Coin Market</h1>
 <p class="sub">What sovereigns actually sell for, measured against their gold content.</p>
+${countryPicker(repository)}
 
 <div class="card hero">
   <div>
@@ -401,6 +402,77 @@ ${truncated ? '<p class="thin warn">The queue is longer than this page reads &md
 `)
 }
 
+/* ---------------------------------------------------------- countries */
+
+/*
+    Where you are willing to buy from.
+
+    Stored rather than hard-coded because it is a preference, not a fact, and
+    an expensive one either way: narrowing it to GB removes about 1,400
+    listings from the statistics and widening it brings them back. The counts
+    are rendered next to each box so the cost is visible before it is paid.
+
+    An empty list means no filtering at all, which is what a fresh store gets
+    if nobody has chosen - see EXCLUSIONS.screenLocation for why that default
+    matters.
+*/
+const COUNTRY_SETTING = 'allowedCountries'
+
+const COUNTRY_NAMES = {
+    GB: 'United Kingdom', AU: 'Australia', US: 'United States', IE: 'Ireland',
+    FR: 'France', DE: 'Germany', IT: 'Italy', ES: 'Spain', NL: 'Netherlands',
+    CA: 'Canada', NZ: 'New Zealand', CY: 'Cyprus', JP: 'Japan', CZ: 'Czechia',
+    RO: 'Romania', PL: 'Poland', BE: 'Belgium', AT: 'Austria', CH: 'Switzerland'
+}
+
+/*  Defaults to the UK, because that is the market the owner buys in. This is
+    an application default with a control on the page, not a library one -
+    EXCLUSIONS.screenLocation still filters nothing unless it is handed a
+    list, so the safety net stays under anything that forgets to ask. */
+const DEFAULT_COUNTRIES = ['GB']
+
+function allowedCountries (repository) {
+    const stored = repository.setting(COUNTRY_SETTING, null)
+    return Array.isArray(stored) ? stored : DEFAULT_COUNTRIES
+}
+
+function countryPicker (repository) {
+    const chosen = allowedCountries(repository)
+    const counts = repository.countryCounts()
+        .filter(row => row.country !== '??')
+        .slice(0, 18)
+
+    const unknown = repository.countryCounts().find(row => row.country === '??')
+
+    const boxes = counts.map(row => {
+        const name = COUNTRY_NAMES[row.country] || row.country
+        const on = chosen.includes(row.country)
+        return '<label><input type="checkbox" name="country" value="' + escapeHtml(row.country) + '"' +
+            (on ? ' checked' : '') + '> ' + escapeHtml(name) +
+            ' <span class="thin">' + row.listings + '</span></label>'
+    }).join('')
+
+    const summary = chosen.length === 0
+        ? 'Every country &mdash; nothing is filtered out.'
+        : 'Only ' + chosen.map(c => escapeHtml(COUNTRY_NAMES[c] || c)).join(', ') + '.'
+
+    return `<details class="card"${chosen.length === 0 ? '' : ''}>
+  <summary>Where you will buy from &mdash; ${summary}</summary>
+  <form method="post" action="/countries">
+    <p class="thin" style="margin:10px 0 0">Tick the countries to keep. The number beside each is
+    how many tracked listings it holds. Untick everything to stop filtering.
+    ${unknown && unknown.listings > 0
+        ? '<br><strong>' + unknown.listings + '</strong> listings have no country recorded yet ' +
+          '(stored before the field existed); they are never filtered out, and fill in as the ' +
+          'collector re-sees them.'
+        : ''}</p>
+    <div class="countries">${boxes}</div>
+    <button class="yes">Apply</button>
+    <span class="thin">Reclassifies everything &mdash; a few seconds.</span>
+  </form>
+</details>`
+}
+
 /* ------------------------------------------------------- one listing */
 
 /*
@@ -450,14 +522,26 @@ function leafCategory (path) {
     return parts.length === 0 ? null : parts[parts.length - 1]
 }
 
+/*
+    What the classifier decided this coin is, read back off the instrument
+    key it was filed under.
+*/
+function detectedDenomination (row) {
+    const key = row.bestGuess || row.instrumentKey || null
+    if (typeof key !== 'string') { return null }
+    return key.split('.').find(part => DENOMINATION_OPTIONS.includes(part)) || null
+}
+
 function callControls (row) {
     if (!row.legacyId) { return '<span class="thin">—</span>' }
     const id = escapeHtml(row.legacyId)
 
     if (row.verdict) {
         const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
-            ? 'You said: genuine' + (row.labelledDenomination
-                ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
+            ? 'You said: genuine' +
+                (row.labelledQuantity > 1 ? ' \u00d7' + row.labelledQuantity : '') +
+                (row.labelledDenomination
+                    ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
             : 'You said: not a sovereign'
         return '<span class="settled">' + said + '</span> ' +
             '<form method="post" action="/unlabel" style="display:inline">' +
@@ -466,15 +550,27 @@ function callControls (row) {
             '<button class="plain" title="Forget this decision">undo</button></form>'
     }
 
+    /*  Pre-selected to whatever the classifier already worked out, so the
+        common case needs no interaction at all: clicking Genuine submits the
+        denomination it already had. The dropdown only asks a question when
+        it reads "denomination?", which is exactly when there is one to
+        answer. */
+    const detected = detectedDenomination(row)
     const options = DENOMINATION_OPTIONS
-        .map(d => '<option value="' + d + '">' + (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
+        .map(d => '<option value="' + d + '"' + (d === (detected || '') ? ' selected' : '') + '>' +
+            (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
         .join('')
 
+    /*  Quantity is a plain number box defaulting to 1 and is ignored unless
+        changed - a multi-coin lot then prices against its own gold rather
+        than being thrown away or counted as one coin. */
     return '<form class="verdict" method="post" action="/label">' +
         '<input type="hidden" name="legacyId" value="' + id + '">' +
         '<input type="hidden" name="title" value="' + escapeHtml(row.title) + '">' +
         '<input type="hidden" name="back" value="' + escapeHtml(row.back || '/review') + '">' +
         '<select name="denomination">' + options + '</select>' +
+        '<input class="qty" type="number" name="quantity" min="1" max="99" value="1" ' +
+        'title="How many of the same coin are in this lot. Leave at 1 unless it is a multiple.">' +
         '<button class="yes" name="verdict" value="' + LEARNED.VERDICT.SOVEREIGN + '">Genuine</button>' +
         '<button class="no" name="verdict" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">Not a sov</button>' +
         '</form>'
@@ -571,7 +667,12 @@ function listingsPage (opened, url) {
 
     const rows = repository.listingsForInstrument(key, 500)
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
-    for (const row of rows) { row.back = '/listings?key=' + encodeURIComponent(key) }
+    for (const row of rows) {
+        row.back = '/listings?key=' + encodeURIComponent(key)
+        /*  The drill-down knows the instrument from the URL, so the controls
+            can pre-select the denomination here too. */
+        row.instrumentKey = key
+    }
 
     const name = INSTRUMENTS.displayName(key)
     const market = view.forInstrument(key)
@@ -666,12 +767,13 @@ function handlePost (opened, pathname, form) {
             verdict,
             /*  A denomination is only meaningful alongside "genuine", and
                 an empty select must not be stored as a correction. */
-            denomination: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('denomination') || null) : null
+            denomination: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('denomination') || null) : null,
+            quantity: verdict === LEARNED.VERDICT.SOVEREIGN ? Number(form.get('quantity')) || 1 : 1
         })
         /*  One coin, not all five thousand. A verdict cannot affect any
             listing but this one's, and a full rebuild per click is slow
             enough on a Pi that people stop clicking. */
-        RECLASSIFY.one(db, repository, legacyId)
+        RECLASSIFY.one(db, repository, legacyId, { allowedCountries: allowedCountries(repository) })
 
         /*  Back where the decision was made. A junk listing noticed on a
             market number should not dump you on the review page, or working
@@ -682,11 +784,22 @@ function handlePost (opened, pathname, form) {
             : back
     }
 
+    if (pathname === '/countries') {
+        /*  getAll, because an unticked box sends nothing at all - the empty
+            list is a real choice here ("do not filter"), not a missing one. */
+        const chosen = form.getAll('country')
+            .map(c => String(c).toUpperCase())
+            .filter(c => /^[A-Z]{2}$/.test(c))
+        repository.setSetting(COUNTRY_SETTING, chosen)
+        RECLASSIFY.run(db, repository, { allowedCountries: chosen })
+        return '/'
+    }
+
     if (pathname === '/unlabel') {
         const legacyId = form.get('legacyId')
         if (legacyId) {
             repository.unlabel(legacyId)
-            RECLASSIFY.one(db, repository, legacyId)
+            RECLASSIFY.one(db, repository, legacyId, { allowedCountries: allowedCountries(repository) })
         }
         return safeBack(form.get('back'))
     }
@@ -709,7 +822,7 @@ function handlePost (opened, pathname, form) {
             support: Number(form.get('support')) || null,
             agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
         })
-        RECLASSIFY.run(db, repository)
+        RECLASSIFY.run(db, repository, { allowedCountries: allowedCountries(repository) })
 
         return '/rules?just=' + encodeURIComponent(phrase) + '&dropped=' + (before - priced())
     }
@@ -718,7 +831,7 @@ function handlePost (opened, pathname, form) {
         const id = Number(form.get('id'))
         if (Number.isFinite(id)) {
             repository.deleteLearnedRule(id)
-            RECLASSIFY.run(db, repository)
+            RECLASSIFY.run(db, repository, { allowedCountries: allowedCountries(repository) })
         }
         return '/rules'
     }

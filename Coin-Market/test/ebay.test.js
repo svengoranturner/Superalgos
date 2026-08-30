@@ -137,3 +137,25 @@ test('a consent exchange that yields no refresh token fails loudly', async () =>
         global.fetch = originalFetch
     }
 })
+
+/*  The cheap half of the country filter: a Browse search is billed per call
+    and returns 200 listings a call, so asking only for the countries you buy
+    from is fewer calls, not just fewer rows. */
+test('the search asks eBay only for the countries you buy from', () => {
+    const DISCOVER = require('../src/collect/discover.js')
+    const coins = {
+        partitions: [{ name: 'p', q: 'gold sovereign', buyingOptions: ['AUCTION'] }],
+        priceBands: [[100, 500]]
+    }
+    const filterFor = (allowedCountries) => DISCOVER
+        .newDiscoverer({}, {}, { allowedCountries })
+        .buildQueries(coins)[0].query.filter
+
+    assert.match(filterFor(['GB']), /itemLocationCountry:\{GB\}/)
+    assert.match(filterFor(['GB', 'AU']), /itemLocationCountry:\{GB\|AU\}/)
+    /*  Empty means ask for everything. The other reading - ask for nothing -
+        would quietly stop the collector dead. */
+    assert.ok(!/itemLocationCountry/.test(filterFor([])))
+    assert.ok(!/itemLocationCountry/.test(DISCOVER.newDiscoverer({}, {}, {})
+        .buildQueries(coins)[0].query.filter))
+})

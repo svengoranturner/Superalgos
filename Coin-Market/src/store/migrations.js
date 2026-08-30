@@ -387,5 +387,37 @@ exports.MIGRATIONS = [
            --------------------------------------------------------------- */
         ALTER TABLE listing ADD COLUMN item_country TEXT;
         `
+    },
+    {
+        name: '007-settings-and-lot-quantity',
+        sql: `
+        /* ---------------------------------------------------------------
+           Choices the owner makes that outlive a restart.
+
+           Kept in the database rather than config/settings.json because the
+           dashboard writes them and the collector reads them, and those are
+           two processes: a file both of them edit is a race, and a file only
+           one of them can edit is a setting you cannot change from the page
+           that shows you why you want to.
+           --------------------------------------------------------------- */
+        CREATE TABLE setting (
+            key        TEXT PRIMARY KEY,
+            value      TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        /* ---------------------------------------------------------------
+           How many coins are in the lot.
+
+           A multi-coin lot is excluded from per-coin pricing by default,
+           because the per-coin price of a job lot is not comparable to a
+           single-coin sale - bulk discounts, mixed dates, a different buyer
+           pool. But that is a default, not a law, and somebody looking at
+           the listing can see that it is three of the same coin. Saying so
+           admits it at the right melt: the lot is priced against its own
+           gold content, which is quantity times one coin's.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing_label ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+        `
     }
 ]

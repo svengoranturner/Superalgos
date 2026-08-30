@@ -92,6 +92,11 @@ button.yes { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%,
 button.no  { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
 button.plain { color:var(--ink-2) }
 .settled { color:var(--ink-2); font-size:12px }
+input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-radius:6px;
+  border:1px solid var(--border); background:var(--surface); color:var(--ink) }
+.countries { display:flex; flex-wrap:wrap; gap:6px 14px; margin:10px 0 14px }
+.countries label { font-size:12.5px; color:var(--ink-2); display:flex; gap:5px; align-items:center }
+.countries input { accent-color:var(--clearing) }
 /*  The work queue: a list, not a table.
 
     eBay titles run to 70 characters at the median and 84 at the longest,
