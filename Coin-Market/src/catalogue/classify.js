@@ -78,7 +78,7 @@ function extractDenomination (title) {
         often as "1/8", and a word boundary after the digit does not match
         "8th". Missing it put a GBP 138 eighth into the full-sovereign
         pricing, where it is compared against 7.99g of gold. */
-    if (/\b1\s*\/\s*(8|10|16|20|25|32|50)\s*(th|nd|rd|st)?\b|\b(eighth|tenth|sixteenth|twentieth)\b/.test(t)) {
+    if (/\b1\s*\/\s*([5-9]|[1-9]\d+)\s*(th|nd|rd|st)?\b|\b(eighth|tenth|sixteenth|twentieth|hundredth)\b/.test(t)) {
         return { denomination: null, confidence: 0 }
     }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }

@@ -37,7 +37,11 @@ const RULES = [
     {
         code: 'ACCESSORY',
         reason: 'Case, capsule or holder rather than a coin',
-        test: /\b(capsule|coin\s+case|sovereign\s+case|display\s+case|display\s+box|presentation\s+case|holder|album|empty|no\s+coin)\b/i
+        /*  Plurals matter here and cost real money. "*No Coins*" and "Without
+            Gold Sovereign's" are both empty boxes that reached the live
+            opportunities panel, and both slipped a rule written in the
+            singular. */
+        test: /\b(capsule|coin\s+case|sovereign\s+case|display\s+case|display\s+box|presentation\s+case|holder|album|empty|no\s+coins?|without\s+(the\s+)?(gold\s+)?sovereigns?)\b/i
     },
     {
         code: 'NOT_A_COIN',
@@ -47,7 +51,7 @@ const RULES = [
            104. Both contain the word "sovereign" and neither is a coin, and
            at those prices they drag a premium median downwards as hard as a
            rarity drags it up. */
-        test: /\b(programme|program|book|1st\s+edition|first\s+edition|paperback|hardback|magazine|catalogue|catalog|leaflet|poster|postcard|newspaper|ticket|speedway|racecard)\b/i
+        test: /\b(programme|program|book|1st\s+edition|first\s+edition|paperback|hardback|magazine|catalogue|catalog|leaflet|poster|postcard|newspaper|ticket|speedway|racecard|marsh|spink|krause|sunglasses|t-shirt|tshirt|hoodie|mug|spoon|plate|platter|saucer)\b/i
     },
     {
         code: 'ABOUT_A_SOVEREIGN',

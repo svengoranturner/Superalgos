@@ -104,7 +104,27 @@ function marketPage (opened, url) {
             candidates.push({ alert, name: INSTRUMENTS.displayName(entry.row.key), level: entry.row.level })
         }
     }
-    const opportunities = ALERT_RULES.dedupeByListing(candidates).slice(0, 12)
+    /*
+        A lot priced below its own gold content cannot be the coin it claims,
+        so the "edge" against it is arithmetic on a category error - and it
+        is precisely the listing that floats to the top of an
+        edge-ranked list, because the bigger the mismatch the better the
+        bargain looks. A book about sovereigns at GBP 107 showed an 87% edge.
+
+        Dropped from the panel rather than merely marked, because this list
+        exists to be acted on. They stay visible on the review page with the
+        same verdict attached, so a wrong call here is findable.
+    */
+    const PLAUSIBILITY = require('../analytics/plausibility.js')
+    const plausible = ALERT_RULES.dedupeByListing(candidates).filter(entry => {
+        const market = markets.find(m => INSTRUMENTS.displayName(m.row.key) === entry.name)
+        if (market === undefined || market.market.spot === null || market.market.fineOz === null) { return true }
+        const assessed = PLAUSIBILITY.assess(
+            entry.alert.currentTotal, market.market.fineOz, market.market.spot.gbpPerOz)
+        return assessed === null || !assessed.impossible
+    })
+    const suppressed = ALERT_RULES.dedupeByListing(candidates).length - plausible.length
+    const opportunities = plausible.slice(0, 12)
 
     const opportunityHtml = opportunities.length === 0
         ? '<p class="thin">No live lot is currently below your bid ceiling.</p>'
@@ -160,6 +180,9 @@ function marketPage (opened, url) {
 <div class="card">${RENDER.premiumChart(chartRows)}</div>
 
 <h2>Live opportunities</h2>
+${suppressed > 0 ? '<p class="thin">' + suppressed + ' lot' + (suppressed === 1 ? '' : 's') +
+  ' hidden: priced below their own gold content, so they cannot be the coin the title claims. ' +
+  'They are on the <a href="/review">review page</a> with the reason.</p>' : ''}
 ${opportunityHtml}
 
 <h2>Every tracked coin type</h2>
@@ -195,16 +218,54 @@ ${opportunityHtml}
 
 function reviewPage (opened) {
     const rows = opened.repository.reviewQueue(200)
+    const PLAUSIBILITY = require('../analytics/plausibility.js')
+    const COINS = require('../catalogue/coins.js')
+
+    const spot = opened.spotAt(new Date().toISOString())
+
+    /*
+        What the price implies about whether this is a sovereign at all.
+
+        Where the classifier managed a best guess, its denomination gives the
+        right melt to measure against. Where it did not, the quarter is used -
+        the smallest sovereign struck - so the verdict is the conservative
+        one: anything under a quarter's gold content cannot be any sovereign,
+        whatever the title says.
+    */
+    const verdictFor = (row) => {
+        if (spot === null) { return null }
+        const total = (row.price || 0) + (row.shipping || 0)
+        const guessed = typeof row.bestGuess === 'string'
+            ? row.bestGuess.split('.').find(part => COINS.DENOMINATIONS[part] !== undefined)
+            : undefined
+        const denomination = COINS.DENOMINATIONS[guessed] || COINS.DENOMINATIONS.QUARTER
+        const assessed = PLAUSIBILITY.assess(total, denomination.fineOz, spot.gbpPerOz)
+        if (assessed === null) { return null }
+        return Object.assign({ measuredAgainst: denomination.label, assumed: guessed === undefined }, assessed)
+    }
+
+    const verdictCell = (row) => {
+        const v = verdictFor(row)
+        if (v === null) { return '<span class="thin">—</span>' }
+        const tone = v.impossible ? 'critical' : 'good'
+        return '<span class="badge ' + tone + '" title="' +
+            escapeHtml(v.detail + ' Measured against a ' + v.measuredAgainst +
+                (v.assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
+            '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
+            Math.round(v.percentOfMelt) + '% of melt</span>'
+    }
 
     const excluded = rows.filter(r => (r.reason || '').startsWith('EXCLUDED'))
     const uncertain = rows.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
 
     const list = (items, empty) => items.length === 0
         ? '<p class="thin">' + empty + '</p>'
-        : '<div class="card scroll"><table><thead><tr><th>Listing</th><th>Reason</th></tr></thead><tbody>' +
+        : '<div class="card scroll"><table><thead><tr><th>Listing</th><th>Reason</th>' +
+          '<th>Does the price make sense?</th></tr></thead><tbody>' +
           items.map(r => `<tr><td>${r.itemWebUrl
               ? '<a href="' + escapeHtml(r.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(r.title) + '</a>'
-              : escapeHtml(r.title)}</td><td class="thin">${escapeHtml(r.reason)}</td></tr>`).join('') +
+              : escapeHtml(r.title)}</td><td class="thin">${escapeHtml(r.reason)}</td>` +
+              `<td>${verdictCell(r)}</td></tr>`).join('') +
           '</tbody></table></div>'
 
     return RENDER.page('Needs review — Coin Market', `

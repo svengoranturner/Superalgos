@@ -309,8 +309,21 @@ exports.newRepository = function (db, options) {
         reviewQueue (limit) {
             return db.prepare(`
                 SELECT r.browse_id AS browseId, r.reason, r.best_guess AS bestGuess,
-                       r.confidence, l.title, l.item_web_url AS itemWebUrl
-                FROM review_queue r JOIN listing l ON l.browse_id = r.browse_id
+                       r.confidence, l.title, l.item_web_url AS itemWebUrl,
+                       /*  The asking price, so the review page can say what
+                           it implies. A "gold sovereign" priced below its own
+                           gold content is not a coin needing a decision - it
+                           is something else wearing the word, and that is
+                           worth showing rather than making a human squint at
+                           every title. */
+                       s.price, s.shipping
+                FROM review_queue r
+                JOIN listing l ON l.browse_id = r.browse_id
+                LEFT JOIN (
+                    SELECT browse_id, price, shipping,
+                           ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
+                    FROM listing_snapshot
+                ) s ON s.browse_id = r.browse_id AND s.rn = 1
                 WHERE r.resolved_at IS NULL
                 ORDER BY r.queued_at DESC LIMIT ?
             `).all(limit || 50)
