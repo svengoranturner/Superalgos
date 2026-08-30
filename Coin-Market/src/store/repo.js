@@ -291,6 +291,17 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
                 LEFT JOIN latest s ON s.browse_id = l.browse_id
                 WHERE li.key = ?1
+                  /*  Auction or Buy-It-Now, for live and completed alike. A
+                      completed lot is judged on how it actually sold, a live
+                      one on how it is offered - which is not the same
+                      question and must not use the same column. */
+                  AND (?5 = 'all'
+                       OR (?5 = 'auction' AND (
+                             (o.sale_type IS NOT NULL AND o.sale_type = 'AUCTION') OR
+                             (o.sale_type IS NULL AND l.buying_options LIKE '%AUCTION%')))
+                       OR (?5 = 'bin' AND (
+                             (o.sale_type IS NOT NULL AND o.sale_type <> 'AUCTION') OR
+                             (o.sale_type IS NULL AND l.buying_options NOT LIKE '%AUCTION%'))))
                   AND o.browse_id IS NULL
                   AND (l.end_time IS NULL OR l.end_time > ?2)
                   AND l.last_seen > ?3
@@ -492,7 +503,7 @@ exports.newRepository = function (db, options) {
             neighbours is both the most likely to be wrong and the most
             visible when it is.
         */
-        listingsForInstrument (key, limit) {
+        listingsForInstrument (key, limit, saleFilter) {
             return db.prepare(`
                 /*  The scope CTE is what makes this affordable on a Pi:
                     windowing all 90,000 snapshot rows instead of just this
@@ -568,7 +579,8 @@ exports.newRepository = function (db, options) {
                 key,
                 new Date().toISOString(),
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
-                limit || 200
+                limit || 200,
+                saleFilter === 'auction' || saleFilter === 'bin' ? saleFilter : 'all'
             )
         },
 
@@ -661,6 +673,49 @@ exports.newRepository = function (db, options) {
                 ORDER BY o.ended_at DESC
                 LIMIT ?
             `).all(limit || 20)
+        },
+
+        /*
+            How the tracked market breaks down: live against ended, auction
+            against Buy-It-Now, sold against unsold.
+
+            The uncomfortable number this exposes is `binEnded`. A Buy-It-Now
+            listing is Good-'Til-Cancelled and carries no end time, and
+            pendingOutcomes only offers up listings whose end time has passed
+            - so a BIN lot can never enter outcome resolution and we do not
+            know whether any of them has ever sold. Reporting that as a zero
+            sell-through would be a lie; it is unobserved, and the chart says
+            so.
+        */
+        marketComposition () {
+            const one = (sql, ...args) => db.prepare(sql).get(...args).n
+
+            const liveClause = `
+                NOT EXISTS (SELECT 1 FROM listing_outcome o WHERE o.browse_id = l.browse_id)
+                AND (l.end_time IS NULL OR l.end_time > ?)`
+
+            const now = new Date().toISOString()
+            return {
+                liveAuction: one(
+                    'SELECT COUNT(*) n FROM listing l WHERE ' + liveClause +
+                    " AND l.buying_options LIKE '%AUCTION%'", now),
+                liveBin: one(
+                    'SELECT COUNT(*) n FROM listing l WHERE ' + liveClause +
+                    " AND l.buying_options NOT LIKE '%AUCTION%'", now),
+                auctionSold: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type = 'AUCTION' AND sold = 1"),
+                auctionUnsold: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type = 'AUCTION' AND sold = 0"),
+                binEnded: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type <> 'AUCTION'"),
+                /*  BIN lots that have gone quiet: last seen more than a day
+                    ago and never resolved. Each one has either sold or been
+                    withdrawn and we cannot currently tell which. */
+                binVanished: one(
+                    'SELECT COUNT(*) n FROM listing l WHERE l.end_time IS NULL' +
+                    " AND l.buying_options NOT LIKE '%AUCTION%' AND l.last_seen < ?" +
+                    ' AND NOT EXISTS (SELECT 1 FROM listing_outcome o WHERE o.browse_id = l.browse_id)',
+                    new Date(Date.now() - DAY_MS).toISOString()),
+                newToday: one('SELECT COUNT(*) n FROM listing WHERE first_seen > ?',
+                    new Date(Date.now() - DAY_MS).toISOString())
+            }
         },
 
         /* Retention: raw eBay rows roll off, derived statistics stay.
