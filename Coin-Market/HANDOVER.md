@@ -912,21 +912,47 @@ The POST body cap went from 64KB to 2MB: a section posts a denomination and a
 quantity for every row it shows, which is about 9KB for 250 rows - the old cap
 would have silently truncated a large cull.
 
-## The uplift curve counts snapshots, not auctions
+## The uplift curve gives each auction one vote
 
-`buildCurve` pushes one ratio per snapshot (uplift.js:61), so its `n` is a
-count of observations, not of independent auctions. Measured on the live
-store: **1,418 "samples" come from 23 distinct auctions**, one of which
-contributes 110 of them. Any confidence read off that number is overstated by
-more than an order of magnitude, and a single long-running auction can move
-the median on its own.
+`buildCurve` used to push one ratio per snapshot, so its `n` counted
+observations rather than independent auctions. On the live store that read
+**1,418 "samples" from 23 auctions**, one of which contributed 110 - five
+times the weight of an auction seen twenty times, and a confidence claim
+overstated by more than an order of magnitude.
 
-Nothing acts on it today - zero auction alerts fire, because rules.js:42
-discards every auction more than 120 minutes from closing before the
-projection is reached. But `basedOn` is surfaced in the alert text, and the
-honest figure is the number of auctions. Building the curve from per-auction
-medians would fix both the count and the weighting; it changes a statistical
-method, so it is flagged rather than done.
+Each auction's snapshots inside a bucket are now reduced to that auction's
+median ratio first, and the quantiles taken over those. `upliftSamples` had to
+start returning `browse_id`, which it never did - the curve could not have
+known which auction a snapshot came from even if it had wanted to.
+
+The curve now reports what it means:
+
+| bucket | n (auctions) | median |
+|---|---|---|
+| T_5M | 17 | 0.9731 |
+| T_15M | 19 | 0.9731 |
+| T_1H | 21 | 0.9730 |
+| T_6H | 20 | 0.9933 |
+| T_24H | 10 | 1.0073 |
+| T_3D, T_LONG | 0 | not seen yet |
+
+The medians barely moved, which is the reassuring part: the weighting was not
+badly distorting the estimate, only the confidence attached to it. A sample
+with no auction id still counts as its own auction, so the old behaviour is
+the fallback rather than a silent merge.
+
+## The picture opens on click, not hover
+
+Hover opened the preview while the pointer was merely passing through, and it
+covered the title - which is the thing most worth reading and the one a
+photograph is least able to replace. It is a `<details>` now: click to open,
+click to close, and it stays put while you read it. `<summary>` is focusable
+and toggles on Enter or Space, so it is keyboard-workable without any script.
+
+It also sits **below** the thumbnail rather than beside it, so title, badges
+and price stay visible while the picture is open. The large image is still
+named only in the `[open]` rule, so it is downloaded when asked for and not
+before: 546 rows, one image fetched.
 
 ## Decisions not to undo
 
