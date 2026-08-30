@@ -134,11 +134,25 @@ button.plain { color:var(--ink-2) }
   border-radius:10px; border:1px solid var(--border); pointer-events:none;
   background:var(--surface) center/contain no-repeat;
   box-shadow:0 12px 34px rgba(0,0,0,0.30);
-  opacity:0; visibility:hidden;
-  transition:opacity 110ms ease 0s, visibility 0s linear 110ms }
-.q:hover .q-big, .q:focus-within .q-big {
-  background-image:var(--shot); opacity:1; visibility:visible;
-  transition:opacity 110ms ease 260ms, visibility 0s linear 260ms }
+  opacity:0; visibility:hidden }
+/*  A delayed animation, not a delayed transition.
+
+    A transition-delay only postpones the fade: the background-image applies
+    the instant the pointer arrives, so sweeping an eye down the list
+    downloaded every large image it passed. Naming the image inside a
+    keyframe instead means it is not part of the element's style until the
+    animation actually starts, so the 260ms dwell gates the download and not
+    just the fade.
+
+    Triggered from the photo rather than the whole row, which is both the
+    gesture the page describes and a much smaller target to cross by
+    accident. Keyboard focus anywhere in the row still opens it. */
+.q-shot:hover .q-big, .q:focus-within .q-big {
+  animation:q-peek 130ms ease 260ms forwards }
+@keyframes q-peek {
+  from { background-image:var(--shot); visibility:visible; opacity:0 }
+  to   { background-image:var(--shot); visibility:visible; opacity:1 }
+}
 .q-big .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; font-size:11.5px;
   color:var(--ink-2); background:color-mix(in srgb, var(--surface) 88%, transparent);
   border-radius:0 0 9px 9px; border-top:1px solid var(--border) }
