@@ -449,8 +449,11 @@ function queueRow (row, verdictCell) {
             escapeHtml(reason.short) + '</span>')
     }
     if (row.priced) { meta.push('<span class="badge">counted in the statistics</span>') }
+    /*  Not twice. "wrong category: Costume Jewellery" already names it. */
     const leaf = leafCategory(row.categoryPath)
-    if (leaf !== null) { meta.push(escapeHtml(leaf)) }
+    if (leaf !== null && (reason === null || !reason.short.endsWith(leaf))) {
+        meta.push(escapeHtml(leaf))
+    }
     if (row.conditionLabel) { meta.push(escapeHtml(row.conditionLabel)) }
     if (row.buyingOptions) { meta.push(escapeHtml(String(row.buyingOptions).toLowerCase().replace(/[|,]/g, ' / ').replace(/_/g, ' '))) }
     /*  Auction-only, and present on just 7.6% of the queue for that reason -
