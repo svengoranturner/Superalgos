@@ -67,3 +67,27 @@ test('missing inputs yield no verdict rather than a wrong one', () => {
     assert.strictEqual(PLAUSIBILITY.assess(100, FULL, null), null)
     assert.strictEqual(PLAUSIBILITY.assess(0, FULL, SPOT), null)
 })
+
+/*  The same ratio means something completely different on a live auction.
+    Sellers routinely open below the gold value to attract bids - the owner
+    says so - and calling that "not this coin" is a false alarm that teaches
+    you to ignore the column. */
+test('a live auction under melt is not called a fake', () => {
+    const meltish = { fineOz: 0.2354, spot: 3292 }   /* melt about GBP 775 */
+
+    const binned = PLAUSIBILITY.assess(300, meltish.fineOz, meltish.spot)
+    assert.strictEqual(binned.verdict, 'IMPOSSIBLE')
+    assert.strictEqual(binned.impossible, true)
+
+    const auction = PLAUSIBILITY.assess(300, meltish.fineOz, meltish.spot, { liveAuction: true })
+    assert.strictEqual(auction.verdict, 'AUCTION_UNDER_MELT')
+    assert.strictEqual(auction.impossible, false, 'must never be dropped from the panel')
+    assert.match(auction.detail, /attract bids/)
+
+    /* Above melt, the auction flag changes nothing. */
+    for (const price of [800, 1200, 4000]) {
+        assert.deepStrictEqual(
+            PLAUSIBILITY.assess(price, meltish.fineOz, meltish.spot).verdict,
+            PLAUSIBILITY.assess(price, meltish.fineOz, meltish.spot, { liveAuction: true }).verdict)
+    }
+})

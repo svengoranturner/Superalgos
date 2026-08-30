@@ -162,8 +162,16 @@ function marketPage (opened, url) {
     const plausible = ALERT_RULES.dedupeByListing(candidates).filter(entry => {
         const market = markets.find(m => INSTRUMENTS.displayName(m.row.key) === entry.name)
         if (market === undefined || market.market.spot === null || market.market.fineOz === null) { return true }
+        /*  For an auction the current bid says nothing - every auction on
+            eBay sits below fair value until the last minutes. The alert has
+            already projected where it will finish, and that is the number
+            worth testing against the melt floor. */
+        const isAuction = entry.alert.rule === 'AUCTION_PROJECTED_BELOW_CEILING'
+        const tested = isAuction && Number.isFinite(entry.alert.projectedFinal)
+            ? entry.alert.projectedFinal
+            : entry.alert.currentTotal
         const assessed = PLAUSIBILITY.assess(
-            entry.alert.currentTotal, market.market.fineOz, market.market.spot.gbpPerOz)
+            tested, market.market.fineOz, market.market.spot.gbpPerOz)
         return assessed === null || !assessed.impossible
     })
     const suppressed = ALERT_RULES.dedupeByListing(candidates).length - plausible.length
@@ -292,9 +300,16 @@ function newPlausibilityCell (spot) {
             assumed = guessed === undefined
         }
 
-        const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz)
+        /*  A running auction is judged differently: its current bid is not a
+            claim about the coin, it is an opening position. */
+        const running = /AUCTION/i.test(String(row.buyingOptions || '')) &&
+            row.endTime !== null && row.endTime !== undefined &&
+            new Date(row.endTime).getTime() > Date.now()
+
+        const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz, { liveAuction: running })
         if (v === null) { return '' }
-        return '<span class="badge ' + (v.impossible ? 'critical' : 'good') + '" title="' +
+        const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_MELT' ? '' : 'good')
+        return '<span class="badge ' + tone + '" title="' +
             escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
                 (assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
             '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
@@ -463,6 +478,15 @@ function queueRow (row, verdictCell) {
         it", so it is emitted only when there is something to say. */
     if (Number.isFinite(row.bidCount)) {
         meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
+    }
+    /*  A high ask that nobody has taken for weeks is priced badly, not
+        priced rarely - which is a judgement the owner makes from exactly
+        this, so it belongs on the row. */
+    if (row.firstSeen) {
+        const days = Math.floor((Date.now() - new Date(row.firstSeen).getTime()) / 86400000)
+        if (Number.isFinite(days) && days >= 1) {
+            meta.push('seen ' + days + (days === 1 ? ' day' : ' days'))
+        }
     }
     if (Number.isFinite(row.sellerFeedbackPct)) {
         meta.push('seller ' + row.sellerFeedbackPct.toFixed(1) + '%' +

@@ -40,6 +40,19 @@ const VERDICTS = {
         code: 'EXTREME',
         label: 'far above melt - rarity or error',
         detail: 'Many times its gold content. Either a genuine rarity or a mis-priced listing.'
+    },
+    /*
+        The same number, on a live auction, means something completely
+        different. Sellers routinely open below the gold value to attract
+        bids - it is the normal state of an auction that has not run yet,
+        and calling it "not this coin" is a false alarm that teaches you to
+        ignore the column.
+    */
+    OPENING: {
+        code: 'AUCTION_UNDER_MELT',
+        label: 'auction still under melt',
+        detail: 'Normal for a live auction - sellers open below gold value to attract bids. ' +
+            'It says nothing about whether the coin is genuine.'
     }
 }
 
@@ -55,7 +68,13 @@ const IMPOSSIBLE_BELOW = 0.85
 const PREMIUM_ABOVE = 1.25
 const EXTREME_ABOVE = 3
 
-exports.assess = function (price, fineOz, spotGbpPerOz) {
+/*
+    context.liveAuction - a running auction whose current bid is the number
+    being tested. Below melt is then expected rather than impossible, so the
+    lot is labelled instead of being called a fake or dropped from the
+    opportunities panel.
+*/
+exports.assess = function (price, fineOz, spotGbpPerOz, context) {
     if (!Number.isFinite(price) || price <= 0) { return null }
     if (!Number.isFinite(fineOz) || fineOz <= 0) { return null }
     if (!Number.isFinite(spotGbpPerOz) || spotGbpPerOz <= 0) { return null }
@@ -63,8 +82,12 @@ exports.assess = function (price, fineOz, spotGbpPerOz) {
     const melt = fineOz * spotGbpPerOz
     const ratio = price / melt
 
+    const liveAuction = context !== undefined && context !== null && context.liveAuction === true
+
     let verdict = VERDICTS.BULLION
-    if (ratio < IMPOSSIBLE_BELOW) { verdict = VERDICTS.IMPOSSIBLE } else if (ratio >= EXTREME_ABOVE) { verdict = VERDICTS.EXTREME } else if (ratio >= PREMIUM_ABOVE) { verdict = VERDICTS.PREMIUM }
+    if (ratio < IMPOSSIBLE_BELOW) {
+        verdict = liveAuction ? VERDICTS.OPENING : VERDICTS.IMPOSSIBLE
+    } else if (ratio >= EXTREME_ABOVE) { verdict = VERDICTS.EXTREME } else if (ratio >= PREMIUM_ABOVE) { verdict = VERDICTS.PREMIUM }
 
     return {
         melt,

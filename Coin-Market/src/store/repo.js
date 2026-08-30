@@ -340,7 +340,7 @@ exports.newRepository = function (db, options) {
                        l.condition_label AS conditionLabel, l.buying_options AS buyingOptions,
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
-                       l.end_time AS endTime,
+                       l.end_time AS endTime, l.first_seen AS firstSeen,
                        /*  Whether this listing is still counted in the
                            market statistics. 686 of the uncertain ones are,
                            and those are the only ones distorting a number
@@ -481,7 +481,7 @@ exports.newRepository = function (db, options) {
                        l.buying_options AS buyingOptions,
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
-                       l.end_time AS endTime, l.last_seen AS lastSeen,
+                       l.end_time AS endTime, l.last_seen AS lastSeen, l.first_seen AS firstSeen,
                        li.confidence, i.fine_oz AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount,
                        COALESCE(s.price, 0) + COALESCE(s.shipping, 0) AS totalCost,
