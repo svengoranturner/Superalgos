@@ -42,28 +42,55 @@ exports.bucketFor = function (secondsToEnd) {
 }
 
 /*
-    samples: [{ secondsToEnd, price, finalPrice }]
+    samples: [{ browseId, secondsToEnd, price, finalPrice }]
     Only auctions that actually sold should be fed in - an unsold lot has
     no hammer price and would poison the ratios.
+
+    ONE VOTE PER AUCTION, not one per snapshot.
+
+    A snapshot is not an independent observation of how auctions close: it is
+    one more look at the same auction. Counting them individually made a
+    curve built from 23 auctions report n=1,418, with a single long-running
+    lot contributing 110 of those - so it carried five times the weight of an
+    auction seen 20 times, and the reported confidence was overstated by more
+    than an order of magnitude.
+
+    So each auction's snapshots inside a bucket are reduced to that auction's
+    median ratio first, and the quantiles are taken over those. n is then what
+    it claims to be: the number of auctions the bucket has actually seen.
 */
 exports.buildCurve = function (samples, options) {
 
     const config = Object.assign({ minSamples: 5 }, options || {})
     const byBucket = new Map()
 
+    let anonymous = 0
     for (const sample of samples) {
         if (!Number.isFinite(sample.price) || sample.price <= 0) { continue }
         if (!Number.isFinite(sample.finalPrice) || sample.finalPrice <= 0) { continue }
         if (!Number.isFinite(sample.secondsToEnd) || sample.secondsToEnd < 0) { continue }
 
         const code = exports.bucketFor(sample.secondsToEnd)
-        if (!byBucket.has(code)) { byBucket.set(code, []) }
-        byBucket.get(code).push(sample.finalPrice / sample.price)
+        if (!byBucket.has(code)) { byBucket.set(code, new Map()) }
+        const auctions = byBucket.get(code)
+
+        /*  A sample with no auction id counts as its own auction. That is the
+            old behaviour, and it is the right fallback: the alternative is
+            silently merging unrelated lots under one key. */
+        const auctionId = sample.browseId === undefined || sample.browseId === null
+            ? 'anon:' + (anonymous++)
+            : sample.browseId
+
+        if (!auctions.has(auctionId)) { auctions.set(auctionId, []) }
+        auctions.get(auctionId).push(sample.finalPrice / sample.price)
     }
 
     const curve = {}
     for (const bucket of BUCKETS) {
-        const ratios = byBucket.get(bucket.code) || []
+        const auctions = byBucket.get(bucket.code) || new Map()
+        /* One number per auction, however many times we looked at it. */
+        const ratios = [...auctions.values()].map(rs => STATS.median(rs))
+
         curve[bucket.code] = ratios.length >= config.minSamples
             ? {
                 sufficient: true,

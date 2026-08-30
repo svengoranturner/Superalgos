@@ -115,7 +115,13 @@ input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-
 .q { display:grid; grid-template-columns:18px 56px minmax(0,1fr) auto; gap:12px;
   align-items:start; padding:11px 4px; border-bottom:1px solid var(--grid) }
 .q:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
+/*  A row with its picture open sits above its neighbours, so the preview is
+    not painted under the row below. */
+.q:has(.q-shot[open]) { position:relative; z-index:30 }
 .q-shot { position:relative; width:56px; height:56px }
+.q-shot > summary { list-style:none; cursor:zoom-in; display:block; border-radius:6px }
+.q-shot > summary::-webkit-details-marker { display:none }
+.q-shot[open] > summary { cursor:zoom-out; outline:2px solid var(--clearing); outline-offset:2px }
 .q-shot img { width:56px; height:56px; object-fit:cover; border-radius:6px; display:block;
   border:1px solid var(--border); background:var(--plane) }
 /*  minmax(0,1fr) above and min-width:0 here are the two rules that actually
@@ -141,29 +147,21 @@ input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-
     never fetches it until asked. Two hundred rows would otherwise pull
     about 8MB on page load. The delay is deliberate: without it, running an
     eye down the list flashes a preview per row. */
-.q-big { position:absolute; left:66px; top:-6px; z-index:40; width:340px; height:340px;
+/*  Below the thumbnail, not beside it.
+
+    Beside it meant on top of the title, which is the thing most worth
+    reading and the one the picture is least able to replace. Dropping it
+    below the row keeps title, badges and price visible while the picture is
+    open.
+
+    The image is named only in the [open] rule, so it is not downloaded until
+    the picture is actually asked for - 550 rows would otherwise pull about
+    20MB on page load. */
+.q-big { position:absolute; left:0; top:62px; z-index:40; width:340px; height:340px;
   border-radius:10px; border:1px solid var(--border); pointer-events:none;
   background:var(--surface) center/contain no-repeat;
-  box-shadow:0 12px 34px rgba(0,0,0,0.30);
-  opacity:0; visibility:hidden }
-/*  A delayed animation, not a delayed transition.
-
-    A transition-delay only postpones the fade: the background-image applies
-    the instant the pointer arrives, so sweeping an eye down the list
-    downloaded every large image it passed. Naming the image inside a
-    keyframe instead means it is not part of the element's style until the
-    animation actually starts, so the 260ms dwell gates the download and not
-    just the fade.
-
-    Triggered from the photo rather than the whole row, which is both the
-    gesture the page describes and a much smaller target to cross by
-    accident. Keyboard focus anywhere in the row still opens it. */
-.q-shot:hover .q-big, .q:focus-within .q-big {
-  animation:q-peek 130ms ease 260ms forwards }
-@keyframes q-peek {
-  from { background-image:var(--shot); visibility:visible; opacity:0 }
-  to   { background-image:var(--shot); visibility:visible; opacity:1 }
-}
+  box-shadow:0 12px 34px rgba(0,0,0,0.30) }
+.q-shot[open] > .q-big { background-image:var(--shot) }
 .q-big .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; font-size:11.5px;
   color:var(--ink-2); background:color-mix(in srgb, var(--surface) 88%, transparent);
   border-radius:0 0 9px 9px; border-top:1px solid var(--border) }

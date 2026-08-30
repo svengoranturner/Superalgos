@@ -159,3 +159,36 @@ test('an unlearned bucket projects nothing rather than assuming no uplift', () =
     */
     assert.strictEqual(UPLIFT.project(380, 600, UPLIFT.buildCurve([])), null)
 })
+
+/*  A snapshot is not an independent observation of how auctions close - it is
+    one more look at the same auction. Counting them individually made a curve
+    built from 23 real auctions report n=1,418, one lot contributing 110 of
+    them and so outweighing an auction seen 20 times by five to one. */
+test('the uplift curve gives each auction one vote, not one per snapshot', () => {
+    const samples = []
+    /*  One noisy auction watched 100 times, closing flat, against four seen
+        twice each that all closed 20% up. */
+    for (let i = 0; i < 100; i++) {
+        samples.push({ browseId: 'loud', secondsToEnd: 600, price: 100, finalPrice: 100 })
+    }
+    for (const id of ['a', 'b', 'c', 'd']) {
+        samples.push({ browseId: id, secondsToEnd: 600, price: 100, finalPrice: 120 })
+        samples.push({ browseId: id, secondsToEnd: 600, price: 100, finalPrice: 120 })
+    }
+
+    const curve = UPLIFT.buildCurve(samples)
+    const bucket = curve[UPLIFT.bucketFor(600)]
+
+    assert.strictEqual(bucket.n, 5, 'five auctions, not 108 snapshots')
+    /*  Four of five auctions closed 20% up, so the median must follow them
+        and not the one lot that was merely watched most. */
+    assert.ok(Math.abs(bucket.median - 1.2) < 1e-9, 'median was ' + bucket.median)
+})
+
+/*  Samples without an id degrade to the old behaviour rather than silently
+    merging unrelated lots under one key. */
+test('uplift samples with no auction id each count once', () => {
+    const samples = Array.from({ length: 6 }, () => ({ secondsToEnd: 600, price: 100, finalPrice: 110 }))
+    const bucket = UPLIFT.buildCurve(samples)[UPLIFT.bucketFor(600)]
+    assert.strictEqual(bucket.n, 6)
+})

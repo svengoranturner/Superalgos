@@ -305,7 +305,11 @@ exports.newRepository = function (db, options) {
         /* Snapshot/final-price pairs that teach the uplift curve. */
         upliftSamples (sinceIso) {
             return db.prepare(`
-                SELECT s.seconds_to_end AS secondsToEnd, s.price, o.final_price AS finalPrice
+                /*  browse_id is not decoration: the curve has to know which
+                    auction a snapshot came from, or 110 observations of one
+                    long-running lot outvote 22 other auctions put together. */
+                SELECT s.browse_id AS browseId,
+                       s.seconds_to_end AS secondsToEnd, s.price, o.final_price AS finalPrice
                 FROM listing_snapshot s
                 JOIN listing_outcome o ON o.browse_id = s.browse_id
                 WHERE o.sold = 1 AND o.sale_type = 'AUCTION' AND o.censored = 0

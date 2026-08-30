@@ -420,7 +420,7 @@ in this tool is computed over what survives this filter, so it is shown rather t
 ${applied}
 
 <div class="card">
-  <p class="thin" style="margin:0">Hover a photo to see it large. Mark one and it is settled for
+  <p class="thin" style="margin:0">Click a photo to see it large. Mark one and it is settled for
   good &mdash; the decision is stored against the coin, survives a relist, outranks every rule in
   the classifier, and the collector applies it to listings it finds tomorrow. Say
   <em>not a sovereign</em> and you are then offered a rule that generalises it, with the count of
@@ -669,12 +669,21 @@ function queueRow (row, verdictCell) {
 
     return `<div class="q">
   ${pick}
-  <div class="q-shot"${big ? ' style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)"' : ''}>
-    ${row.imageUrl
-        ? '<img src="' + escapeHtml(row.imageUrl) + '" alt="" loading="lazy" decoding="async">'
-        : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'}
-    ${big ? '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' : ''}
-  </div>
+  ${(() => {
+      /*  A <details> rather than a hover, because hovering opened the
+          preview while the pointer was merely on its way somewhere and it
+          covered the title underneath. Click to open, click to close, and it
+          stays put while you read it. No JavaScript: <summary> is focusable
+          and toggles on Enter or Space, so it is keyboard-workable too. */
+      const thumb = row.imageUrl
+          ? '<img src="' + escapeHtml(row.imageUrl) + '" alt="" loading="lazy" decoding="async">'
+          : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'
+      if (!big) { return '<div class="q-shot">' + thumb + '</div>' }
+      return '<details class="q-shot" style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)">' +
+          '<summary title="Click for a larger picture">' + thumb + '</summary>' +
+          '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' +
+          '</details>'
+  })()}
   <div class="q-main">
     <div class="q-title">${row.itemWebUrl
         ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(row.title) + '</a>'
@@ -772,7 +781,7 @@ moving the numbers on the front page.</p>
 
 <p class="thin">Dearest first &mdash; within one coin type that is also the highest premium, and a
 lot priced far from its neighbours is both the most likely to be wrong and the most visible when
-it is. Hover a photo to see it large. If the coin is real but the denomination is wrong, set it
+it is. Click a photo to see it large. If the coin is real but the denomination is wrong, set it
 in the dropdown and mark it genuine rather than dismissing it.</p>
 ${live.length === 0 ? '<p class="thin">Nothing live under this coin type.</p>' : list(live)}
 
