@@ -522,12 +522,22 @@ test('typographic fractions are read as denominations', () => {
 /*  A lot in Cyprus is a different market from one in Birmingham - different
     postage, buyer pool and clearing price - and averaging the two describes
     neither. */
-test('a listing outside the UK is screened out by its location', () => {
-    const cy = EXCLUSIONS.screenLocation('CY')
-    assert.strictEqual(cy.code, 'NOT_UK')
+test('location screening does nothing unless a country list is chosen', () => {
+    /*  The default that matters. Screening to GB alone removed 1,268 genuine
+        sovereigns in one pass, 744 of them Australian - Sydney, Melbourne and
+        Perth mint coins are British sovereigns and the scarcest part of the
+        series. It is the same error migration 004 documents at the category
+        level, where a leaf allow-list discarded 2,491 of them. */
+    for (const country of ['CY', 'AU', 'US', 'GB']) {
+        assert.strictEqual(EXCLUSIONS.screenLocation(country), null,
+            country + ' must not be screened without an explicit allow-list')
+        assert.strictEqual(EXCLUSIONS.screenLocation(country, []), null)
+    }
+    /* Opted into, it works. */
+    const cy = EXCLUSIONS.screenLocation('CY', ['GB'])
+    assert.strictEqual(cy.code, 'NOT_ALLOWED_COUNTRY')
     assert.match(cy.reason, /CY/)
-    assert.strictEqual(EXCLUSIONS.screenLocation('GB'), null)
-    assert.strictEqual(EXCLUSIONS.screenLocation('gb'), null)
+    assert.strictEqual(EXCLUSIONS.screenLocation('gb', ['GB']), null)
 })
 
 /*  The load-bearing one. Every listing stored before the column existed has
@@ -543,5 +553,5 @@ test('an unknown location is never treated as foreign', () => {
 
 test('the permitted country list can be widened without code changes', () => {
     assert.strictEqual(EXCLUSIONS.screenLocation('IE', ['GB', 'IE']), null)
-    assert.strictEqual(EXCLUSIONS.screenLocation('US', ['GB', 'IE']).code, 'NOT_UK')
+    assert.strictEqual(EXCLUSIONS.screenLocation('US', ['GB', 'IE']).code, 'NOT_ALLOWED_COUNTRY')
 })

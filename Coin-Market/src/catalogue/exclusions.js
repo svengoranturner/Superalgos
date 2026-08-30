@@ -201,23 +201,33 @@ exports.screenCategory = function (categoryPath) {
 /*
     Where the coin is.
 
-    A lot in Cyprus is a different market from one in Birmingham - different
-    postage, different buyer pool, different clearing price - and averaging
-    the two produces a premium that describes neither.
+    OFF BY DEFAULT, and that default is the whole point.
 
-    Fails OPEN, and that is the whole design. Every listing stored before
-    this column existed has a NULL country until the next sweep re-sees it,
-    so an unknown location must mean "not known yet" and never "foreign".
-    The other way round, one migration would empty the market.
+    Screening on location looks obviously right - a lot in Cyprus is a
+    different market from one in Birmingham - and it is a trap. Turned on
+    for GB alone it removed 1,268 genuine sovereigns from the pricing set in
+    a single pass, 744 of them Australian: Sydney, Melbourne and Perth mint
+    coins are British sovereigns and the scarcest part of the series. Rare
+    1859, 1863 and 1867 Sydney sovereigns went with them.
+
+    That is the same mistake migration 004 documents at the category level,
+    where an allow-list of leaf categories discarded 2,491 Australian
+    sovereigns. Same error, different column, one screen later.
+
+    So `allowed` must be passed by a caller that has decided to filter and
+    knows what it costs. With no allow-list this screens nothing, and an
+    unknown country is never treated as foreign. The country is stored and
+    shown on the listing either way, which is what actually answers "where
+    is this?" without deciding it on your behalf.
 */
 exports.screenLocation = function (country, allowed) {
+    if (allowed === undefined || allowed === null || allowed.length === 0) { return null }
     if (country === undefined || country === null || country === '') { return null }
-    const permitted = allowed === undefined ? ['GB'] : allowed
-    if (permitted.includes(String(country).toUpperCase())) { return null }
+    if (allowed.map(c => String(c).toUpperCase()).includes(String(country).toUpperCase())) { return null }
 
     return {
-        code: 'NOT_UK',
-        reason: 'Listed outside the UK (' + String(country).toUpperCase() + ')'
+        code: 'NOT_ALLOWED_COUNTRY',
+        reason: 'Listed outside your chosen countries (' + String(country).toUpperCase() + ')'
     }
 }
 

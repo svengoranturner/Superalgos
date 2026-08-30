@@ -20,7 +20,10 @@ const LEARNED = require('../catalogue/learned.js')
 
 exports.newDiscoverer = function (browseClient, repository, options) {
 
-    const config = Object.assign({ marketplace: 'EBAY_GB', currency: 'GBP' }, options || {})
+    /*  allowedCountries is absent by default and must stay that way unless
+        the owner chooses otherwise - see EXCLUSIONS.screenLocation. */
+    const config = Object.assign(
+        { marketplace: 'EBAY_GB', currency: 'GBP', allowedCountries: [] }, options || {})
 
 
     /*
@@ -83,7 +86,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 evidence than a category the seller picked. */
             if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
                 const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath) ||
-                    EXCLUSIONS.screenLocation(item.itemCountry)
+                    EXCLUSIONS.screenLocation(item.itemCountry, config.allowedCountries)
                 if (wrongCategory !== null) {
                     repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
                     continue

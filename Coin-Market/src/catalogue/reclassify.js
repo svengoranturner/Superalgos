@@ -29,7 +29,7 @@ function emptyCounts () {
     behaved differently depending on which one ran would be worse than
     either.
 */
-function classifyOne (listing, label, learned, repository, counts) {
+function classifyOne (listing, label, learned, repository, counts, allowedCountries) {
 
     /*  Same order as discovery: eBay's own category before the title
         parser, because it is the stronger evidence.
@@ -40,7 +40,7 @@ function classifyOne (listing, label, learned, repository, counts) {
         re-raises a settled question is a review queue nobody uses. */
     if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
         const offCategory = EXCLUSIONS.screenCategory(listing.categoryPath) ||
-            EXCLUSIONS.screenLocation(listing.itemCountry)
+            EXCLUSIONS.screenLocation(listing.itemCountry, allowedCountries)
         if (offCategory !== null) {
             repository.queueForReview(listing.browseId, 'EXCLUDED: ' + offCategory.reason, null, 0)
             counts.wrongCategory++
@@ -102,7 +102,12 @@ function inTransaction (db, work) {
 
 /* Everything. Justified when a rule changes, because a rule can reach any
    listing; wasteful for a single verdict, which is what one() is for. */
-exports.run = function (db, repository) {
+exports.run = function (db, repository, options) {
+
+    /*  Empty unless somebody has explicitly chosen to filter by country.
+        See EXCLUSIONS.screenLocation - filtering to GB alone costs 1,268
+        genuine sovereigns, most of them Australian branch-mint coins. */
+    const allowedCountries = (options && options.allowedCountries) || []
 
     const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n
     const counts = emptyCounts()
@@ -124,7 +129,8 @@ exports.run = function (db, repository) {
         counts.total = listings.length
 
         for (const listing of listings) {
-            classifyOne(listing, labels.get(listing.legacyId) || null, learned, repository, counts)
+            classifyOne(listing, labels.get(listing.legacyId) || null, learned, repository,
+                counts, allowedCountries)
         }
     })
 
@@ -145,7 +151,9 @@ exports.run = function (db, repository) {
     Keyed on legacy id, because that is what a decision is recorded against
     and a relisted coin has several browse ids sharing one.
 */
-exports.one = function (db, repository, legacyId) {
+exports.one = function (db, repository, legacyId, options) {
+
+    const allowedCountries = (options && options.allowedCountries) || []
 
     const listings = db.prepare(
         'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry ' +
@@ -164,7 +172,7 @@ exports.one = function (db, repository, legacyId) {
         for (const listing of listings) {
             clearInstrument.run(listing.browseId)
             clearReview.run(listing.browseId)
-            classifyOne(listing, label, learned, repository, counts)
+            classifyOne(listing, label, learned, repository, counts, allowedCountries)
         }
     })
 
