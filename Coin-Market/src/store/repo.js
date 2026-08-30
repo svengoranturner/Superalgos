@@ -355,14 +355,14 @@ exports.newRepository = function (db, options) {
                            is something else wearing the word, and that is
                            worth showing rather than making a human squint at
                            every title. */
-                       s.price, s.shipping
+                       s.price, s.shipping, s.bid_count AS bidCount
                 FROM review_queue r
                 JOIN listing l ON l.browse_id = r.browse_id
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 /*  Same restriction as activeListings: rank only the
                     snapshots of listings actually in the queue. */
                 LEFT JOIN (
-                    SELECT s.browse_id, s.price, s.shipping,
+                    SELECT s.browse_id, s.price, s.shipping, s.bid_count,
                            ROW_NUMBER() OVER (PARTITION BY s.browse_id
                                               ORDER BY s.observed_at DESC) AS rn
                     FROM listing_snapshot s

@@ -381,6 +381,27 @@ function largerImage (url) {
     return url.replace(/\/s-l\d+\.(jpg|jpeg|png|webp)$/i, '/s-l500.$1')
 }
 
+/*
+    The reason, short enough to sit on one line.
+
+    These run to 170 characters - longer than the titles, and the real
+    driver of the width that made the queue scroll sideways. The full text
+    goes in a tooltip rather than being thrown away, because a rule that
+    dropped something wrongly is only diagnosable if you can read why.
+*/
+function compactReason (reason) {
+    if (typeof reason !== 'string' || reason === '') { return null }
+    const full = reason
+    let short = reason.replace(/^EXCLUDED:\s*/, '')
+
+    const offCategory = short.match(/^Not listed in a coin category \((.+)\)$/)
+    if (offCategory !== null) {
+        short = 'wrong category: ' + (leafCategory(offCategory[1]) || offCategory[1])
+    }
+    if (short.length > 58) { short = short.slice(0, 55).trimEnd() + '…' }
+    return { short, full }
+}
+
 function leafCategory (path) {
     if (typeof path !== 'string' || path === '') { return null }
     const parts = path.split('>').map(p => p.trim()).filter(p => p.length > 0)
@@ -422,12 +443,22 @@ function queueRow (row, verdictCell) {
     const total = (row.price || 0) + (row.shipping || 0)
 
     const meta = []
-    if (row.reason) { meta.push('<span class="badge">' + escapeHtml(row.reason) + '</span>') }
+    const reason = compactReason(row.reason)
+    if (reason !== null) {
+        meta.push('<span class="badge" title="' + escapeHtml(reason.full) + '">' +
+            escapeHtml(reason.short) + '</span>')
+    }
     if (row.priced) { meta.push('<span class="badge">counted in the statistics</span>') }
     const leaf = leafCategory(row.categoryPath)
     if (leaf !== null) { meta.push(escapeHtml(leaf)) }
     if (row.conditionLabel) { meta.push(escapeHtml(row.conditionLabel)) }
     if (row.buyingOptions) { meta.push(escapeHtml(String(row.buyingOptions).toLowerCase().replace(/[|,]/g, ' / ').replace(/_/g, ' '))) }
+    /*  Auction-only, and present on just 7.6% of the queue for that reason -
+        its absence says "not an auction" rather than "we failed to fetch
+        it", so it is emitted only when there is something to say. */
+    if (Number.isFinite(row.bidCount)) {
+        meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
+    }
     if (Number.isFinite(row.sellerFeedbackPct)) {
         meta.push('seller ' + row.sellerFeedbackPct.toFixed(1) + '%' +
             (Number.isFinite(row.sellerFeedbackCnt) ? ' (' + row.sellerFeedbackCnt + ')' : ''))
