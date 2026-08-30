@@ -561,6 +561,80 @@ The fraction test refuses any 1/N below a quarter rather than a hand-listed
 set, and reads the typographic forms, so 1/100 oz tokens stop being priced as
 full sovereigns.
 
+## Telling the tool what a sovereign is
+
+The owner's own conclusion, and the right one: chasing titles has no ceiling.
+They could tell at a glance that the four lots on the opportunities panel were
+not sovereigns and that several coins in the review queue were genuine, and
+there was nowhere to put that. Every rule in `exclusions.js` is a guess made
+from outside the market by somebody who cannot do that.
+
+So there is now a label store (`listing_label`) and a rule store
+(`learned_rule`), migration 005.
+
+- A verdict is keyed on `legacy_id`, so it survives a relist, and it outranks
+  the whole pipeline **in both directions**. Confirming a coin rescues it from
+  a rule that dropped it - that direction matters more, because a rule quietly
+  eating genuine coins is the failure mode with no other alarm on it.
+- Confirming does not mean guessing the rest. A coin marked genuine with no
+  denomination stays in the queue, because melt against the wrong denomination
+  is exactly how a real quarter sovereign came to read "below melt".
+- Marking something *not a sovereign* then offers the rules that would
+  generalise it. Phrases are stored as literal text and escaped at match time,
+  never stored as patterns.
+- Labels and rules are exempt from retention. Raw eBay rows roll off at 180
+  days; a judgement about them is kept, or the training set evaporates on a
+  cycle. `purgeExpired` names its tables and does not name these two.
+- Every write reclassifies. A decision that needs a command run afterwards to
+  take effect is a decision most people stop making.
+
+**Ranking proposals by reach was wrong and shipped briefly.** The first version
+offered to drop everything containing `london` - 233 matches, 97 of them
+sovereigns then in the market statistics - because support was all it ranked
+on, and `of`, `with` and `set` scored just as well. Support cannot separate a
+good rule from a destructive one: `hardy` reaches 35 listings and breaks
+nothing, because they are all fly reels. So `titleCorpus` now carries whether
+each listing is currently priced, and a proposal reports how many of those it
+would stop. That number is the one the person accepting it needs.
+
+The honest limit: this generalises decisions, it does not infer taste. The
+agreement figure on `/rules` is flattered, because a rule accepted from a label
+will always reproduce that label - it only means something when it starts
+covering calls it was not built from. The labels are the durable asset; a model
+can be trained on them later without judging anything twice.
+
+## Title rules the corpus justified
+
+Measured against 5,359 live listings before being written, not guessed. Between
+them these took the classified set from 4,216 to 3,919.
+
+- **Fineness settles it without a keyword list.** A sovereign is 22ct, so 24ct
+  or `.999` in a title is describing something else - 22 matches, all bars,
+  Britannias or foreign proofs. The loose `999` form is deliberately absent: it
+  matches mintage figures ("Mintage 999") and would have deleted two genuine
+  sovereigns.
+- **There is no Edward VIII sovereign.** He abdicated before any circulating
+  coinage; the 1937 patterns are seven-figure museum pieces. All three live
+  matches were private fantasy strikes, two of them NGC-slabbed - NGC grades
+  fantasy issues as readily as coins, so the slab is no evidence at all.
+- Rings, watches and bezels (55), Hardy fly reels (27), spelled-out coin counts
+  (28), sub-quarter fractions (94 - previously stuck in the queue forever with
+  no denomination and no reason given).
+- **"Sovereign Half"** was priced against a full sovereign's gold. Same defect
+  as the quarter, one word order along. `Qtr` too, which is the Royal Mint's own
+  abbreviation on its listing titles.
+
+Two of my own regexes were wrong and the corpus caught both: `` before `\.`
+never matches after a space, so `.9999` was silently missed while `0.999`
+worked; and an unbounded `1/N` read "Limited Edition 1/50" as a denomination.
+
+A **weight rule was measured and rejected.** Sellers quote AGW - fine gold
+weight, 7.32g for a full sovereign - as often as gross, and a rule that knew
+only gross would have deleted genuine Royal Mint proofs. Corrected for both
+conventions it still leaves genuine coins with sloppy weights ("George V 1912
+10g gold"), so a stated weight that matches no sovereign is worth surfacing but
+not excluding on.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
