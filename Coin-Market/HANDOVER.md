@@ -914,16 +914,16 @@ would have silently truncated a large cull.
 
 ## The uplift curve counts snapshots, not auctions
 
- pushes one ratio per snapshot (uplift.js:61), so its  is a
+`buildCurve` pushes one ratio per snapshot (uplift.js:61), so its `n` is a
 count of observations, not of independent auctions. Measured on the live
-store: **1,418 samples come from 23 distinct auctions**, one of which
+store: **1,418 "samples" come from 23 distinct auctions**, one of which
 contributes 110 of them. Any confidence read off that number is overstated by
 more than an order of magnitude, and a single long-running auction can move
 the median on its own.
 
 Nothing acts on it today - zero auction alerts fire, because rules.js:42
 discards every auction more than 120 minutes from closing before the
-projection is reached. But  is surfaced in the alert text, and the
+projection is reached. But `basedOn` is surfaced in the alert text, and the
 honest figure is the number of auctions. Building the curve from per-auction
 medians would fix both the count and the weighting; it changes a statistical
 method, so it is flagged rather than done.
