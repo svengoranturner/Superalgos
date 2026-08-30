@@ -654,10 +654,19 @@ preview is composed locally: the stored thumbnail inline, and a 340px card on
 hover or keyboard focus. Swapping the `s-l225` suffix to `s-l500` works (all of
 500/960/1600 do; a bogus size clamps rather than 404s).
 
-The large image is named **only inside the hover rule**, so it is fetched on
-demand: 550 rows load 22 thumbnails and one large image. `<img loading="lazy">`
-was rejected for this - it never fires on a keyboard tab-through, where a CSS
-background does.
+The large image is named **only inside a delayed keyframe**, which is what
+gates the download. A `transition-delay` postpones only the fade - the
+background-image still applies the instant the pointer arrives, so an eye swept
+down the list downloaded every image it passed. Naming it in an animation with
+a 260ms delay means it is not part of the element's style until the animation
+starts. Measured: sweeping past thumbnails fetches nothing, one deliberate
+dwell fetches one. 550 rows load 22 thumbnails.
+
+`<img loading="lazy">` was rejected for the preview - it never fires on a
+keyboard tab-through, where a CSS background does. The trigger is the photo
+rather than the whole row, which is both the gesture the page describes and a
+much smaller target to cross by accident; keyboard focus anywhere in the row
+still opens it.
 
 **A market number now drills down** to the listings behind it at
 `/listings?key=`, carrying the same verdict controls, with `back` so a decision
