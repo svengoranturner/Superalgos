@@ -213,3 +213,55 @@ test('an unparsed year or mint keeps a coin out of the bullion pool', () => {
     assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { mint: null })), false)
     assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { year: undefined })), false)
 })
+
+/*  Three gaps found by reading the live bullion pool: things that are not
+    coins, fractions the series does not mint, and Sheldon grades the parser
+    walked straight past. */
+
+test('publications and memorabilia are not coins', () => {
+    for (const title of [
+        '1982 Ipswich : The Golden Sovereign Speedway Programme',
+        'The Gold Sovereign by Michael A. Marsh 1st Edition 1980',
+        '1974 IPSWICH SPEEDWAY GOLDEN SOVEREIGN'
+    ]) {
+        const screened = EXCLUSIONS.screen(title, null)
+        assert.ok(screened !== null, 'should be excluded: ' + title)
+    }
+})
+
+test('a coin that merely commemorates the sovereign is not a sovereign', () => {
+    assert.ok(EXCLUSIONS.screen('2009 UK £2 Two Pounds Coin - Anniversary of the Gold Sovereign', null) !== null)
+})
+
+/*  The Double Sovereign is a real coin described as "two pound sovereign",
+    and must survive the rule above. */
+test('the genuine Double Sovereign is not caught by the commemorative rule', () => {
+    assert.strictEqual(EXCLUSIONS.screen('1887 Victoria Double Sovereign two pound sovereign', null), null)
+})
+
+test('an eighth or tenth sovereign is not a full sovereign', () => {
+    for (const title of [
+        '2025 King Charles III Classics Remastered 1/8 Sovereign 22ct Gold',
+        'Tenth Sovereign gold coin'
+    ]) {
+        assert.strictEqual(classify({ title }).attributes.denomination, null, title)
+    }
+})
+
+test('a quarter and a half are still recognised', () => {
+    assert.strictEqual(classify({ title: '1/4 Gold Sovereign 2015' }).attributes.denomination, 'QUARTER')
+    assert.strictEqual(classify({ title: 'Half Sovereign 1982' }).attributes.denomination, 'HALF')
+})
+
+test('a bare Sheldon grade is read as a graded coin, not as ungraded', () => {
+    const graded = classify({ title: 'Victoria 1874 shield Sovereign, London, die 33, AU50' })
+    assert.ok(String(graded.attributes.gradeBand).startsWith('SLAB_'), graded.attributes.gradeBand)
+    const plain = classify({ title: '1974 Gold Sovereign Elizabeth II London' })
+    assert.strictEqual(plain.attributes.gradeBand, 'RAW_UNSPECIFIED')
+})
+
+test('a year is never mistaken for a Sheldon grade', () => {
+    const r = classify({ title: '1912 George V Gold Sovereign London Mint' })
+    assert.strictEqual(r.attributes.year, 1912)
+    assert.strictEqual(r.attributes.gradeBand, 'RAW_UNSPECIFIED')
+})

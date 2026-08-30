@@ -40,6 +40,25 @@ const RULES = [
         test: /\b(capsule|coin\s+case|sovereign\s+case|display\s+case|display\s+box|presentation\s+case|holder|album|empty|no\s+coin)\b/i
     },
     {
+        code: 'NOT_A_COIN',
+        reason: 'Publication, ephemera or memorabilia',
+        /* Found in the live bullion pool: a 1982 Ipswich Speedway programme
+           at GBP 3, a first edition of Marsh's book on the sovereign at GBP
+           104. Both contain the word "sovereign" and neither is a coin, and
+           at those prices they drag a premium median downwards as hard as a
+           rarity drags it up. */
+        test: /\b(programme|program|book|1st\s+edition|first\s+edition|paperback|hardback|magazine|catalogue|catalog|leaflet|poster|postcard|newspaper|ticket|speedway|racecard)\b/i
+    },
+    {
+        code: 'ABOUT_A_SOVEREIGN',
+        reason: 'A different coin that merely depicts or commemorates the sovereign',
+        /* "2009 UK GBP 2 Two Pounds Coin - Anniversary of the Gold Sovereign"
+           is a two-pound commemorative, not a sovereign. Worded to avoid the
+           genuine Double Sovereign, which is "two pound SOVEREIGN" rather
+           than "two pounds COIN". */
+        test: /\b(two\s+pounds\s+coin|2\s*pound\s+coin)\b|\banniversary\s+of\s+the\s+(gold\s+)?sovereign\b/i
+    },
+    {
         code: 'MEDAL',
         reason: 'Medal or token, not legal tender',
         test: /\b(medal|medallion|token|crown[-\s]?sized)\b/i

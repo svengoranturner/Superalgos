@@ -47,6 +47,18 @@ function extractDenomination (title) {
     if (/\b(half|1\/2)\s*(gold\s*)?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t)) { return { denomination: 'DOUBLE', confidence: 1 } }
     if (/\b(quintuple|five\s*pound|5\s*pound)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUINTUPLE', confidence: 1 } }
+    /*  A fraction the sovereign series does not mint - eighths, tenths,
+        twentieths, sold as "Classics Remastered" style private issues. The
+        Royal Mint's smallest sovereign is the quarter, so these are not
+        sovereigns at any size.
+
+        Refusing a denomination truncates the key chain and sends the listing
+        to review, which is what keyAt already does with an unknown mint. Far
+        better than calling a GBP 120 eighth a full sovereign and leaving it
+        in the bullion median. */
+    if (/\b1\s*\/\s*(8|10|16|20|25|32|50)\b|\b(eighth|tenth|sixteenth|twentieth)\b/.test(t)) {
+        return { denomination: null, confidence: 0 }
+    }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }
     return { denomination: null, confidence: 0 }
 }
@@ -170,6 +182,26 @@ function extractGrade (title, finish) {
             gradeBand: bandForSlab(slab[1], slab[2], parseInt(slab[3], 10)),
             gradeDetail: slab[1].toUpperCase() + ' ' + slab[2].toUpperCase() + slab[3],
             confidence: 1
+        }
+    }
+    /*  A bare Sheldon number - "AU50", "XF45", "MS63" - with no grading
+        service named. This is grading vocabulary: a seller writing AU50 is
+        describing a graded coin, and the parser read straight past it and
+        called the coin ungraded, which put GBP 13,000 Victoria 1874 shield
+        sovereigns in the bullion pool.
+
+        Confidence sits below an explicit service match because the slab is
+        inferred from the wording rather than stated. */
+    const sheldon = title.match(/\b(MS|PF|PR|AU|XF|EF|VF|VG|AG)\s?-?\s?(\d{1,2})\b/i)
+    if (sheldon !== null) {
+        const numeric = parseInt(sheldon[2], 10)
+        if (numeric >= 1 && numeric <= 70) {
+            const prefix = sheldon[1].toUpperCase()
+            return {
+                gradeBand: bandForSlab(null, prefix, numeric),
+                gradeDetail: prefix + sheldon[2],
+                confidence: 0.8
+            }
         }
     }
     if (finish === 'PROOF') { return { gradeBand: 'RAW_PROOF', gradeDetail: null, confidence: 0.7 } }
