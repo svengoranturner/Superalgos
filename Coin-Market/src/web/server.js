@@ -478,14 +478,29 @@ function listingsPage (opened, url) {
             '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>')
     }
 
-    const rows = repository.listingsForInstrument(key, 400)
+    const rows = repository.listingsForInstrument(key, 500)
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
     for (const row of rows) { row.back = '/listings?key=' + encodeURIComponent(key) }
 
     const name = INSTRUMENTS.displayName(key)
     const market = view.forInstrument(key)
+
+    /*  Live and ended are counted separately so this page agrees with the
+        Live column that led you here. Ended lots still matter - they feed
+        the clearing price - but they are not what the front page's live
+        figures are made of. */
+    const live = rows.filter(r => r.live === 1)
+    const ended = rows.filter(r => r.live !== 1)
+
+    /*  The number that justifies this page existing. Of the live listings
+        counted into an instrument, most were never flagged for review at
+        all - they classified confidently and wrongly - so the review queue
+        could not reach them from any direction. */
+    const unflagged = live.filter(r => !r.reason).length
     const settled = rows.filter(r => r.verdict).length
-    const flagged = rows.filter(r => r.reason).length
+
+    const list = (items) => '<div class="card"><div class="queue">' +
+        items.map(r => queueRow(r, verdictCell(r))).join('') + '</div></div>'
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
@@ -493,18 +508,24 @@ function listingsPage (opened, url) {
 moving the numbers on the front page.</p>
 
 <div class="card hero">
-  <div><div class="n">${rows.length}</div><div class="l">listings counted here</div></div>
+  <div><div class="n">${live.length}</div><div class="l">live listings counted here</div></div>
   <div><div class="n">${pct(market.liquidity.medianAskPremium)}</div>
     <div class="l">median asking premium over gold content</div></div>
-  <div><div class="n">${flagged}</div><div class="l">already flagged as uncertain</div></div>
+  <div><div class="n">${unflagged}</div>
+    <div class="l">of them never flagged for review &mdash; they classified confidently, so this
+      page is the only way to reach them</div></div>
   ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged</div></div>' : ''}
 </div>
 
-<p class="thin">Highest asking price first &mdash; a lot priced far from its neighbours is both
-the most likely to be wrong and the most visible when it is. Hover a photo to see it large.</p>
-<div class="card"><div class="queue">
-${rows.map(r => queueRow(r, verdictCell(r))).join('')}
-</div></div>
+<p class="thin">Dearest first &mdash; within one coin type that is also the highest premium, and a
+lot priced far from its neighbours is both the most likely to be wrong and the most visible when
+it is. Hover a photo to see it large. If the coin is real but the denomination is wrong, set it
+in the dropdown and mark it genuine rather than dismissing it.</p>
+${live.length === 0 ? '<p class="thin">Nothing live under this coin type.</p>' : list(live)}
+
+${ended.length === 0 ? '' : `<h2>Ended (${ended.length})</h2>
+<p class="thin">No longer on sale, but still feeding the clearing price for this coin type.</p>
+${list(ended.slice(0, 150))}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
 `)

@@ -440,30 +440,64 @@ exports.newRepository = function (db, options) {
         */
         listingsForInstrument (key, limit) {
             return db.prepare(`
-                SELECT l.legacy_id AS legacyId, l.title, l.item_web_url AS itemWebUrl,
-                       l.image_url AS imageUrl, l.category_path AS categoryPath,
-                       l.condition_label AS conditionLabel, l.buying_options AS buyingOptions,
+                /*  The scope CTE is what makes this affordable on a Pi:
+                    windowing all 90,000 snapshot rows instead of just this
+                    instrument's cost 459ms against 192ms. */
+                WITH scope AS (
+                    SELECT browse_id FROM listing_instrument WHERE key = ?1
+                ),
+                latest AS (
+                    SELECT browse_id, price, shipping, bid_count, observed_at FROM (
+                        SELECT s.browse_id, s.price, s.shipping, s.bid_count, s.observed_at,
+                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
+                                                  ORDER BY s.observed_at DESC) AS rn
+                        FROM listing_snapshot s
+                        JOIN scope ON scope.browse_id = s.browse_id
+                    ) WHERE rn = 1
+                )
+                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
+                       l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
+                       l.category_path AS categoryPath, l.condition_label AS conditionLabel,
+                       l.buying_options AS buyingOptions,
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.last_seen AS lastSeen,
-                       i.fine_oz AS fineOz, li.confidence,
-                       lb.verdict, lb.denomination AS labelledDenomination,
+                       li.confidence, i.fine_oz AS fineOz,
+                       s.price, s.shipping, s.bid_count AS bidCount,
+                       COALESCE(s.price, 0) + COALESCE(s.shipping, 0) AS totalCost,
+                       1 AS priced,
                        q.reason,
-                       s.price, s.shipping, 1 AS priced
+                       lb.verdict, lb.denomination AS labelledDenomination,
+                       /*  The same three conditions as activeListings: no
+                           resolved outcome, not past its end time (a NULL
+                           end time is Good-Til-Cancelled and counts as
+                           live), and seen in a sweep within the day. It has
+                           to agree exactly, or this page contradicts the
+                           Live column that led you to it. */
+                       CASE WHEN o.browse_id IS NULL
+                                 AND (l.end_time IS NULL OR l.end_time > ?2)
+                                 AND l.last_seen > ?3
+                            THEN 1 ELSE 0 END AS live
                 FROM listing_instrument li
                 JOIN listing l ON l.browse_id = li.browse_id
                 JOIN instrument i ON i.key = li.key
-                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
+                LEFT JOIN latest s ON s.browse_id = l.browse_id
                 LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
-                LEFT JOIN (
-                    SELECT browse_id, price, shipping,
-                           ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
-                    FROM listing_snapshot
-                ) s ON s.browse_id = l.browse_id AND s.rn = 1
-                WHERE li.key = ?
-                ORDER BY (COALESCE(s.price, 0) + COALESCE(s.shipping, 0)) DESC
-                LIMIT ?
-            `).all(key, limit || 200)
+                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
+                LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
+                WHERE li.key = ?1
+                /*  Live first, then dearest. Within one key fine_oz is
+                    constant, so the dearest lot is also the highest premium
+                    - which keeps the order meaningful on a day the gold
+                    feed has a gap. */
+                ORDER BY live DESC, totalCost DESC
+                LIMIT ?4
+            `).all(
+                key,
+                new Date().toISOString(),
+                new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
+                limit || 200
+            )
         },
 
         learnedRules () {
