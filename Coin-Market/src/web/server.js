@@ -499,8 +499,17 @@ function listingsPage (opened, url) {
     const unflagged = live.filter(r => !r.reason).length
     const settled = rows.filter(r => r.verdict).length
 
+    /*  Capped, and says so. Dearest first means the lots most likely to be
+        distorting the number are at the top, so a cap costs little - but a
+        list that silently stops is a list you would wrongly believe you had
+        worked through. */
+    const CAP = 200
     const list = (items) => '<div class="card"><div class="queue">' +
-        items.map(r => queueRow(r, verdictCell(r))).join('') + '</div></div>'
+        items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
+        (items.length > CAP
+            ? '<p class="thin" style="margin:12px 0 0">Showing the dearest ' + CAP +
+              ' of ' + items.length + '.</p>'
+            : '') + '</div>'
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
@@ -525,7 +534,7 @@ ${live.length === 0 ? '<p class="thin">Nothing live under this coin type.</p>' :
 
 ${ended.length === 0 ? '' : `<h2>Ended (${ended.length})</h2>
 <p class="thin">No longer on sale, but still feeding the clearing price for this coin type.</p>
-${list(ended.slice(0, 150))}`}
+${list(ended)}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
 `)
