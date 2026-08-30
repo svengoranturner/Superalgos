@@ -512,6 +512,24 @@ COMMANDS.init = {
             { flag: 'dev-id', label: 'Dev ID               ' }
         ]
 
+        /*  Re-running init to change one setting - a RuName, say - should not
+            demand all three credentials again. Anything already stored and
+            real is reused; an explicit flag still wins. */
+        const reused = []
+        if (existing !== null && existing.ebay !== undefined && existing.ebay !== null) {
+            const stored = {
+                'app-id': existing.ebay.clientId,
+                'cert-id': existing.ebay.clientSecret,
+                'dev-id': existing.ebay.devId
+            }
+            for (const field of FIELDS) {
+                if (flags[field.flag] === undefined && !CONFIG.looksUnfilled(stored[field.flag])) {
+                    flags[field.flag] = stored[field.flag]
+                    reused.push(field.flag)
+                }
+            }
+        }
+
         const missing = FIELDS.filter(f => flags[f.flag] === undefined)
         if (missing.length > 0 && !process.stdin.isTTY) {
             console.log('Usage:')
@@ -602,6 +620,9 @@ COMMANDS.init = {
         const carried = settings.carriedForward || []
         const wasKept = name => carried.includes(name)
 
+        if (reused.length > 0) {
+            console.log('  eBay keys          : reused from the existing file (' + reused.join(', ') + ')')
+        }
         console.log('  environment        : ' + settings.ebay.environment)
         console.log('  marketplace        : ' + settings.ebay.marketplaceId)
         console.log('  seller salt        : ' + (wasKept('sellerSalt')
