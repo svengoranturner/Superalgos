@@ -893,6 +893,41 @@ Two behaviours worth knowing when working the queue:
   and then restored. Restoring threw away the year, portrait and denomination
   the parser had already found, so answering one question created three.
 
+## Working the queue in batches
+
+A tick box leads every unsettled row, at one constant x so a cull is a single
+pass straight down the left edge. Each section is one form with a bulk bar top
+and bottom: *Not a sovereign - selected* and *Genuine - selected*.
+
+The per-row buttons still act on their own row alone, whether or not anything
+is ticked - silently folding the ticks into a single-row click would be a nasty
+surprise. And a batch accept reads each row's own denomination and quantity
+fields, so setting a few as you go and accepting the lot in one click works;
+the second and third passes can be the same pass.
+
+A single rejection still offers the teach page, because there is one title to
+generalise from. A batch of thirty does not.
+
+The POST body cap went from 64KB to 2MB: a section posts a denomination and a
+quantity for every row it shows, which is about 9KB for 250 rows - the old cap
+would have silently truncated a large cull.
+
+## The uplift curve counts snapshots, not auctions
+
+ pushes one ratio per snapshot (uplift.js:61), so its  is a
+count of observations, not of independent auctions. Measured on the live
+store: **1,418 samples come from 23 distinct auctions**, one of which
+contributes 110 of them. Any confidence read off that number is overstated by
+more than an order of magnitude, and a single long-running auction can move
+the median on its own.
+
+Nothing acts on it today - zero auction alerts fire, because rules.js:42
+discards every auction more than 120 minutes from closing before the
+projection is reached. But  is surfaced in the alert text, and the
+honest figure is the number of auctions. Building the curve from per-auction
+medians would fix both the count and the weighting; it changes a statistical
+method, so it is flagged rather than done.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
