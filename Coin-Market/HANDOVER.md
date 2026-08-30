@@ -725,6 +725,74 @@ buckets are 13-36%. That is causal - the Royal Mint only strikes the GBP 2 /
 GBP 5 / piedfort variants of the *full* sovereign, and only in modern proof
 ranges.
 
+## Four things found by the owner actually using it
+
+**A live auction opening under melt is not a fake.** Sellers routinely open
+below the gold value to attract bids, and the melt floor was calling that
+"below melt - not this coin". Worse, the opportunities panel tested an
+auction's *current bid* against melt - the number that is low by design - so
+it could suppress a genuine lot for behaving like an auction. A running
+auction now has its own verdict, and the panel tests the projected final price
+the alert has already computed. 45 review rows were affected.
+
+**The melt verdict only speaks when it knows the denomination.** The quarter
+fallback is a floor and a floor only works downwards: nothing under a
+quarter's gold can be any sovereign. Read upwards it is nonsense - an ordinary
+full sovereign measured against a quarter reads 400% and was labelled "far
+above melt - rarity or error". That badge was on **1,346 of 2,674 rows**, which
+is how a column stops being read. It now says "denomination unknown" instead.
+
+**Brackets and commas broke denomination matching.** The gap class between the
+word and "sovereign" was word characters, spaces, hyphens and dots - so
+`1/2 (Half) Sovereign` and `quarter new design ,sovereign` fell through to
+FULL and were priced against 7.99g of gold. A genuine 1980 half sovereign
+proof was duly suppressed from the opportunities panel as "below melt - not
+this coin": the melt floor was right, the denomination underneath it was wrong.
+Found by reading what the panel was suppressing instead of trusting it.
+
+**A stray click could have excluded 414 sovereigns.** The owner's words: "a bit
+of a worry someone could exclude all sovereigns with George in the title with
+an accidental click". Measured on the live corpus, `george` would indeed have
+stopped pricing 414 lots, from one click.
+
+## How a rule is accepted now
+
+Proposals are split by what they would actually break, not merely ranked by it.
+
+- A rule that removes **nothing** from the statistics keeps its one-click
+  button.
+- Anything that would stop pricing real coins goes behind a `<details>`
+  disclosure *and* a confirmation page that **names the listings** rather than
+  counting them. "Would stop pricing 97" is a number people click past;
+  "would stop pricing 1911 Gold Sovereign George V London" is not.
+- Accepting any rule lands on a banner saying what it did, with an undo button.
+
+Measured on a plain `1911 Gold Sovereign George V London`: **zero** one-click
+offers, six behind the confirmation step.
+
+**And when the reason is not in the title, nothing is offered.** The case that
+prompted this was a genuine sovereign photographed in a pendant, with no
+"pendant" in the words - so every phrase on offer described the coin rather
+than the fault. The page now says "nothing here generalises safely" and
+explains why, instead of offering six ways to break the market.
+
+## Item location
+
+eBay sends `itemLocation.country` on every search summary and it was being
+thrown away, so a lot in Cyprus looked exactly like one in Birmingham -
+different postage, different buyer pool, different clearing price. Migration
+006 adds `listing.item_country`; `screenLocation()` drops anything known to be
+outside GB, and the permitted list is a parameter.
+
+**It fails open, and that is the design.** Every row stored before the column
+existed is NULL until the next sweep re-sees it, so unknown means "not known
+yet" and never "foreign" - the other way round, one migration empties the
+market. There is a test pinning exactly that. Costs no extra API calls; the
+field was already in the response.
+
+Rows also show how long a lot has sat unsold, which is the evidence for
+"priced badly" rather than "rare".
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
