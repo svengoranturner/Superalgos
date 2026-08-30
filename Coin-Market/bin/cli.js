@@ -369,9 +369,24 @@ COMMANDS['auth-code'] = {
             environment: settings.ebay.environment
         })
         const token = await auth.exchangeCode(decodeURIComponent(args[0]))
-        console.log('Add this to config/settings.json under ebay.refreshToken:')
+        const refreshToken = token.refreshToken || token.value
+
+        /*  Stored, not printed. This is good for ~18 months, and the old
+            behaviour put it in the terminal scrollback and then asked for
+            it to be hand-edited into the very file init exists to spare
+            anyone editing. Written in place so nothing else is disturbed. */
+        const target = PATH.join(CONFIG.ROOT, 'config', 'settings.json')
+        const current = JSON.parse(FS.readFileSync(target, 'utf8'))
+        current.ebay = current.ebay || {}
+        const replacing = typeof current.ebay.refreshToken === 'string' &&
+            current.ebay.refreshToken.length > 0
+        current.ebay.refreshToken = refreshToken
+        FS.writeFileSync(target, JSON.stringify(current, null, 2) + '\n', { mode: 0o600 })
+
+        console.log((replacing ? 'Replaced' : 'Stored') + ' the refresh token in ' + target)
+        console.log('  ' + refreshToken.length + ' characters, mode 0600, gitignored - not printed here.')
         console.log('')
-        console.log(JSON.stringify(token.refreshToken || token.value))
+        console.log('Next:  node bin/cli.js smoke')
     }
 }
 
