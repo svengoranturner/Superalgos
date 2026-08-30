@@ -23,28 +23,46 @@ const CONDITIONS = require('./conditions.js')
 */
 function extractYear (title) {
     const candidates = []
-    const pattern = /\b(1[89]\d{2}|20[0-4]\d)\b/g
+    const marks = []
+    /*
+        The mint letter is glued to the year in the way dealers actually
+        write it - "1887S", "1874M", "1918I" - and a word boundary after the
+        digits never matches there, because S is a word character. That one
+        missing case was most of the "Year not identified" review queue, and
+        it cost the mintmark as well: a branch-mint coin whose mint went
+        unread also fails the bullion-pool test for the wrong reason.
+    */
+    const pattern = /\b(1[89]\d{2}|20[0-4]\d)(SA|[SMPCIA])?\b/gi
     let match
     while ((match = pattern.exec(title)) !== null) {
         const year = parseInt(match[1], 10)
-        if (year >= 1817 && year <= 2049) { candidates.push(year) }
+        if (year >= 1817 && year <= 2049) {
+            candidates.push(year)
+            if (match[2] !== undefined) { marks.push(match[2].toUpperCase()) }
+        }
     }
-    if (candidates.length === 0) { return { year: null, confidence: 0 } }
-    if (candidates.length === 1) { return { year: candidates[0], confidence: 1 } }
+    if (candidates.length === 0) { return { year: null, confidence: 0, mintmark: null } }
+    const mintmark = marks.length === 1 ? marks[0] : null
+    if (candidates.length === 1) { return { year: candidates[0], confidence: 1, mintmark } }
     /*
         Several plausible years - e.g. "1817-1917 centenary" or a seller
         listing a date range. Ambiguous: take the first but flag it down,
         so it lands in review rather than silently mis-binning.
     */
-    return { year: candidates[0], confidence: 0.4 }
+    return { year: candidates[0], confidence: 0.4, mintmark }
 }
 
 /* -------------------------------------------------------- denomination */
 
 function extractDenomination (title) {
     const t = title.toLowerCase()
-    if (/\b(quarter|1\/4)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
-    if (/\b(half|1\/2)\s*(gold\s*)?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
+    /*  The gap tolerance matters. Sellers write "Quarter-Sovereign" and
+        "Quarter 2g Sovereign", and requiring the two words to be adjacent
+        sent both to FULL - pricing a quarter against a full sovereign's
+        7.99g of gold and manufacturing a 75% discount that is not there.
+        Those were real entries in the live opportunities panel. */
+    if (/\b(quarter|1\s*\/\s*4)\b[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
+    if (/\b(half|1\s*\/\s*2)\b[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t)) { return { denomination: 'DOUBLE', confidence: 1 } }
     if (/\b(quintuple|five\s*pound|5\s*pound)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUINTUPLE', confidence: 1 } }
     /*  A fraction the sovereign series does not mint - eighths, tenths,
@@ -138,7 +156,7 @@ const MINT_KEYWORDS = [
     { code: 'SA', test: /\bpretoria\b|\bsouth\s*africa\b/i }
 ]
 
-function extractMint (title, year) {
+function extractMint (title, year, compactMark) {
     for (const keyword of MINT_KEYWORDS) {
         if (keyword.test.test(title)) {
             const mint = COINS.MINTS[keyword.code]
@@ -151,6 +169,17 @@ function extractMint (title, year) {
     const explicit = title.match(/\bmint\s*mark\s*[:\-]?\s*([SMPCI]|SA)\b/i)
     if (explicit !== null) {
         return { mint: explicit[1].toUpperCase(), confidence: 0.9 }
+    }
+    /*  The compact dealer form, "1887S" - read out of the year above rather
+        than matched again here, so the letter is only ever taken when it is
+        actually attached to a plausible year. */
+    if (compactMark !== null && compactMark !== undefined) {
+        const mint = COINS.MINTS[compactMark]
+        if (mint !== undefined) {
+            const impossible = year !== null && mint.from !== undefined &&
+                (year < mint.from || year > mint.to)
+            if (!impossible) { return { mint: compactMark, confidence: 0.9 } }
+        }
     }
     if (/\blondon\b|\bno\s*mint\s*mark\b/i.test(title)) { return { mint: 'LON', confidence: 0.9 } }
     /*
@@ -283,7 +312,7 @@ exports.classify = function (listing) {
     const yearResult = extractYear(title)
     const denomResult = extractDenomination(title)
     const portraitResult = extractPortrait(title, yearResult.year)
-    const mintResult = extractMint(title, yearResult.year)
+    const mintResult = extractMint(title, yearResult.year, yearResult.mintmark)
     const finishResult = extractFinish(title)
     const gradeResult = extractGrade(title, finishResult.finish)
 

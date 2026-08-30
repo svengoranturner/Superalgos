@@ -330,3 +330,48 @@ test('a missing ancestry is not treated as evidence of anything', () => {
 test('the bullion subtree counts as coins', () => {
     assert.strictEqual(EXCLUSIONS.screenCategory('Coins > Bullion/Bars > Gold Bullion > Bars & Rounds'), null)
 })
+
+/*
+    Two parser gaps found by reading the dashboard's own review queue and
+    opportunities panel against real listings.
+*/
+
+test('the mint letter glued to the year is read, not lost', () => {
+    /*  A word boundary after the digits never matches "1887S", because S is
+        a word character. This was most of the "Year not identified" queue. */
+    for (const [title, year, mint] of [
+        ['1887S J/Head Half Sovereign Shield T/A Close JEB', 1887, 'S'],
+        ['1909P rated MS61/UNC Half Sovereign 44K Minted.', 1909, 'P'],
+        ['1882M Half Sovereign rated NGEM/MS66 Type 4/3', 1882, 'M']
+    ]) {
+        const a = classify({ title }).attributes
+        assert.strictEqual(a.year, year, title)
+        assert.strictEqual(a.mint, mint, title)
+    }
+})
+
+test('a plain year with no mint letter still reads, and invents no mint', () => {
+    const a = classify({ title: '1911 George V Gold Full Sovereign' }).attributes
+    assert.strictEqual(a.year, 1911)
+})
+
+/*  Pricing a quarter against a full sovereign's 7.99g of gold manufactures a
+    75% discount that is not there, and those were live "opportunities". */
+test('a hyphenated or spaced quarter is still a quarter', () => {
+    for (const title of [
+        'Charles III 2023 PF69 FDI Quarter-Sovereign Coronation',
+        '2013 Gold Proof Limited Edition Quarter 2g Sovereign-Box & COA',
+        'RARE House of Windsor Edward VIII 22ct Gold Quarter proof Sovereign'
+    ]) {
+        assert.strictEqual(classify({ title }).attributes.denomination, 'QUARTER', title)
+    }
+})
+
+test('a hyphenated half is still a half', () => {
+    assert.strictEqual(classify({ title: 'Half-Sovereign 1982' }).attributes.denomination, 'HALF')
+})
+
+test('a plain sovereign is still full, and a double still double', () => {
+    assert.strictEqual(classify({ title: '1974 Gold Sovereign Elizabeth II' }).attributes.denomination, 'FULL')
+    assert.strictEqual(classify({ title: '1887 Victoria Double Sovereign' }).attributes.denomination, 'DOUBLE')
+})
