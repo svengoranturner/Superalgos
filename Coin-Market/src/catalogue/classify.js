@@ -61,8 +61,8 @@ function extractDenomination (title) {
         sent both to FULL - pricing a quarter against a full sovereign's
         7.99g of gold and manufacturing a 75% discount that is not there.
         Those were real entries in the live opportunities panel. */
-    if (/\b(quarter|1\s*\/\s*4)\b[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
-    if (/\b(half|1\s*\/\s*2)\b[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
+    if (/(\bquarter\b|\b1\s*\/\s*4\b|¼)[\s\-\w.]{0,14}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
+    if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.]{0,14}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     if (/\b(double|two\s*pound)\s*(gold\s*)?sovereign/.test(t) || /\bdouble[-\s]?sov\b/.test(t)) { return { denomination: 'DOUBLE', confidence: 1 } }
     if (/\b(quintuple|five\s*pound|5\s*pound)\s*(gold\s*)?sovereign/.test(t)) { return { denomination: 'QUINTUPLE', confidence: 1 } }
     /*  A fraction the sovereign series does not mint - eighths, tenths,
@@ -78,7 +78,7 @@ function extractDenomination (title) {
         often as "1/8", and a word boundary after the digit does not match
         "8th". Missing it put a GBP 138 eighth into the full-sovereign
         pricing, where it is compared against 7.99g of gold. */
-    if (/\b1\s*\/\s*([5-9]|[1-9]\d+)\s*(th|nd|rd|st)?\b|\b(eighth|tenth|sixteenth|twentieth|hundredth)\b/.test(t)) {
+    if (/\b1\s*\/\s*([5-9]|[1-9]\d+)\s*(th|nd|rd|st)?\b|[⅛⅑⅒]|\b(eighth|tenth|sixteenth|twentieth|hundredth)\b/.test(t)) {
         return { denomination: null, confidence: 0 }
     }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }

@@ -375,3 +375,13 @@ test('a plain sovereign is still full, and a double still double', () => {
     assert.strictEqual(classify({ title: '1974 Gold Sovereign Elizabeth II' }).attributes.denomination, 'FULL')
     assert.strictEqual(classify({ title: '1887 Victoria Double Sovereign' }).attributes.denomination, 'DOUBLE')
 })
+
+/*  Sellers use the typographic fractions, and the plausibility verdict is
+    what surfaced this: a genuine 2012 quarter sovereign was flagged "below
+    melt" because the unicode quarter fell through to FULL and was measured
+    against a full sovereign's gold content. */
+test('typographic fractions are read as denominations', () => {
+    assert.strictEqual(classify({ title: '2012 ¼ Sovereign Elizabeth II Diamond Jubilee BU' }).attributes.denomination, 'QUARTER')
+    assert.strictEqual(classify({ title: '½ Sovereign 1982' }).attributes.denomination, 'HALF')
+    assert.strictEqual(classify({ title: '⅛ Sovereign 2022 gold proof' }).attributes.denomination, null)
+})
