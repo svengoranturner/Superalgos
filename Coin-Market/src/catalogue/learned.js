@@ -108,6 +108,17 @@ exports.compile = function (rules) {
 */
 const MAX_DOCUMENT_FREQUENCY = 0.2
 
+/*
+    Function words. They are frequent enough to look like strong rules and
+    mean nothing at all - the first version of this offered to drop every
+    listing containing "of", on the strength of 239 matches.
+*/
+const FUNCTION_WORDS = new Set([
+    'of', 'the', 'and', 'with', 'for', 'in', 'on', 'at', 'to', 'from', 'by',
+    'or', 'as', 'is', 'it', 'its', 'this', 'that', 'new', 'used', 'rare',
+    'very', 'all', 'no', 'not', 'only', 'inc', 'plus', 'per', 'x'
+])
+
 /* Punctuation and case are noise; "1/8" and ".999" are not. */
 function tokenise (title) {
     return String(title).toLowerCase()
@@ -132,9 +143,14 @@ function candidates (title) {
         if (i + 1 < tokens.length) { out.push(tokens[i] + ' ' + tokens[i + 1]) }
         if (i + 2 < tokens.length) { out.push(tokens[i] + ' ' + tokens[i + 1] + ' ' + tokens[i + 2]) }
     }
-    /*  A multi-word candidate made only of years is no better than a bare
-        year, and "gold sovereign" is every listing in the corpus. */
-    return [...new Set(out)].filter(phrase => !phrase.split(' ').every(isYear))
+    /*  A candidate made only of years is no better than a bare year, and a
+        candidate made only of function words is worse than useless. Both
+        are judged on the whole phrase: "house of hardy" is a fine rule and
+        "of" is not. */
+    return [...new Set(out)].filter(phrase => {
+        const words = phrase.split(' ')
+        return !words.every(isYear) && !words.every(w => FUNCTION_WORDS.has(w))
+    })
 }
 
 /*
@@ -173,9 +189,22 @@ exports.induce = function (label, corpus, labels, options) {
         const agreeing = labelled.filter(l => l.verdict === label.verdict).length
         const conflicts = labelled.filter(l => l.verdict !== label.verdict)
 
+        /*
+            The number that decides whether a rule is safe.
+
+            Reach alone cannot tell a good rule from a destructive one:
+            "hardy" reaches 35 listings and none of them are being priced,
+            because they are all fishing reels; "london" reaches 233 and 97
+            of them are sovereigns currently in the market statistics.
+            Both look identical on support.
+        */
+        const breaks = matches.filter(row => row.priced)
+
         proposals.push({
             phrase,
             support: matches.length,
+            breaks: breaks.length,
+            breakSamples: breaks.slice(0, 3).map(b => b.title),
             agreement: labelled.length === 0 ? null : agreeing / labelled.length,
             conflicts: conflicts.map(c => c.title),
             samples: matches.slice(0, 5).map(m => m.title),
@@ -185,12 +214,18 @@ exports.induce = function (label, corpus, labels, options) {
 
     /*
         Ranked by what makes a rule safe to accept, in order: no
-        contradictions first, then reach, then the shorter phrase where two
-        reach equally - a shorter rule that covers the same listings is the
-        more honest description of why they are junk.
+        contradictions, then nothing currently priced destroyed, then reach,
+        then the shorter phrase where two reach equally - a shorter rule
+        that covers the same listings is the more honest description of why
+        they are junk.
+
+        The middle term is bucketed rather than compared numerically, or a
+        two-listing rule that breaks nothing would outrank a two-hundred
+        listing rule that breaks one.
     */
     proposals.sort((a, b) =>
         (a.conflicts.length - b.conflicts.length) ||
+        (Math.min(a.breaks, 1) - Math.min(b.breaks, 1)) ||
         (b.support - a.support) ||
         (a.words - b.words) ||
         (a.phrase.length - b.phrase.length))

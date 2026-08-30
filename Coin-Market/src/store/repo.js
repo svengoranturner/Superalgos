@@ -382,14 +382,25 @@ exports.newRepository = function (db, options) {
         },
 
         /*
-            Every distinct title currently tracked. This is what a proposed
-            rule is measured against, so the count shown next to it is the
-            number of real listings it would actually affect.
+            Every distinct title currently tracked, and whether it is being
+            priced right now.
+
+            The second column is what makes a proposed rule safe to judge.
+            Reach alone does not distinguish "hardy" - 35 listings, none of
+            them priced, all fly reels - from "london", which reaches 233
+            and would destroy 97 sovereigns currently in the market
+            statistics. Both look like good rules on support alone.
         */
         titleCorpus () {
             return db.prepare(`
-                SELECT legacy_id AS legacyId, MIN(title) AS title
-                FROM listing WHERE legacy_id IS NOT NULL GROUP BY legacy_id
+                SELECT l.legacy_id AS legacyId, MIN(l.title) AS title,
+                       MAX(CASE WHEN li.browse_id IS NOT NULL AND q.browse_id IS NULL
+                                THEN 1 ELSE 0 END) AS priced
+                FROM listing l
+                LEFT JOIN listing_instrument li ON li.browse_id = l.browse_id
+                LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
+                WHERE l.legacy_id IS NOT NULL
+                GROUP BY l.legacy_id
             `).all()
         },
 

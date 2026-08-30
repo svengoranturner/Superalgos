@@ -96,14 +96,14 @@ test('a rule someone taught can name a denomination too', () => {
     corpus. A phrase that covers half of six listings genuinely is too broad
     to be a rule; the same phrase over three of twenty-three is not. */
 const CORPUS = [
-    { legacyId: '1', title: 'Hardy Gold Sovereign 7/8 Fly Reel with Case' },
-    { legacyId: '2', title: 'Hardy Gold Sovereign 9/10 Salmon Fly Reel' },
-    { legacyId: '3', title: 'Vintage Hardy Sovereign 5/6 Fly Reel and Spool' },
-    { legacyId: '4', title: '1974 Gold Sovereign Elizabeth II' },
-    { legacyId: '5', title: '1911 Gold Sovereign George V London' },
-    { legacyId: '6', title: '1974 Gold Sovereign bullion grade' }
+    { legacyId: '1', title: 'Hardy Gold Sovereign 7/8 Fly Reel with Case', priced: 0 },
+    { legacyId: '2', title: 'Hardy Gold Sovereign 9/10 Salmon Fly Reel', priced: 0 },
+    { legacyId: '3', title: 'Vintage Hardy Sovereign 5/6 Fly Reel and Spool', priced: 0 },
+    { legacyId: '4', title: '1974 Gold Sovereign Elizabeth II', priced: 1 },
+    { legacyId: '5', title: '1911 Gold Sovereign George V London', priced: 1 },
+    { legacyId: '6', title: '1974 Gold Sovereign bullion grade', priced: 1 }
 ].concat(Array.from({ length: 17 }, (unused, i) => ({
-    legacyId: 'f' + i, title: (1890 + i) + ' Gold Sovereign Victoria Old Head'
+    legacyId: 'f' + i, title: (1890 + i) + ' Gold Sovereign Victoria Old Head', priced: 1
 })))
 
 test('a rejected listing proposes the phrase that generalises it', () => {
@@ -116,6 +116,38 @@ test('a rejected listing proposes the phrase that generalises it', () => {
     const hardy = proposals.find(p => p.phrase === 'hardy')
     assert.strictEqual(hardy.support, 3)
     assert.strictEqual(hardy.conflicts.length, 0)
+})
+
+/*  Reach alone cannot tell a good rule from a destructive one. The first
+    version of this offered to drop every listing containing "london" - 233
+    matches, 97 of them sovereigns then in the market statistics - because
+    it ranked on support and nothing else. */
+test('a rule that would stop pricing real coins ranks below one that would not', () => {
+    const proposals = LEARNED.induce(
+        { title: 'Hardy Gold Sovereign 7/8 Fly Reel with Case', verdict: LEARNED.VERDICT.NOT_SOVEREIGN },
+        CORPUS, [])
+
+    const hardy = proposals.find(p => p.phrase === 'hardy')
+    assert.strictEqual(hardy.breaks, 0, 'the reels are not priced, so this rule breaks nothing')
+
+    const damaging = proposals.filter(p => p.breaks > 0)
+    const safe = proposals.filter(p => p.breaks === 0)
+    for (const d of damaging) {
+        for (const s of safe) {
+            assert.ok(proposals.indexOf(s) < proposals.indexOf(d),
+                '"' + d.phrase + '" (' + d.breaks + ' broken) outranked "' + s.phrase + '"')
+        }
+    }
+})
+
+/*  Frequent, and meaningless. */
+test('function words are never offered as rules', () => {
+    const proposals = LEARNED.induce(
+        { title: 'Hardy Gold Sovereign 7/8 Fly Reel with Case', verdict: LEARNED.VERDICT.NOT_SOVEREIGN },
+        CORPUS, [])
+    for (const junk of ['of', 'with', 'the', 'and']) {
+        assert.ok(!proposals.some(p => p.phrase === junk), junk + ' was offered as a rule')
+    }
 })
 
 /*  A bare year generalises catastrophically - rejecting one 1984 fantasy

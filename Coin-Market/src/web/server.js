@@ -448,16 +448,19 @@ function teachPage (opened, url) {
           'other listings to be worth a rule. The decision itself is still stored.</p>'
         : proposals.map(p => `<div class="proposal">
   <div class="p">Drop everything containing <span class="phrase">${escapeHtml(p.phrase)}</span></div>
-  <p class="thin" style="margin:6px 0 0">Matches <strong>${p.support}</strong> tracked listing${p.support === 1 ? '' : 's'}${p.conflicts.length > 0
-      ? ' — but contradicts <strong class="warn">' + p.conflicts.length + '</strong> you have already called genuine, so this phrase is too broad.'
-      : '.'}</p>
+  <p class="thin" style="margin:6px 0 0">Matches <strong>${p.support}</strong> tracked listing${p.support === 1 ? '' : 's'}${p.breaks === 0
+      ? ', <strong>none</strong> of which are currently priced as sovereigns.'
+      : ', and would stop pricing <strong class="warn">' + p.breaks + '</strong> that count towards the market statistics today.'}${p.conflicts.length > 0
+      ? ' It also contradicts <strong class="warn">' + p.conflicts.length + '</strong> you have already called genuine, so the phrase is too broad.'
+      : ''}</p>
   <ul>${p.samples.map(s => '<li>' + escapeHtml(s) + '</li>').join('')}</ul>
-  ${p.conflicts.length > 0 ? '<ul>' + p.conflicts.map(c => '<li class="warn">would also drop: ' + escapeHtml(c) + '</li>').join('') + '</ul>' : ''}
+  ${p.breaks > 0 ? '<ul>' + p.breakSamples.map(s => '<li class="warn">priced today, would stop: ' + escapeHtml(s) + '</li>').join('') + '</ul>' : ''}
+  ${p.conflicts.length > 0 ? '<ul>' + p.conflicts.map(c => '<li class="warn">you called this genuine: ' + escapeHtml(c) + '</li>').join('') + '</ul>' : ''}
   <form method="post" action="/rule" style="margin-top:10px">
     <input type="hidden" name="phrase" value="${escapeHtml(p.phrase)}">
     <input type="hidden" name="support" value="${p.support}">
     <input type="hidden" name="agreement" value="${p.agreement === null ? '' : p.agreement}">
-    <button class="${p.conflicts.length > 0 ? 'plain' : 'yes'}">Accept this rule</button>
+    <button class="${p.breaks > 0 || p.conflicts.length > 0 ? 'plain' : 'yes'}">Accept this rule</button>
   </form>
 </div>`).join('')
 
