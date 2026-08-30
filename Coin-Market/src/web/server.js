@@ -162,16 +162,18 @@ function marketPage (opened, url) {
     const plausible = ALERT_RULES.dedupeByListing(candidates).filter(entry => {
         const market = markets.find(m => INSTRUMENTS.displayName(m.row.key) === entry.name)
         if (market === undefined || market.market.spot === null || market.market.fineOz === null) { return true }
-        /*  For an auction the current bid says nothing - every auction on
-            eBay sits below fair value until the last minutes. The alert has
-            already projected where it will finish, and that is the number
-            worth testing against the melt floor. */
-        const isAuction = entry.alert.rule === 'AUCTION_PROJECTED_BELOW_CEILING'
-        const tested = isAuction && Number.isFinite(entry.alert.projectedFinal)
-            ? entry.alert.projectedFinal
-            : entry.alert.currentTotal
+        /*  For a live auction the current bid is a lower bound on the
+            outcome, so it cannot falsify the coin - such a lot is labelled,
+            not suppressed.
+
+            Testing the projected final price instead was backwards twice
+            over: the closing uplift makes the floor STRICTER rather than
+            kinder, and a point estimate off a seventeen-sample median has no
+            business deciding whether a coin is genuine. The melt floor
+            belongs on a number somebody has actually offered. */
         const assessed = PLAUSIBILITY.assess(
-            tested, market.market.fineOz, market.market.spot.gbpPerOz)
+            entry.alert.currentTotal, market.market.fineOz, market.market.spot.gbpPerOz,
+            { liveAuction: entry.alert.rule === 'AUCTION_PROJECTED_BELOW_CEILING' })
         return assessed === null || !assessed.impossible
     })
     const suppressed = ALERT_RULES.dedupeByListing(candidates).length - plausible.length
@@ -319,7 +321,7 @@ function newPlausibilityCell (spot) {
             So when the denomination is a guess, only the impossible verdict
             is reported. Saying nothing is better than saying something
             confident and wrong. */
-        if (assumed && !v.impossible) {
+        if (assumed && !v.underMelt) {
             return '<span class="thin">denomination unknown</span>'
         }
         const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_MELT' ? '' : 'good')
@@ -334,7 +336,15 @@ function newPlausibilityCell (spot) {
 function reviewPage (opened) {
     /*  The whole queue, not a page of it - it is sorted by impact below and
         truncating before sorting would hide exactly the rows that matter. */
-    const rows = opened.repository.reviewQueue(3000)
+    /*  Fetch one more than we will admit to, so a full page can tell the
+        difference between "that is all of them" and "that is where I
+        stopped". A queue that silently ends 823 rows early is the same
+        class of error as a listing silently dropped from the statistics -
+        you cannot act on what you are not told is missing. */
+    const QUEUE_LIMIT = 6000
+    const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1)
+    const truncated = fetched.length > QUEUE_LIMIT
+    const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
 
     for (const row of rows) { row.back = '/review' }
@@ -387,6 +397,7 @@ ${list(inert, 'Nothing else awaiting a decision.', 150)}
 dropped, mark it genuine &mdash; that overrides the rule that dropped it, which is the failure
 mode worth watching for: a bad rule quietly eating half the market.</p>
 ${list(excluded, 'Nothing excluded.', 150)}
+${truncated ? '<p class="thin warn">The queue is longer than this page reads &mdash; only the first ' + QUEUE_LIMIT + ' rows were fetched, so the counts above are floors rather than totals.</p>' : ''}
 `)
 }
 

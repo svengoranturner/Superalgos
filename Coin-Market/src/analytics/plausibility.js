@@ -99,6 +99,14 @@ exports.assess = function (price, fineOz, spotGbpPerOz, context) {
         /*  The one call sites actually branch on: an opportunity computed
             against a lot that cannot be the coin claimed is not an
             opportunity, it is a misclassification wearing a large number. */
-        impossible: verdict.code === 'IMPOSSIBLE'
+        impossible: verdict.code === 'IMPOSSIBLE',
+        /*  Under the metal price, whoever is asking and however it sells.
+
+            Distinct from `impossible`, because a live auction under melt is
+            normal rather than damning - and needed separately, because a
+            caller that only trusts the downward direction has to know the
+            price is under the floor without caring which of the two labels
+            applies to it. */
+        underMelt: ratio < IMPOSSIBLE_BELOW
     }
 }

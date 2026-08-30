@@ -91,3 +91,24 @@ test('a live auction under melt is not called a fake', () => {
             PLAUSIBILITY.assess(price, meltish.fineOz, meltish.spot, { liveAuction: true }).verdict)
     }
 })
+
+/*  A floor only works downwards, and callers that only trust that direction
+    need to know the price is under it without caring which label applies.
+    Keying that guard on `impossible` alone left 44 live under-melt auctions
+    rendering as a bare "denomination unknown". */
+test('under-melt is reported separately from impossible', () => {
+    const fineOz = 0.2354
+    const spot = 3292
+
+    const bin = PLAUSIBILITY.assess(300, fineOz, spot)
+    assert.strictEqual(bin.impossible, true)
+    assert.strictEqual(bin.underMelt, true)
+
+    const auction = PLAUSIBILITY.assess(300, fineOz, spot, { liveAuction: true })
+    assert.strictEqual(auction.impossible, false, 'a live auction is not a fake')
+    assert.strictEqual(auction.underMelt, true, 'but it is still under the metal price')
+
+    for (const price of [800, 1200, 4000]) {
+        assert.strictEqual(PLAUSIBILITY.assess(price, fineOz, spot).underMelt, false)
+    }
+})
