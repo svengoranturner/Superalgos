@@ -138,7 +138,12 @@ COMMANDS.reclassify = {
     describe: 'Re-run classification over every stored listing (after a rule change)',
     async run (args) {
         const { db, repository } = open(args[0])
-        const counts = require('../src/catalogue/reclassify.js').run(db, repository)
+        /*  Honour the country choice made on the dashboard. Without this,
+            running reclassify from the command line silently widens the
+            filter back out and the next page load disagrees with the last. */
+        const counts = require('../src/catalogue/reclassify.js').run(db, repository, {
+            allowedCountries: repository.setting('allowedCountries', ['GB']) || []
+        })
 
         console.log('Reclassified ' + counts.total + ' stored listings')
         console.log('  assignments : ' + counts.assignmentsBefore + ' -> ' + counts.assignmentsAfter)
