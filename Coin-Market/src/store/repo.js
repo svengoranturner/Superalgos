@@ -446,12 +446,13 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.last_seen AS lastSeen,
-                       li.fine_oz AS fineOz, li.confidence,
+                       i.fine_oz AS fineOz, li.confidence,
                        lb.verdict, lb.denomination AS labelledDenomination,
                        q.reason,
                        s.price, s.shipping, 1 AS priced
                 FROM listing_instrument li
                 JOIN listing l ON l.browse_id = li.browse_id
+                JOIN instrument i ON i.key = li.key
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
                 LEFT JOIN (
