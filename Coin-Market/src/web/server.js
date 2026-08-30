@@ -308,6 +308,20 @@ function newPlausibilityCell (spot) {
 
         const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz, { liveAuction: running })
         if (v === null) { return '' }
+
+        /*  The quarter fallback is a floor, and a floor only works downwards.
+            Anything under a quarter's gold cannot be any sovereign, whatever
+            the title says - that direction is sound. Upwards it is nonsense:
+            an ordinary full sovereign measured against a quarter reads 400%
+            and gets labelled "far above melt - rarity or error", which put
+            that badge on 1,346 rows and made the column worth ignoring.
+
+            So when the denomination is a guess, only the impossible verdict
+            is reported. Saying nothing is better than saying something
+            confident and wrong. */
+        if (assumed && !v.impossible) {
+            return '<span class="thin">denomination unknown</span>'
+        }
         const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_MELT' ? '' : 'good')
         return '<span class="badge ' + tone + '" title="' +
             escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
