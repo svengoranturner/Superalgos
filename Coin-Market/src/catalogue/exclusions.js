@@ -117,14 +117,18 @@ exports.detectQuantity = function (title) {
     everything out because we have not looked is far worse than screening
     nothing.
 */
-exports.screenCategory = function (categoryId, allowedIds) {
-    if (allowedIds === undefined || allowedIds === null) { return null }
-    const allowed = allowedIds instanceof Set ? allowedIds : new Set((allowedIds || []).map(String))
-    if (allowed.size === 0) { return null }
-    if (categoryId === undefined || categoryId === null || categoryId === '') { return null }
+exports.screenCategory = function (categoryPath) {
+    if (categoryPath === undefined || categoryPath === null || categoryPath === '') { return null }
 
-    if (allowed.has(String(categoryId))) { return null }
-    return { code: 'NOT_A_COIN_CATEGORY', reason: 'Listed outside the coin categories (eBay category ' + categoryId + ')' }
+    if (/\bcoins?\b|\bbullion\b/i.test(categoryPath)) { return null }
+
+    /*  Reported with the path, because a false positive here silently
+        deletes a whole class of listing and the path is what makes it
+        diagnosable from the review queue. */
+    return {
+        code: 'NOT_A_COIN_CATEGORY',
+        reason: 'Not listed in a coin category (' + categoryPath + ')'
+    }
 }
 
 exports.screen = function (title, aspects) {

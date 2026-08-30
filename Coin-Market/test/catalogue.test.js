@@ -279,44 +279,48 @@ test('every slabbed band is a collector coin, including the low ones', () => {
 })
 
 /*
-    eBay's own leaf category, which beats any title regex.
+    eBay's own category ancestry, which beats any title regex.
 
-    The seller has already told eBay what they are listing. A Royal Doulton
-    coffee cup sits in pottery, a "Sovereign" wristwatch in watches, a
-    sovereign ring in jewellery - none in a coin category, and no title rule
-    would reliably catch the cup while still admitting a genuine coin whose
-    title mentions china.
+    The seller has already told eBay what they are listing, and every search
+    result carries the whole ancestor chain. That is the only test that both
+    keeps the Australian Sydney half-sovereigns - 2,491 of them, which every
+    leaf allow-list threw away because world coins hang off a different root
+    on EBAY_GB - and drops a Royal Doulton cup.
 */
-const COIN_CATEGORIES = ['177652', '170827', '98774', '141155']
 
-test('a listing outside the coin categories is excluded', () => {
-    for (const [cat, what] of [['262372', 'pottery'], ['31387', 'watches'], ['261994', 'jewellery']]) {
-        const screened = EXCLUSIONS.screenCategory(cat, COIN_CATEGORIES)
+test('a listing whose ancestry includes Coins is kept', () => {
+    for (const path of [
+        'Coins > Coins > British > Victoria (1837-1901) > Sovereign',
+        'Coins > Bullion/Bars > Gold Bullion > Coins',
+        'Coins > Coins > World Coins > Australia'
+    ]) {
+        assert.strictEqual(EXCLUSIONS.screenCategory(path), null, path)
+    }
+})
+
+test('a listing with no coin anywhere in its ancestry is excluded', () => {
+    for (const [path, what] of [
+        ['Pottery, Porcelain & Glass > Porcelain & China > Royal Doulton', 'the coffee cup'],
+        ['Jewellery & Watches > Watches, Parts & Accessories > Wristwatches', 'the Sovereign watch'],
+        ['Sporting Goods > Fishing > Reels', 'the Hardy reel'],
+        ['Jewellery & Watches > Fine Jewellery > Rings', 'the sovereign ring']
+    ]) {
+        const screened = EXCLUSIONS.screenCategory(path)
         assert.ok(screened !== null, what + ' should be excluded')
-        assert.match(screened.reason, /coin categories/i)
+        /*  The path travels with the reason: a false positive here deletes a
+            whole class of listing, and this is what makes it diagnosable. */
+        assert.ok(screened.reason.includes(path), screened.reason)
     }
 })
 
-test('a listing inside a coin category passes', () => {
-    for (const cat of COIN_CATEGORIES) {
-        assert.strictEqual(EXCLUSIONS.screenCategory(cat, COIN_CATEGORIES), null)
-    }
+test('a missing ancestry is not treated as evidence of anything', () => {
+    assert.strictEqual(EXCLUSIONS.screenCategory(null), null)
+    assert.strictEqual(EXCLUSIONS.screenCategory(undefined), null)
+    assert.strictEqual(EXCLUSIONS.screenCategory(''), null)
 })
 
-/*  Screening everything out because the list has not been fetched would be
-    far worse than screening nothing. */
-test('an unfetched category list fails open rather than rejecting everything', () => {
-    assert.strictEqual(EXCLUSIONS.screenCategory('262372', []), null)
-    assert.strictEqual(EXCLUSIONS.screenCategory('262372', null), null)
-    assert.strictEqual(EXCLUSIONS.screenCategory('262372', undefined), null)
-})
-
-test('a listing with no category is not rejected on that basis alone', () => {
-    assert.strictEqual(EXCLUSIONS.screenCategory(null, COIN_CATEGORIES), null)
-    assert.strictEqual(EXCLUSIONS.screenCategory('', COIN_CATEGORIES), null)
-})
-
-test('numeric and string category ids compare alike', () => {
-    assert.strictEqual(EXCLUSIONS.screenCategory(177652, COIN_CATEGORIES), null)
-    assert.ok(EXCLUSIONS.screenCategory(262372, new Set(COIN_CATEGORIES)) !== null)
+/*  "Bullion" alone is enough - the gold bullion subtree is where a great
+    many sovereigns actually live. */
+test('the bullion subtree counts as coins', () => {
+    assert.strictEqual(EXCLUSIONS.screenCategory('Coins > Bullion/Bars > Gold Bullion > Bars & Rounds'), null)
 })

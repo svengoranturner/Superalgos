@@ -8,10 +8,14 @@
     "1. buyingOptions is set explicitly on every partition. Browse returns",
     "   FIXED_PRICE only by default, so omitting it silently produces a",
     "   Buy-It-Now-only dataset - the exact bias this tool measures.",
-    "2. Sovereigns live in TWO category subtrees (UK gold coins AND the",
-    "   bullion subtree). Category ids below are placeholders until the",
-    "   EBAY_GB tree is enumerated via the Taxonomy API - run",
-    "   'coin-market categories' to fill them in for the UK site."
+    "2. categoryIds is deliberately EMPTY and should stay that way. It",
+    "   narrows the Browse search, and every allow-list we built was too",
+    "   narrow: the 22 sovereign-named leaves dropped 2,491 genuine",
+    "   Australian Sydney half-sovereigns, and the whole Coins subtree",
+    "   dropped them too, because world coins hang off a different root",
+    "   on EBAY_GB. Filtering is done instead on the category ANCESTRY,",
+    "   which every search result already carries - see",
+    "   EXCLUSIONS.screenCategory."
   ],
   "categoryIds": [],
   "partitions": [

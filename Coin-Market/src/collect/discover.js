@@ -21,9 +21,6 @@ exports.newDiscoverer = function (browseClient, repository, options) {
 
     const config = Object.assign({ marketplace: 'EBAY_GB', currency: 'GBP' }, options || {})
 
-    /*  Populated from coins.sovereign.json by "coin-market categories".
-        Empty means not yet enumerated, and screenCategory fails open. */
-    const allowedCategoryIds = new Set((config.categoryIds || []).map(String))
 
     /*
         Builds the partitioned query set. Partitioning exists because a
@@ -68,7 +65,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
             /*  The seller has already told eBay what kind of thing this is.
                 Checked before the title parser gets a say, because the
                 category is the stronger evidence by a distance. */
-            const wrongCategory = EXCLUSIONS.screenCategory(item.categoryId, allowedCategoryIds)
+            const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath)
             if (wrongCategory !== null) {
                 repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
                 continue

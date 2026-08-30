@@ -47,17 +47,18 @@ exports.newRepository = function (db, options) {
 
     const statements = {
         upsertListing: db.prepare(`
-            INSERT INTO listing (browse_id, legacy_id, marketplace, title, category_id, condition_label,
+            INSERT INTO listing (browse_id, legacy_id, marketplace, title, category_id, category_path, condition_label,
                                  buying_options, currency, seller_hash, seller_id_hash,
                                  seller_feedback_pct, seller_feedback_cnt,
                                  item_web_url, image_url, start_time, end_time, first_seen, last_seen, expires_at,
                                  cert_number, grading_company, grade_numeric, grade_letter, condition_band)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(browse_id) DO UPDATE SET
                 last_seen = excluded.last_seen,
                 end_time = COALESCE(excluded.end_time, listing.end_time),
                 legacy_id = COALESCE(excluded.legacy_id, listing.legacy_id),
                 buying_options = excluded.buying_options,
+                category_path = COALESCE(excluded.category_path, listing.category_path),
                 expires_at = excluded.expires_at,
                 /* Backfill identity and condition detail as eBay starts
                    supplying them, without clobbering what we already hold. */
@@ -110,7 +111,7 @@ exports.newRepository = function (db, options) {
 
             bindAll(statements.upsertListing, [
                 listing.browseId, listing.legacyId, listing.marketplace || 'EBAY_GB',
-                listing.title, listing.categoryId, listing.conditionLabel,
+                listing.title, listing.categoryId, listing.categoryPath || null, listing.conditionLabel,
                 listing.buyingOptions, listing.currency || 'GBP',
                 hashSeller(username), hashSeller(listing.sellerUserId),
                 listing.sellerFeedbackPct, listing.sellerFeedbackCount,

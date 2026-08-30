@@ -283,5 +283,26 @@ exports.MIGRATIONS = [
         CREATE INDEX idx_listing_seller_id ON listing(seller_id_hash);
         CREATE INDEX idx_listing_cert      ON listing(cert_number);
         `
+    },
+    {
+        name: '004-category-path',
+        sql: `
+        /* ---------------------------------------------------------------
+           eBay sends the whole category ancestry on every search summary
+           and we were keeping only the leaf id. The leaf alone cannot tell
+           a coin from a teacup: leaf ids differ by country and issue, so an
+           allow-list built from British sovereign leaves discarded 2,491
+           genuine Australian Sydney half-sovereigns, and one built from the
+           Coins root discarded them too, because world coins hang off a
+           different root on EBAY_GB.
+
+           The ancestry does not have that problem. Every real coin carries
+           a Coins ancestor; a Royal Doulton cup carries Pottery, a Hardy
+           fishing reel carries Sporting Goods, a Sovereign-brand wristwatch
+           carries Watches. Storing the path makes that test available to
+           reclassify as well as to live discovery.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN category_path TEXT;
+        `
     }
 ]

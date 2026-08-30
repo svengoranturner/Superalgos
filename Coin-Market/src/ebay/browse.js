@@ -160,6 +160,15 @@ exports.normaliseSummary = function (summary) {
         legacyId: summary.legacyItemId || null,
         title: summary.title || '',
         categoryId: summary.categories ? (summary.categories[0] || {}).categoryId : null,
+        /*  The whole ancestor chain, not just the leaf. eBay sends it on
+            every summary at no extra cost, and it is the only thing that
+            reliably separates a coin from a teacup: leaf ids vary by
+            country and issue, but every genuine coin has a Coins ancestor
+            and a Royal Doulton cup does not. */
+        categoryPath: (summary.categories || [])
+            .map(category => category.categoryName)
+            .filter(Boolean)
+            .join(' > ') || null,
         conditionLabel: summary.condition || null,
         buyingOptions: (summary.buyingOptions || []).join(','),
         price: money(summary.price),
