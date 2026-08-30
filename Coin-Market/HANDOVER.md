@@ -388,6 +388,45 @@ the two SKIPs in `smoke`. Then `run` under
 systemd, with `dashboard` reachable over an SSH tunnel — it binds to loopback
 deliberately, since it holds the user's buying intentions.
 
+## Open question: the ask side is numismatic, the clearing side is not
+
+Found on 2026-08-30, once the dashboard had real data in it. Not a defect -
+a modelling decision that has not been made yet, and the headline number
+depends on it.
+
+With a full sovereign's melt at GBP 775 (0.2354 oz at GBP 3,292/oz), the
+median **ask** across 2,291 live buy-it-now lots is **GBP 1,218 - a 62.8%
+premium**. That is not an error in the premium maths. It is what eBay's
+buy-it-now sovereign inventory actually is:
+
+    GBP 20,000  Kingdom of England, Edward VI, Sovereign, 1551-1553
+    GBP 18,684  George IV 1826 proof Sovereign, PF63 CAMEO
+    GBP 17,595  Australia 1886M QV Young head, slabbed
+    GBP  1,217  Australia 1860 Sydney Mint, trace lustre
+
+Dealers list collector and graded pieces at buy-it-now and let bullion-grade
+coins go to auction. So `GB.SOV.FULL` currently pools two different markets,
+and the headline - auction clearing against buy-it-now asks - compares unlike
+things. It would read as an enormous opportunity that is not there, which is
+precisely the confidently-wrong answer the exclusion rules exist to prevent.
+It is the same failure as counting an accepted Best Offer at list price, one
+level up.
+
+The instrument tree already separates by monarch and mint, which is not the
+axis that matters here. Something has to separate bullion-grade from
+numismatic before the spread means anything. Candidates, none chosen:
+
+- treat a graded or slabbed listing as a different instrument, not the same
+  one at a different price - the `cert_number` / `grading_company` /
+  `grade_numeric` columns from migration 002 exist and are unused;
+- exclude asks above a premium threshold from the headline while still
+  recording them, the way censored Best Offers are excluded but counted;
+- report the ask distribution rather than a median, so a bimodal market looks
+  bimodal instead of averaging into a number describing neither half.
+
+Until then, read the buy-it-now premium on the dashboard as "what the
+collector market asks", not as the bullion spread.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
