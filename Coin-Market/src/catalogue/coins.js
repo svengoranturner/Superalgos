@@ -97,12 +97,33 @@ const GRADE_BANDS = [
     (graded rarity), and the pre-Victorian and branch-mint scarcities that
     trade on rarity rather than metal.
 */
+/*
+    Is this a bullion-grade coin, priced off its gold content?
+
+    The bullion pool is the one whose premium should be small and stable, so
+    it has to be the pool we are SURE about. An unknown year or mint used to
+    fall through to bullion, which inverted that: on the live store 621 of
+    1,134 supposedly-bullion asks had no mint parsed and 287 no year, and
+    they dragged the median ask to 41% over melt where bullion runs nearer
+    10-15%. A Tudor Edward VI sovereign whose "1551-1553" never parsed as a
+    year sat in the bullion pool at GBP 20,000.
+
+    So an unparsed attribute now disqualifies rather than defaults. It is the
+    same rule keyAt already follows by refusing to invent an "unknown mint"
+    bucket, applied one level up: not knowing is not evidence of ordinariness.
+
+    The cost is one-sided on purpose. A plain sovereign whose mint went
+    unread is merely absent from the bullion median, which loses a little
+    sample. A rare branch-mint coin admitted by default corrupts it.
+*/
 function isBullionPool (attrs) {
     if (attrs.finish === 'PROOF') { return false }
     if (attrs.gradeBand && attrs.gradeBand.startsWith('SLAB_') &&
         attrs.gradeBand !== 'SLAB_MS61_BELOW' && attrs.gradeBand !== 'SLAB_MS62') { return false }
-    if (attrs.year !== null && attrs.year < 1871) { return false }
-    if (attrs.mint && attrs.mint !== 'LON') { return false }
+    if (attrs.year === null || attrs.year === undefined) { return false }
+    if (attrs.year < 1871) { return false }
+    if (!attrs.mint) { return false }
+    if (attrs.mint !== 'LON') { return false }
     return true
 }
 

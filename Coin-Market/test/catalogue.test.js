@@ -202,3 +202,14 @@ test('display names still resolve portrait, mint and grade past the pool segment
     assert.ok(!name.includes('VIC_OLD'), 'portrait code should render as a label: ' + name)
     assert.ok(!name.includes('.M.'), name)
 })
+
+/*  Not knowing is not evidence of ordinariness. An unparsed year or mint used
+    to fall through into the bullion pool, where a Tudor sovereign at GBP
+    20,000 dragged the median ask to 41% over melt. */
+test('an unparsed year or mint keeps a coin out of the bullion pool', () => {
+    const base = { finish: 'BULLION', gradeBand: 'RAW_UNSPECIFIED', year: 1974, mint: 'LON' }
+    assert.strictEqual(COINS.isBullionPool(base), true, 'a known London 1974 is bullion')
+    assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { year: null })), false)
+    assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { mint: null })), false)
+    assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { year: undefined })), false)
+})
