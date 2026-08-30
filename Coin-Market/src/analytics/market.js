@@ -102,6 +102,22 @@ exports.newMarketView = function (repository, spotAt, options) {
                 { windowDays: config.liquidityWindowDays, now: asOf }
             )
 
+            /*
+                The spread is Asks minus Clears at, and must use the SAME
+                clearing figure the dashboard prints.
+
+                liquidity.js computes its own plain median over sold auctions
+                with no minimum sample, while the clearing column shows the
+                decay-weighted p50 which needs three. So a coin type could -
+                and did - display "Clears at: —" beside "Spread: 40.3%": a
+                spread against a number the page had just declined to show,
+                off a single sale. Two medians for one quantity is one too
+                many.
+            */
+            liquidity.askClearingSpread = (fair.sufficient && liquidity.medianAskPremium !== null)
+                ? liquidity.medianAskPremium - fair.p50
+                : null
+
             const fineOz = active.length > 0 ? active[0].fineOz
                 : (rawOutcomes.length > 0 ? rawOutcomes[0].fineOz : null)
             const spotNow = spotAt(new Date(asOf).toISOString())

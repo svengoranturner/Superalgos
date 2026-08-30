@@ -287,8 +287,16 @@ ${salesHtml}
 <div class="card scroll">
 <table>
   <thead><tr>
-    <th>Coin type</th><th>Sales</th><th>Clears at</th><th>p25–p75</th><th>Asks</th>
-    <th>Spread</th><th>Sell-through</th><th>Bids</th><th>Live</th><th>Bid up to</th>
+    <th>Coin type</th>
+    <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
+    <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
+    <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25–p75</th>
+    <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
+    <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
+    <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
+    <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
+    <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
+    <th title="The most you should pay all-in for one, from the clearing distribution at your target quantile. Blank when there are too few sales to say.">Bid up to</th>
   </tr></thead>
   <tbody>${tableRows}</tbody>
 </table>
