@@ -481,6 +481,42 @@ dashboard correctly says no instrument has enough sales yet. The ask figure
 only means something beside what auctions actually clear at, and that arrives
 as watched lots close.
 
+## Parser gaps found by reading the dashboard against real listings
+
+The review queue and the opportunities panel are the tool's own diagnostics,
+and reading them turned up two faults worth more than any amount of staring at
+the code.
+
+**The mint letter glued to the year.** The year pattern ended in a word
+boundary and "1887S" has none, because S is a word character. Every listing in
+that dealer form lost its year *and* its mintmark - most of the "Year
+identified" failures, and also why branch-mint coins were failing the bullion
+test for the wrong reason. The mintmark is now read from the same match, so a
+letter counts as a mint only when attached to a plausible year, and is still
+rejected if that mint was not striking then. "Year not identified" fell to 88.
+
+**The hyphenated quarter, which was the expensive one.** The denomination
+patterns required "quarter" and "sovereign" to be adjacent, so
+"Quarter-Sovereign" and "Quarter 2g Sovereign" fell through to FULL - pricing a
+quarter against a full sovereign's 7.99g of gold and manufacturing a 75%
+discount out of nothing. Those were live entries in the opportunities panel.
+100 assignments now sit on QUARTER keys; two remain mis-keyed and both titles
+genuinely say both words.
+
+### What the review queue says now
+
+| reason | n |
+|---|---|
+| Portrait type ambiguous for that year | 459 |
+| Denomination not identified | 244 |
+| Low confidence | 148 |
+| Year not identified | 88 |
+
+The top entry is honest ambiguity rather than a bug: between 1871 and 1885 a
+title alone cannot separate shield from St George, and those trade
+differently. Most of "denomination not identified" is the eighths and tenths
+being correctly refused.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
