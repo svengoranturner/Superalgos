@@ -132,6 +132,46 @@ COMMANDS.demo = {
     }
 }
 
+/* ------------------------------------------------------ categories */
+
+COMMANDS.categories = {
+    describe: "Enumerate this marketplace's coin categories into config/coins.sovereign.json",
+    async run () {
+        const settings = CONFIG.load()
+        const AUTH = require('../src/ebay/auth.js')
+        const TAXONOMY = require('../src/ebay/taxonomy.js')
+
+        const auth = AUTH.newAuth(settings.ebay, { environment: settings.ebay.environment })
+        const taxonomy = TAXONOMY.newTaxonomyClient(auth)
+
+        const treeId = await taxonomy.defaultCategoryTreeId(settings.ebay.marketplaceId)
+        const subtree = await taxonomy.categorySubtree(treeId, TAXONOMY.COINS_ROOT)
+        const leaves = TAXONOMY.matchingLeaves(
+            TAXONOMY.flattenSubtree(subtree), TAXONOMY.SOVEREIGN_PATTERNS)
+
+        if (leaves.length === 0) {
+            console.log('No matching coin categories found - nothing written.')
+            process.exitCode = 1
+            return
+        }
+
+        const target = PATH.join(CONFIG.ROOT, 'config', 'coins.sovereign.json')
+        const coins = JSON.parse(FS.readFileSync(target, 'utf8'))
+        const before = (coins.categoryIds || []).length
+        coins.categoryIds = leaves.map(leaf => String(leaf.categoryId)).sort()
+        FS.writeFileSync(target, JSON.stringify(coins, null, 2) + '\n')
+
+        console.log('Category tree ' + treeId + ' for ' + settings.ebay.marketplaceId)
+        console.log('  coin categories: ' + before + ' -> ' + coins.categoryIds.length)
+        console.log('')
+        for (const leaf of leaves) {
+            console.log('  ' + String(leaf.categoryId).padEnd(9) + leaf.path)
+        }
+        console.log('')
+        console.log('Written to ' + target + '. Run "reclassify" to apply it to stored listings.')
+    }
+}
+
 /* ------------------------------------------------------ reclassify */
 
 COMMANDS.reclassify = {
@@ -154,12 +194,28 @@ COMMANDS.reclassify = {
         db.exec('DELETE FROM review_queue')
         try { db.exec('DELETE FROM instrument_stat') } catch (err) { /* older stores may not have it */ }
 
-        const listings = db.prepare('SELECT browse_id AS browseId, title FROM listing').all()
+        const EXCLUSIONS = require('../src/catalogue/exclusions.js')
+        const settings = safeSettings()
+        const allowedCategoryIds = new Set(
+            (((settings && settings.coins) || {}).categoryIds || []).map(String))
+
+        const listings = db.prepare(
+            'SELECT browse_id AS browseId, title, category_id AS categoryId FROM listing').all()
         let classified = 0
         let reviewed = 0
         let excluded = 0
+        let wrongCategory = 0
 
         for (const listing of listings) {
+            /*  Same order as discovery: eBay's own category before the title
+                parser, because it is the stronger evidence. */
+            const offCategory = EXCLUSIONS.screenCategory(listing.categoryId, allowedCategoryIds)
+            if (offCategory !== null) {
+                repository.queueForReview(listing.browseId, 'EXCLUDED: ' + offCategory.reason, null, 0)
+                wrongCategory++
+                continue
+            }
+
             const result = CLASSIFY({ title: listing.title })
 
             if (result.excluded !== null) {
@@ -191,6 +247,8 @@ COMMANDS.reclassify = {
         console.log('  assignments : ' + before + ' -> ' +
             db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n)
         console.log('  classified  : ' + classified)
+        console.log('  off-category: ' + wrongCategory +
+            (allowedCategoryIds.size === 0 ? '  (no category list - run "coin-market categories")' : ''))
         console.log('  excluded    : ' + excluded)
         console.log('  to review   : ' + reviewed)
         console.log('  instruments : ' + db.prepare('SELECT COUNT(*) AS n FROM instrument').get().n)

@@ -277,3 +277,46 @@ test('every slabbed band is a collector coin, including the low ones', () => {
     assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { gradeBand: 'RAW_UNSPECIFIED' })), true)
     assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { gradeBand: 'RAW_BU' })), true)
 })
+
+/*
+    eBay's own leaf category, which beats any title regex.
+
+    The seller has already told eBay what they are listing. A Royal Doulton
+    coffee cup sits in pottery, a "Sovereign" wristwatch in watches, a
+    sovereign ring in jewellery - none in a coin category, and no title rule
+    would reliably catch the cup while still admitting a genuine coin whose
+    title mentions china.
+*/
+const COIN_CATEGORIES = ['177652', '170827', '98774', '141155']
+
+test('a listing outside the coin categories is excluded', () => {
+    for (const [cat, what] of [['262372', 'pottery'], ['31387', 'watches'], ['261994', 'jewellery']]) {
+        const screened = EXCLUSIONS.screenCategory(cat, COIN_CATEGORIES)
+        assert.ok(screened !== null, what + ' should be excluded')
+        assert.match(screened.reason, /coin categories/i)
+    }
+})
+
+test('a listing inside a coin category passes', () => {
+    for (const cat of COIN_CATEGORIES) {
+        assert.strictEqual(EXCLUSIONS.screenCategory(cat, COIN_CATEGORIES), null)
+    }
+})
+
+/*  Screening everything out because the list has not been fetched would be
+    far worse than screening nothing. */
+test('an unfetched category list fails open rather than rejecting everything', () => {
+    assert.strictEqual(EXCLUSIONS.screenCategory('262372', []), null)
+    assert.strictEqual(EXCLUSIONS.screenCategory('262372', null), null)
+    assert.strictEqual(EXCLUSIONS.screenCategory('262372', undefined), null)
+})
+
+test('a listing with no category is not rejected on that basis alone', () => {
+    assert.strictEqual(EXCLUSIONS.screenCategory(null, COIN_CATEGORIES), null)
+    assert.strictEqual(EXCLUSIONS.screenCategory('', COIN_CATEGORIES), null)
+})
+
+test('numeric and string category ids compare alike', () => {
+    assert.strictEqual(EXCLUSIONS.screenCategory(177652, COIN_CATEGORIES), null)
+    assert.ok(EXCLUSIONS.screenCategory(262372, new Set(COIN_CATEGORIES)) !== null)
+})

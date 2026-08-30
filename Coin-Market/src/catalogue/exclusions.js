@@ -101,6 +101,32 @@ exports.detectQuantity = function (title) {
     Returns null when the listing is acceptable, or {code, reason} when it
     must be dropped.
 */
+/*
+    eBay's own leaf category, which is far better evidence than the title.
+
+    A title regex can only ever chase the last thing that went wrong. The
+    seller has already told eBay what kind of thing they are listing, and
+    that answer sits on every row: a Royal Doulton coffee cup is in pottery
+    (262372), a "Sovereign" wristwatch is in watches (31387), a sovereign
+    ring is in jewellery (261994). None of them are in a coin category, and
+    no amount of title matching would reliably have caught the cup while
+    still admitting a genuine coin whose title happens to mention china.
+
+    Fails open on purpose. An empty allow-list means the categories have not
+    been enumerated yet - "coin-market categories" does that - and screening
+    everything out because we have not looked is far worse than screening
+    nothing.
+*/
+exports.screenCategory = function (categoryId, allowedIds) {
+    if (allowedIds === undefined || allowedIds === null) { return null }
+    const allowed = allowedIds instanceof Set ? allowedIds : new Set((allowedIds || []).map(String))
+    if (allowed.size === 0) { return null }
+    if (categoryId === undefined || categoryId === null || categoryId === '') { return null }
+
+    if (allowed.has(String(categoryId))) { return null }
+    return { code: 'NOT_A_COIN_CATEGORY', reason: 'Listed outside the coin categories (eBay category ' + categoryId + ')' }
+}
+
 exports.screen = function (title, aspects) {
 
     for (const rule of RULES) {
