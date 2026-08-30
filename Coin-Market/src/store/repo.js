@@ -248,6 +248,26 @@ exports.newRepository = function (db, options) {
         */
         activeListings (key) {
             return db.prepare(`
+                /*  The scope CTE is load-bearing, not tidiness.
+
+                    Ranking every snapshot and then throwing away all but one
+                    instrument's cost 435ms per call, and the market page
+                    calls this once per coin type - 19 seconds to render a
+                    page of forty rows, growing with every sweep. Restricting
+                    the window to this instrument's own listings first takes
+                    it to a few milliseconds. */
+                WITH scope AS (
+                    SELECT browse_id FROM listing_instrument WHERE key = ?1
+                ),
+                latest AS (
+                    SELECT browse_id, price, shipping, bid_count FROM (
+                        SELECT s.browse_id, s.price, s.shipping, s.bid_count,
+                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
+                                                  ORDER BY s.observed_at DESC) AS rn
+                        FROM listing_snapshot s
+                        JOIN scope ON scope.browse_id = s.browse_id
+                    ) WHERE rn = 1
+                )
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
                        l.end_time AS endTime, l.item_web_url AS itemWebUrl, i.fine_oz AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount
@@ -255,15 +275,11 @@ exports.newRepository = function (db, options) {
                 JOIN listing_instrument li ON li.browse_id = l.browse_id
                 JOIN instrument i ON i.key = li.key
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
-                LEFT JOIN (
-                    SELECT browse_id, price, shipping, bid_count,
-                           ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
-                    FROM listing_snapshot
-                ) s ON s.browse_id = l.browse_id AND s.rn = 1
-                WHERE li.key = ?
+                LEFT JOIN latest s ON s.browse_id = l.browse_id
+                WHERE li.key = ?1
                   AND o.browse_id IS NULL
-                  AND (l.end_time IS NULL OR l.end_time > ?)
-                  AND l.last_seen > ?
+                  AND (l.end_time IS NULL OR l.end_time > ?2)
+                  AND l.last_seen > ?3
                 ORDER BY l.end_time IS NULL, l.end_time ASC
             `).all(
                 key,
@@ -343,10 +359,14 @@ exports.newRepository = function (db, options) {
                 FROM review_queue r
                 JOIN listing l ON l.browse_id = r.browse_id
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
+                /*  Same restriction as activeListings: rank only the
+                    snapshots of listings actually in the queue. */
                 LEFT JOIN (
-                    SELECT browse_id, price, shipping,
-                           ROW_NUMBER() OVER (PARTITION BY browse_id ORDER BY observed_at DESC) AS rn
-                    FROM listing_snapshot
+                    SELECT s.browse_id, s.price, s.shipping,
+                           ROW_NUMBER() OVER (PARTITION BY s.browse_id
+                                              ORDER BY s.observed_at DESC) AS rn
+                    FROM listing_snapshot s
+                    JOIN review_queue rq ON rq.browse_id = s.browse_id AND rq.resolved_at IS NULL
                 ) s ON s.browse_id = r.browse_id AND s.rn = 1
                 WHERE r.resolved_at IS NULL
                 /*  Impact before recency. A listing still counted in the
