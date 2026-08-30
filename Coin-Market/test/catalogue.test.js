@@ -555,3 +555,53 @@ test('the permitted country list can be widened without code changes', () => {
     assert.strictEqual(EXCLUSIONS.screenLocation('IE', ['GB', 'IE']), null)
     assert.strictEqual(EXCLUSIONS.screenLocation('US', ['GB', 'IE']).code, 'NOT_ALLOWED_COUNTRY')
 })
+
+/*  A title can trip a rule by saying the opposite of what the rule looks for,
+    and it was costing the most valuable rows in the store - completed
+    auctions with real hammer prices. Three sovereigns that sold for GBP 809,
+    829 and 861 with 7, 15 and 28 bids were dropped on the word "mounted",
+    in the phrase "Never Cleaned Or Mounted". */
+test('a coin described as never mounted is not jewellery', () => {
+    for (const title of [
+        'Lustrous Uncirculated King Edward V11 Full Gold Sovereign. Never Cleaned/mounted',
+        'Scarce 1918 I King George V Full Gold Sovereign - Never Cleaned Or Mounted',
+        'Nice 1919 P King George V Full Gold Sovereign - Never Cleaned Or Mounted.',
+        '1925 Gold Sovereign, unmounted, original patina'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded, null, title)
+    }
+})
+
+/*  A capsule is what the coin arrived in, not what is being sold. Two more
+    completed sales, GBP 795 and GBP 405. */
+test('a coin in a capsule is a coin, but a bag of capsules is not', () => {
+    for (const title of [
+        '1906 King Edward VII Full Sovereign Gold Coin, 22ct in Capsule',
+        '1900 Queen Victoria Gold Half Sovereign In Capsule Nice Condition',
+        '2013 Gold Proof Sovereign Boxed with Certificate'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded, null, title)
+    }
+    /*  The plural is the trap: a trailing word boundary meant "Capsules"
+        never matched "capsule", so a listing selling ten of them read as a
+        coin. */
+    for (const title of [
+        '10 x Gold Coin Capsules for Sovereigns',
+        'Gold Sovereign Coin Case Holder Empty',
+        'Coin Holders for Half Sovereigns pack of 20'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded.code, 'ACCESSORY', title)
+    }
+})
+
+/*  The scrub must not become a way to smuggle jewellery back in. */
+test('genuinely mounted coins are still dropped', () => {
+    for (const title of [
+        '1911 Gold Half Sovereign Mounted In 9ct Pendant',
+        '9ct Gold FULL Sovereign Fancy Coin Mount Pendant 2.6 grams',
+        'Gold Sovereign Ring Size T',
+        'Sovereign Hallmarked Gold Mens 9 Carat Gold Quartz Dress Watch'
+    ]) {
+        assert.strictEqual(classify({ title }).excluded.code, 'JEWELLERY', title)
+    }
+})

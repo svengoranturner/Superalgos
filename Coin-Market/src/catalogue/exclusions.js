@@ -46,7 +46,12 @@ const RULES = [
             Gold Sovereign's" are both empty boxes that reached the live
             opportunities panel, and both slipped a rule written in the
             singular. */
-        test: /\b(capsule|coin\s+case|sovereign\s+case|display\s+case|display\s+box|presentation\s+case|holder|album|empty|no\s+coins?|without\s+(the\s+)?(gold\s+)?sovereigns?)\b/i
+        /*  Plurals, again. The trailing word boundary meant "Capsules" never
+            matched "capsule" at all, so a listing selling ten of them read
+            as a coin. Same shape of bug as "*No Coins*" and "Without Gold
+            Sovereign's" - it is worth checking every noun in this file
+            pluralises. */
+        test: /\b(capsules?|coin\s+cases?|sovereign\s+cases?|display\s+cases?|display\s+box(es)?|presentation\s+cases?|holders?|albums?|empty|no\s+coins?|without\s+(the\s+)?(gold\s+)?sovereigns?)\b/i
     },
     {
         code: 'NOT_A_COIN',
@@ -231,12 +236,47 @@ exports.screenLocation = function (country, allowed) {
     }
 }
 
+/*
+    What a coin is NOT, and what it came in.
+
+    Two ways a title can trip a rule by saying the opposite of what the rule
+    is looking for, and both were costing us the most valuable rows in the
+    store - completed auctions with real hammer prices:
+
+      "Never Cleaned Or Mounted"     - a selling point, and the strongest
+                                       possible statement that this coin is
+                                       not jewellery. Three sovereigns that
+                                       sold for GBP 809, 829 and 861 with 7,
+                                       15 and 28 bids were dropped on the
+                                       word "mounted".
+      "Full Sovereign 22ct in Capsule" - a capsule is what the coin arrived
+                                       in, not what is being sold. Two more
+                                       sales lost, GBP 795 and GBP 405.
+
+    So these phrases are removed before the rules run. A listing whose only
+    mention of a capsule is "in capsule" no longer reads as an empty capsule;
+    one actually selling capsules still says "coin capsules" and still trips.
+*/
+const NEGATED = /\b(never|not|un|non)[\s-]*(been\s+)?(cleaned\s*(,|\/|or|and)?\s*)?(mounted|mount|polished)\b/gi
+const PACKAGING = /\b(in|with|inc|includes|including)\s+(a\s+|its\s+|the\s+|original\s+)*(capsule|case|box|holder|wallet|pouch)e?s?\b|\bcapsuled\b|\bboxed\b/gi
+
+exports.readableAs = function (title) {
+    return String(title).replace(NEGATED, ' ').replace(PACKAGING, ' ')
+}
+
 exports.screen = function (title, aspects) {
 
+    /*  Read the title with its negations and packaging removed, so a coin
+        described as "never mounted, in capsule" is not dropped for being a
+        mounted capsule. */
+    const readable = exports.readableAs(title)
+
     for (const rule of RULES) {
-        if (rule.test.test(title)) { return { code: rule.code, reason: rule.reason } }
+        if (rule.test.test(readable)) { return { code: rule.code, reason: rule.reason } }
     }
 
+    /*  Quantity is counted on the original: "3 x Sovereign in capsules" is
+        still three coins, and the scrub would have eaten the plural. */
     if (exports.detectQuantity(title) > 1) {
         return { code: 'MULTI_LOT', reason: 'More than one coin in the lot' }
     }
