@@ -330,3 +330,36 @@ test('country counts count listings, not instrument assignments', () => {
     assert.strictEqual(gb.priced, 1)
     db.close()
 })
+
+/*  Completed sales are few and are the only prices somebody actually paid, so
+    the row limit must never be able to cut them off. Sorting them behind the
+    live listings meant an instrument with 500 live lots reported "0 sold"
+    while holding more completed sales than any other. */
+test('completed sales survive the row limit on a busy instrument', () => {
+    const { db, repository } = fixture()
+    const soon = new Date(Date.now() + DAY_MS).toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+
+    const file = (browseId, legacyId, title, price) => {
+        repository.saveListing({ browseId, legacyId, title, buyingOptions: 'AUCTION', endTime: soon })
+        repository.saveSnapshot(browseId, { price, shipping: 0 })
+        repository.saveClassification(browseId, [{ key, level: 0 }], 1, 'title', 0.2354, {})
+    }
+
+    /* Twelve dear live lots, then one modest completed sale. */
+    for (let i = 0; i < 12; i++) { file('v1|live' + i + '|0', 'live' + i, 'Gold Sovereign ' + i, 9000 + i) }
+    file('v1|sold|0', 'sold', 'Gold Sovereign that actually sold', 800)
+    repository.saveOutcome('v1|sold|0', {
+        endTime: new Date(Date.now() - DAY_MS).toISOString(),
+        sold: true, finalPrice: 820, bidCount: 15, saleType: 'AUCTION', source: 'test'
+    })
+
+    /* A limit far below the number of live lots must still return the sale. */
+    const rows = repository.listingsForInstrument(key, 5)
+    assert.strictEqual(rows.length, 5)
+    assert.strictEqual(rows[0].browseId, 'v1|sold|0', 'the sale must lead, whatever it fetched')
+    assert.strictEqual(rows[0].sold, 1)
+    assert.strictEqual(rows[0].finalPrice, 820)
+    assert.strictEqual(rows[0].finalBidCount, 15)
+    db.close()
+})

@@ -550,11 +550,19 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
                 WHERE li.key = ?1
-                /*  Live first, then dearest. Within one key fine_oz is
-                    constant, so the dearest lot is also the highest premium
-                    - which keeps the order meaningful on a day the gold
-                    feed has a gap. */
-                ORDER BY live DESC, totalCost DESC
+                /*  Completed sales first, always.
+
+                    They are few - tens against thousands - and they are the
+                    only prices here that somebody actually paid. Sorting them
+                    behind the live listings meant the row limit cut them off
+                    entirely: an instrument with 500 live lots reported "0
+                    sold" while holding more completed sales than any other.
+
+                    Then live before ended, then dearest. Within one key
+                    fine_oz is constant, so the dearest lot is also the
+                    highest premium - which keeps the order meaningful on a
+                    day the gold feed has a gap. */
+                ORDER BY COALESCE(o.sold, 0) DESC, live DESC, totalCost DESC
                 LIMIT ?4
             `).all(
                 key,
