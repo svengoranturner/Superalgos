@@ -61,8 +61,10 @@ exports.start = function (opened, options) {
                 html = listingsPage(opened, url)
             } else if (url.pathname === '/teach') {
                 html = teachPage(opened, url)
+            } else if (url.pathname === '/rule-confirm') {
+                html = confirmRulePage(opened, url)
             } else if (url.pathname === '/rules') {
-                html = rulesPage(opened)
+                html = rulesPage(opened, url)
             } else {
                 html = marketPage(opened, url)
             }
@@ -636,16 +638,25 @@ function handlePost (opened, pathname, form) {
 
     if (pathname === '/rule') {
         const phrase = (form.get('phrase') || '').trim()
-        if (phrase.length > 0) {
-            repository.saveLearnedRule({
-                phrase,
-                kind: LEARNED.VERDICT.NOT_SOVEREIGN,
-                support: Number(form.get('support')) || null,
-                agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
-            })
-            RECLASSIFY.run(db, repository)
-        }
-        return form.get('back') ? safeBack(form.get('back')) : '/rules'
+        if (phrase.length === 0) { return '/rules' }
+
+        /*  Count what was being priced before and after, so the page you land
+            on can say what the click actually did rather than leaving you to
+            go and look. A rule you did not mean to accept is only a problem
+            if you cannot tell that you accepted it. */
+        const priced = () => db.prepare(
+            'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
+        const before = priced()
+
+        repository.saveLearnedRule({
+            phrase,
+            kind: LEARNED.VERDICT.NOT_SOVEREIGN,
+            support: Number(form.get('support')) || null,
+            agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
+        })
+        RECLASSIFY.run(db, repository)
+
+        return '/rules?just=' + encodeURIComponent(phrase) + '&dropped=' + (before - priced())
     }
 
     if (pathname === '/rule/delete') {
@@ -662,61 +673,188 @@ function handlePost (opened, pathname, form) {
 
 /* ------------------------------------------------- generalising a call */
 
+/*
+    What one phrase would actually do, recomputed from the corpus.
+
+    Used both to rank proposals and to spell out the consequences on the
+    confirmation page - the same numbers in both places, so what you are
+    shown before clicking and what you are asked to confirm cannot drift.
+*/
+function ruleEffect (repository, phrase) {
+    const test = LEARNED.phrasePattern(phrase)
+    const matches = repository.titleCorpus().filter(row => test.test(row.title))
+    const breaks = matches.filter(row => row.priced)
+    const conflicts = repository.labels()
+        .filter(l => l.verdict === LEARNED.VERDICT.SOVEREIGN && test.test(l.title))
+    return {
+        phrase,
+        support: matches.length,
+        breaks: breaks.length,
+        breakSamples: breaks.slice(0, 30).map(b => b.title),
+        samples: matches.slice(0, 6).map(m => m.title),
+        conflicts: conflicts.map(c => c.title)
+    }
+}
+
+function proposalCard (p, back, legacyId) {
+    const risky = p.breaks > 0 || p.conflicts.length > 0
+    const consequence = p.breaks === 0
+        ? ', <strong>none</strong> of which are currently priced as sovereigns.'
+        : ', and would stop pricing <strong class="warn">' + p.breaks +
+          '</strong> that count towards the market statistics today.'
+
+    /*  A rule that breaks nothing can be taken in one click. A rule that
+        would remove real coins from the statistics gets a confirmation page
+        naming every one of them - the difference between those two cases is
+        the whole reason `breaks` is measured. */
+    const action = risky
+        ? '<a class="confirm" href="/rule-confirm?phrase=' + encodeURIComponent(p.phrase) +
+          '&amp;legacy=' + encodeURIComponent(legacyId) + '&amp;back=' + encodeURIComponent(back) +
+          '">Review what this would remove&hellip;</a>'
+        : '<form method="post" action="/rule" style="margin-top:10px">' +
+          '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
+          '<input type="hidden" name="phrase" value="' + escapeHtml(p.phrase) + '">' +
+          '<input type="hidden" name="support" value="' + p.support + '">' +
+          '<button class="yes">Accept this rule</button></form>'
+
+    const conflictNote = p.conflicts.length > 0
+        ? ' It also contradicts <strong class="warn">' + p.conflicts.length +
+          '</strong> you have already called genuine, so the phrase is too broad.'
+        : ''
+
+    return '<div class="proposal">' +
+        '<div class="p">Drop everything containing <span class="phrase">' +
+        escapeHtml(p.phrase) + '</span></div>' +
+        '<p class="thin" style="margin:6px 0 0">Matches <strong>' + p.support +
+        '</strong> tracked listing' + (p.support === 1 ? '' : 's') + consequence + conflictNote + '</p>' +
+        '<ul>' + p.samples.map(x => '<li>' + escapeHtml(x) + '</li>').join('') + '</ul>' +
+        action +
+        '</div>'
+}
+
 function teachPage (opened, url) {
     const { repository } = opened
     const legacyId = url.searchParams.get('legacy')
     const labels = repository.labels()
     const label = labels.find(l => l.legacyId === legacyId)
+    const back = safeBack(url.searchParams.get('back'))
 
     if (label === undefined) {
-        return RENDER.page('Teach — Coin Market',
+        return RENDER.page('Teach - Coin Market',
             '<h1>Nothing to generalise</h1><p class="sub">That decision is no longer stored. ' +
             '<a href="/review">Back to the review queue</a>.</p>')
     }
 
     const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
+
+    /*
+        Safe and unsafe are shown differently, not merely ranked differently.
+
+        The reason a listing is wrong is often not in its title at all - a
+        genuine sovereign photographed in a pendant reads like any other
+        sovereign. Every phrase on offer then describes the coin rather than
+        the fault, and one stray click could drop every sovereign with
+        "george" in its title. So a rule that would remove nothing from the
+        statistics gets a button, and a rule that would remove something gets
+        a confirmation page instead of one.
+    */
+    const safe = proposals.filter(p => p.breaks === 0 && p.conflicts.length === 0)
+    const risky = proposals.filter(p => p.breaks > 0 || p.conflicts.length > 0)
+
+    const nothingSafe = '<div class="card">' +
+        '<p style="margin:0"><strong>Nothing here generalises safely.</strong></p>' +
+        '<p class="thin" style="margin:8px 0 0">Every phrase in this title also appears on coins ' +
+        'that are being priced normally &mdash; which usually means the reason this listing is ' +
+        'wrong is not in its words at all. A sovereign photographed in a pendant reads like any ' +
+        'other sovereign. Your decision on this one listing still stands; it just does not ' +
+        'generalise.</p></div>'
+
+    const safeHtml = safe.length > 0
+        ? safe.map(p => proposalCard(p, back, legacyId)).join('')
+        : nothingSafe
+
+    const riskyHtml = risky.length === 0 ? '' : '<details>' +
+        '<summary>' + risky.length + ' other phrase' + (risky.length === 1 ? '' : 's') +
+        ' would also match, but ' + (risky.length === 1 ? 'it removes' : 'they remove') +
+        ' coins from the statistics</summary>' +
+        '<p class="thin">These need checking rather than clicking. Each one opens a page ' +
+        'listing exactly what it would stop pricing.</p>' +
+        risky.map(p => proposalCard(p, back, legacyId)).join('') +
+        '</details>'
+
+    return RENDER.page('Teach - Coin Market',
+        '<h1>Should that apply to others?</h1>' +
+        '<p class="sub">You marked <em>' + escapeHtml(label.title) + '</em> as not a sovereign. ' +
+        'Here is what that decision could generalise to.</p>' +
+        '<div class="card"><p class="thin" style="margin:0">Accepting a rule does not delete ' +
+        'anything. Every listing it drops still shows in the review queue with the rule named as ' +
+        'the reason, marking one genuine overrides it, and any rule can be removed from ' +
+        '<a href="/rules">what you\'ve taught it</a>. Take none of these and the single decision ' +
+        'still stands.</p></div>' +
+        safeHtml + riskyHtml +
+        '<p style="margin-top:18px"><a href="' + escapeHtml(back) +
+        '">No rule &mdash; just this listing</a></p>')
+}
+
+/*
+    The confirmation step for a rule that would remove real coins.
+
+    Named listings, not a count. "Would stop pricing 97" is a number people
+    click past; "would stop pricing 1911 Gold Sovereign George V London" is
+    not.
+*/
+function confirmRulePage (opened, url) {
+    const { repository } = opened
+    const phrase = url.searchParams.get('phrase')
     const back = safeBack(url.searchParams.get('back'))
+    const legacyId = url.searchParams.get('legacy') || ''
 
-    const cards = proposals.length === 0
-        ? '<p class="thin">Nothing in this title generalises — no phrase in it appears on enough ' +
-          'other listings to be worth a rule. The decision itself is still stored.</p>'
-        : proposals.map(p => `<div class="proposal">
-  <div class="p">Drop everything containing <span class="phrase">${escapeHtml(p.phrase)}</span></div>
-  <p class="thin" style="margin:6px 0 0">Matches <strong>${p.support}</strong> tracked listing${p.support === 1 ? '' : 's'}${p.breaks === 0
-      ? ', <strong>none</strong> of which are currently priced as sovereigns.'
-      : ', and would stop pricing <strong class="warn">' + p.breaks + '</strong> that count towards the market statistics today.'}${p.conflicts.length > 0
-      ? ' It also contradicts <strong class="warn">' + p.conflicts.length + '</strong> you have already called genuine, so the phrase is too broad.'
-      : ''}</p>
-  <ul>${p.samples.map(s => '<li>' + escapeHtml(s) + '</li>').join('')}</ul>
-  ${p.breaks > 0 ? '<ul>' + p.breakSamples.map(s => '<li class="warn">priced today, would stop: ' + escapeHtml(s) + '</li>').join('') + '</ul>' : ''}
-  ${p.conflicts.length > 0 ? '<ul>' + p.conflicts.map(c => '<li class="warn">you called this genuine: ' + escapeHtml(c) + '</li>').join('') + '</ul>' : ''}
-  <form method="post" action="/rule" style="margin-top:10px">
-    <input type="hidden" name="back" value="${escapeHtml(back)}">
-    <input type="hidden" name="phrase" value="${escapeHtml(p.phrase)}">
-    <input type="hidden" name="support" value="${p.support}">
-    <input type="hidden" name="agreement" value="${p.agreement === null ? '' : p.agreement}">
-    <button class="${p.breaks > 0 || p.conflicts.length > 0 ? 'plain' : 'yes'}">Accept this rule</button>
-  </form>
-</div>`).join('')
+    if (phrase === null || phrase === '') {
+        return RENDER.page('Confirm - Coin Market', '<h1>No rule given</h1>')
+    }
 
-    return RENDER.page('Teach — Coin Market', `
-<h1>Should that apply to others?</h1>
-<p class="sub">You marked <em>${escapeHtml(label.title)}</em> as not a sovereign. Here is what
-that decision could generalise to, ranked by how much it would catch without contradicting
-anything else you have said.</p>
-<div class="card">
-  <p class="thin" style="margin:0">Accepting a rule does not delete anything. Every listing it
-  drops still shows in the review queue with the rule named as the reason, and marking one
-  genuine overrides it. Take none of these and the single decision still stands.</p>
-</div>
-${cards}
-<p style="margin-top:18px"><a href="${escapeHtml(back)}">No rule &mdash; just this listing</a></p>
-`)
+    const effect = ruleEffect(repository, phrase)
+
+    const conflictBlock = effect.conflicts.length === 0 ? ''
+        : '<h2>You called these genuine</h2><div class="card"><ul>' +
+          effect.conflicts.map(c => '<li class="warn">' + escapeHtml(c) + '</li>').join('') +
+          '</ul></div>'
+
+    const more = effect.breaks > effect.breakSamples.length
+        ? '<li><em>and ' + (effect.breaks - effect.breakSamples.length) + ' more</em></li>'
+        : ''
+
+    return RENDER.page('Confirm - Coin Market',
+        '<h1>This rule would remove coins that are being priced</h1>' +
+        '<p class="sub">Dropping everything containing <span class="phrase">' +
+        escapeHtml(phrase) + '</span> matches ' + effect.support + ' tracked listing' +
+        (effect.support === 1 ? '' : 's') + '.</p>' +
+        '<div class="card"><p style="margin:0"><strong class="warn">' + effect.breaks +
+        '</strong> of them count towards the market statistics right now and would stop.' +
+        (effect.conflicts.length > 0
+            ? ' <strong class="warn">' + effect.conflicts.length +
+              '</strong> of them you have already called genuine.'
+            : '') +
+        '</p><p class="thin" style="margin:8px 0 0">This is reversible &mdash; removing the rule ' +
+        'from <a href="/rules">what you\'ve taught it</a> puts every one of them back. But it is ' +
+        'worth reading the list first.</p></div>' +
+        conflictBlock +
+        '<h2>Priced today, would stop (' + effect.breaks + ')</h2>' +
+        '<div class="card"><ul class="thin">' +
+        effect.breakSamples.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + more +
+        '</ul></div>' +
+        '<form method="post" action="/rule" style="display:flex; gap:10px; align-items:center">' +
+        '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
+        '<input type="hidden" name="phrase" value="' + escapeHtml(phrase) + '">' +
+        '<input type="hidden" name="support" value="' + effect.support + '">' +
+        '<button class="no">Yes, apply it anyway</button>' +
+        '<a href="/teach?legacy=' + encodeURIComponent(legacyId) + '&amp;back=' +
+        encodeURIComponent(back) + '">Cancel</a></form>')
 }
 
 /* ----------------------------------------------------- what it learned */
 
-function rulesPage (opened) {
+function rulesPage (opened, url) {
     const { repository } = opened
     const rules = repository.learnedRules()
     const labels = repository.labels()
@@ -763,8 +901,34 @@ function rulesPage (opened) {
         not: labels.filter(l => l.verdict === LEARNED.VERDICT.NOT_SOVEREIGN).length
     }
 
+    /*
+        What the last click did, with the undo next to it.
+
+        The worry this answers is a rule accepted by accident - the phrase is
+        named, the number of listings it removed from the statistics is
+        stated, and putting them back is one button rather than a hunt
+        through a table.
+    */
+    const just = url === undefined ? null : url.searchParams.get('just')
+    const dropped = url === undefined ? null : Number(url.searchParams.get('dropped'))
+    const justRule = just === null ? undefined : rules.find(r => r.phrase === just.toLowerCase())
+
+    const banner = justRule === undefined ? '' : `<div class="card" style="border-color:var(--good)">
+  <p style="margin:0">Rule added: drop everything containing
+    <span class="phrase">${escapeHtml(justRule.phrase)}</span>.
+    ${Number.isFinite(dropped) && dropped > 0
+      ? '<strong>' + dropped + '</strong> listing' + (dropped === 1 ? '' : 's') +
+        ' stopped counting towards the market statistics.'
+      : 'Nothing that was being priced stopped counting.'}</p>
+  <form method="post" action="/rule/delete" style="margin-top:10px">
+    <input type="hidden" name="id" value="${justRule.id}">
+    <button class="no">Undo &mdash; remove this rule</button>
+  </form>
+</div>`
+
     return RENDER.page("What you've taught it — Coin Market", `
 <h1>What you've taught it</h1>
+${banner}
 <p class="sub">Your decisions, and the rules they generalised into. Everything here is
 reversible and nothing here is a black box — each rule is the phrase you accepted.</p>
 

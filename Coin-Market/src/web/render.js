@@ -165,6 +165,12 @@ button.plain { color:var(--ink-2) }
   .q-big { left:0; top:52px; width:min(86vw,340px); height:min(86vw,340px) }
 }
 .proposal { border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px }
+details { margin:16px 0 }
+summary { cursor:pointer; color:var(--ink-2); font-size:13.5px; padding:6px 0 }
+a.confirm { display:inline-block; margin-top:10px; font-size:12.5px; color:var(--critical);
+  text-decoration:none; border:1px solid color-mix(in srgb, var(--critical) 40%, transparent);
+  border-radius:6px; padding:4px 10px }
+a.confirm:hover { background:color-mix(in srgb, var(--critical) 10%, transparent) }
 .proposal .p { font-weight:560; font-size:15px }
 .proposal ul { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12px }
 .phrase { font-variant-numeric:tabular-nums; background:color-mix(in srgb, var(--ink) 7%, transparent);
