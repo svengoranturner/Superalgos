@@ -118,8 +118,14 @@ const GRADE_BANDS = [
 */
 function isBullionPool (attrs) {
     if (attrs.finish === 'PROOF') { return false }
-    if (attrs.gradeBand && attrs.gradeBand.startsWith('SLAB_') &&
-        attrs.gradeBand !== 'SLAB_MS61_BELOW' && attrs.gradeBand !== 'SLAB_MS62') { return false }
+    /*  Any graded coin is a collector coin, including the low bands.
+        SLAB_MS61_BELOW and SLAB_MS62 used to be allowed through on the
+        reasoning that a low-grade slab still trades near bullion. Once bare
+        Sheldon numbers were parsed that stopped holding: the band filled
+        with Victoria 1874 London shield sovereigns asking GBP 13,000, a
+        median of 1,624% over melt. Someone who has paid to have a coin
+        graded is not selling it as metal. */
+    if (attrs.gradeBand && attrs.gradeBand.startsWith('SLAB_')) { return false }
     if (attrs.year === null || attrs.year === undefined) { return false }
     if (attrs.year < 1871) { return false }
     if (!attrs.mint) { return false }

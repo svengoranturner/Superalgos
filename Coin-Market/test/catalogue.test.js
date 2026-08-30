@@ -265,3 +265,15 @@ test('a year is never mistaken for a Sheldon grade', () => {
     assert.strictEqual(r.attributes.year, 1912)
     assert.strictEqual(r.attributes.gradeBand, 'RAW_UNSPECIFIED')
 })
+
+/*  Someone who has paid to have a coin graded is not selling it as metal.
+    The low slab bands used to be allowed into bullion; once bare Sheldon
+    numbers were read, that band filled with GBP 13,000 rarities. */
+test('every slabbed band is a collector coin, including the low ones', () => {
+    const base = { finish: 'BULLION', year: 1974, mint: 'LON' }
+    for (const band of ['SLAB_PROOF', 'SLAB_MS65_PLUS', 'SLAB_MS64', 'SLAB_MS63', 'SLAB_MS62', 'SLAB_MS61_BELOW']) {
+        assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { gradeBand: band })), false, band)
+    }
+    assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { gradeBand: 'RAW_UNSPECIFIED' })), true)
+    assert.strictEqual(COINS.isBullionPool(Object.assign({}, base, { gradeBand: 'RAW_BU' })), true)
+})
