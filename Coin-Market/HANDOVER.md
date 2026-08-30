@@ -388,44 +388,62 @@ the two SKIPs in `smoke`. Then `run` under
 systemd, with `dashboard` reachable over an SSH tunnel — it binds to loopback
 deliberately, since it holds the user's buying intentions.
 
-## Open question: the ask side is numismatic, the clearing side is not
+## The bullion / collector split, and what it has not fixed yet
 
-Found on 2026-08-30, once the dashboard had real data in it. Not a defect -
-a modelling decision that has not been made yet, and the headline number
-depends on it.
+Done on 2026-08-30. Bullion and collector coins are now separate instruments:
+`GB.SOV.BULLION.FULL` and `GB.SOV.COLLECTOR.FULL`, divided at every level, both
+labelled in display names so no instrument reads as an unqualified "Sovereign".
 
-With a full sovereign's melt at GBP 775 (0.2354 oz at GBP 3,292/oz), the
-median **ask** across 2,291 live buy-it-now lots is **GBP 1,218 - a 62.8%
-premium**. That is not an error in the premium maths. It is what eBay's
-buy-it-now sovereign inventory actually is:
+`COINS.isBullionPool` already drew the line and nothing used it - `grep` found
+one reference, the line computing it. Note the graded/slabbed columns from
+migration 002 could **not** have been the mechanism: all five are empty on the
+live store, because `EBAY_GB` does not supply `conditionDescriptors`. The pool
+test runs off title-derived attributes, which are populated.
 
-    GBP 20,000  Kingdom of England, Edward VI, Sovereign, 1551-1553
-    GBP 18,684  George IV 1826 proof Sovereign, PF63 CAMEO
-    GBP 17,595  Australia 1886M QV Young head, slabbed
-    GBP  1,217  Australia 1860 Sydney Mint, trace lustre
+`reclassify` rebuilds every assignment from stored titles, so a rule change
+does not leave old keys beside new ones counting the same coin twice. It
+clears only derived tables; listings, snapshots and outcomes are untouched.
 
-Dealers list collector and graded pieces at buy-it-now and let bullion-grade
-coins go to auction. So `GB.SOV.FULL` currently pools two different markets,
-and the headline - auction clearing against buy-it-now asks - compares unlike
-things. It would read as an enormous opportunity that is not there, which is
-precisely the confidently-wrong answer the exclusion rules exist to prevent.
-It is the same failure as counting an accepted Best Offer at list price, one
-level up.
+Two rounds of measurement, median ask over melt (melt = GBP 775):
 
-The instrument tree already separates by monarch and mint, which is not the
-axis that matters here. Something has to separate bullion-grade from
-numismatic before the spread means anything. Candidates, none chosen:
+| | bullion | collector |
+|---|---|---|
+| pooled, before | 62.8% (one number for both) | |
+| after the split | 41.3% | 87.4% |
+| after unknown-disqualifies | **37.2%** | 73.1% |
 
-- treat a graded or slabbed listing as a different instrument, not the same
-  one at a different price - the `cert_number` / `grading_company` /
-  `grade_numeric` columns from migration 002 exist and are unused;
-- exclude asks above a premium threshold from the headline while still
-  recording them, the way censored Best Offers are excluded but counted;
-- report the ask distribution rather than a median, so a bimodal market looks
-  bimodal instead of averaging into a number describing neither half.
+The second round: `isBullionPool` treated an unparsed year or mint as bullion,
+so 621 of 1,134 bullion asks had no mint and 287 no year. A Tudor Edward VI
+sovereign whose "1551-1553" never parsed sat there at GBP 20,000. Not knowing
+is not evidence of ordinariness, so an unparsed attribute now disqualifies -
+the rule `keyAt` already follows when it refuses an "unknown mint" bucket.
 
-Until then, read the buy-it-now premium on the dashboard as "what the
-collector market asks", not as the bullion spread.
+### Still wrong, and worth knowing before trusting the number
+
+**A bullion sovereign's premium is 10-15% over melt. The pool reads 37%.** So
+it is still contaminated, by four separate things - and these are rule gaps,
+not tuning:
+
+1. **Things that are not coins.** A 1982 Ipswich Speedway *programme* at GBP 3,
+   a *book* about sovereigns at GBP 104, a 2009 GBP 2 coin commemorating the
+   sovereign at GBP 4. The exclusion rules do not screen these out.
+2. **Fractional denominations read as full.** A "1/8 Sovereign" at GBP 120 is
+   in the FULL pool.
+3. **Sheldon grades the title parser does not read.** "AU50", "XF45", "AU55"
+   are graded coins; `extractGrade` handles MS and PF but not these, so they
+   pass as ungraded bullion. This is the most mechanical of the four.
+4. **Genuine rarities that satisfy every attribute rule.** Victoria 1874 London
+   shield sovereigns at GBP 10,000-16,000, a 1917 London at GBP 15,087. Both are
+   post-1871, London, ungraded by title - correct on every axis and still
+   nothing like bullion. Rare *dates* cannot be caught by attribute rules; that
+   needs either a price-outlier test or actual numismatic data.
+
+Items 1-3 are tractable and would move the number most. Item 4 is the hard one,
+and is the reason a median may be the wrong summary at all: the honest
+alternative is to report the distribution, so a bimodal market looks bimodal
+rather than averaging into a figure describing neither half.
+
+**Until then, treat the buy-it-now premium as indicative, not as the spread.**
 
 ## Decisions not to undo
 
