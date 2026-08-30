@@ -418,32 +418,68 @@ sovereign whose "1551-1553" never parsed sat there at GBP 20,000. Not knowing
 is not evidence of ordinariness, so an unparsed attribute now disqualifies -
 the rule `keyAt` already follows when it refuses an "unknown mint" bucket.
 
-### Still wrong, and worth knowing before trusting the number
+### Filtering on eBay's category ancestry, not on titles
 
-**A bullion sovereign's premium is 10-15% over melt. The pool reads 37%.** So
-it is still contaminated, by four separate things - and these are rule gaps,
-not tuning:
+The live-opportunities panel was offering a Royal Doulton coffee cup at a GBP
+833 max bid on 99.4% edge, next to Sovereign-brand wristwatches, a sovereign
+ring, an empty presentation box, a Hardy fishing reel and two copies of a book
+about sovereigns. Chasing those with title regexes is chasing the last thing
+that went wrong.
 
-1. **Things that are not coins.** A 1982 Ipswich Speedway *programme* at GBP 3,
-   a *book* about sovereigns at GBP 104, a 2009 GBP 2 coin commemorating the
-   sovereign at GBP 4. The exclusion rules do not screen these out.
-2. **Fractional denominations read as full.** A "1/8 Sovereign" at GBP 120 is
-   in the FULL pool.
-3. **Sheldon grades the title parser does not read.** "AU50", "XF45", "AU55"
-   are graded coins; `extractGrade` handles MS and PF but not these, so they
-   pass as ungraded bullion. This is the most mechanical of the four.
-4. **Genuine rarities that satisfy every attribute rule.** Victoria 1874 London
-   shield sovereigns at GBP 10,000-16,000, a 1917 London at GBP 15,087. Both are
-   post-1871, London, ungraded by title - correct on every axis and still
-   nothing like bullion. Rare *dates* cannot be caught by attribute rules; that
-   needs either a price-outlier test or actual numismatic data.
+There is much better evidence and it arrives free on every search result: eBay
+sends the whole category ancestry with names, and `normaliseSummary` was
+keeping `categories[0].categoryId` and discarding the rest.
 
-Items 1-3 are tractable and would move the number most. Item 4 is the hard one,
-and is the reason a median may be the wrong summary at all: the honest
+**Two allow-lists were built and measured before being applied, and both were
+wrong.** The 22 sovereign-named leaves would have dropped **6,314 of 14,359
+assignments**, including 2,491 genuine Australian Sydney half-sovereigns.
+Widening to the whole Coins subtree still dropped them, because world coins
+hang off a different root on `EBAY_GB`. Leaf ids vary by country and issue, so
+no allow-list is both safe and useful - and worse, `categoryIds` also narrows
+the Browse *search*, so a bad list there would have stopped those coins being
+discovered at all rather than merely mislabelled. `categoryIds` stays empty
+and the `categories` command was removed rather than fixed.
+
+The ancestry has no such problem. Every real coin carries `Coins` or `Bullion`
+somewhere in its chain; the cup carries Pottery, the reel Sporting Goods, the
+watch Watches. Migration 004 stores the path so `reclassify` applies the same
+test to rows already held, and the path travels with the exclusion reason,
+because a false positive here would delete a whole class of listing and that
+is what makes it diagnosable from the review queue.
+
+Result: **1,118 listings excluded as off-category.** Books, watches,
+jewellery, fishing reels and the pendant all gone.
+
+### What is still not right
+
+**The bullion median is 37.2% over melt and has not moved through any of this**
+- which is the point. An earlier note here called that contamination on the
+grounds that bullion sovereigns run 10-15%. That was the wrong comparison:
+10-15% is what dealers charge, and this is what optimistic eBay sellers *ask*.
+The band breakdown reads as an ordered ladder - RAW_UNSPECIFIED 35%, RAW_BU
+46%, RAW_EF 51% - which is what a real market looks like. Contamination looks
+like noise, not a gradient.
+
+Three known survivors, all in genuine coin categories where ancestry cannot
+help:
+
+1. A "1937 Specimen 4 GOLD COIN Proof Sovereign" Royal Mint set, listed under
+   `Supplies/Equipment > Coins > Coins`. Possibly the box rather than the coins.
+2. A "Commorative Gold Sovereign" for the Battle of the Somme, in Gold Bullion.
+   A medal sold as a sovereign; excluding it generically would also exclude
+   legitimate commemorative sovereigns.
+3. Genuine rare dates - Victoria 1874 London shields at GBP 10,000-16,000, a
+   1917 London at GBP 15,087 - which satisfy every attribute rule there is.
+   Rare *dates* need either a price-outlier test or real numismatic data.
+
+Item 3 is the reason a median may be the wrong summary at all. The honest
 alternative is to report the distribution, so a bimodal market looks bimodal
 rather than averaging into a figure describing neither half.
 
-**Until then, treat the buy-it-now premium as indicative, not as the spread.**
+**The clearing side is still empty.** Only two auctions have resolved, so the
+dashboard correctly says no instrument has enough sales yet. The ask figure
+only means something beside what auctions actually clear at, and that arrives
+as watched lots close.
 
 ## Decisions not to undo
 
