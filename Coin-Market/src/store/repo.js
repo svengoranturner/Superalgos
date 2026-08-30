@@ -552,8 +552,12 @@ exports.newRepository = function (db, options) {
             than discovered afterwards. */
         countryCounts () {
             return db.prepare(`
+                /*  COUNT(DISTINCT), not COUNT(*): a listing has one row per
+                    instrument level it was filed under, so the join multiplies
+                    it about three times over and the United Kingdom came out
+                    holding 9,523 of a 5,490-listing corpus. */
                 SELECT COALESCE(l.item_country, '??') AS country,
-                       COUNT(*) AS listings,
+                       COUNT(DISTINCT l.browse_id) AS listings,
                        COUNT(DISTINCT li.browse_id) AS priced
                 FROM listing l
                 LEFT JOIN listing_instrument li ON li.browse_id = l.browse_id

@@ -307,3 +307,26 @@ test('listings still counted in the statistics come first in the queue', () => {
     assert.ok(rows.slice(1).every(r => r.priced === 0))
     db.close()
 })
+
+/*  A listing has one listing_instrument row per level it was filed under, so
+    a plain COUNT(*) over the join triples it - the country picker showed the
+    United Kingdom holding 9,523 listings out of a corpus of 5,490. */
+test('country counts count listings, not instrument assignments', () => {
+    const { db, repository } = fixture()
+    const soon = new Date(Date.now() + DAY_MS).toISOString()
+
+    repository.saveListing({
+        browseId: 'v1|c1|0', legacyId: 'c1', title: 'Gold Sovereign 1912',
+        buyingOptions: 'AUCTION', endTime: soon, itemCountry: 'GB'
+    })
+    repository.saveClassification('v1|c1|0', [
+        { key: 'GB.SOV.BULLION.FULL', level: 0 },
+        { key: 'GB.SOV.BULLION.FULL.GEORGE_V', level: 1 },
+        { key: 'GB.SOV.BULLION.FULL.GEORGE_V.1912', level: 2 }
+    ], 1, 'title', 0.2354, {})
+
+    const gb = repository.countryCounts().find(r => r.country === 'GB')
+    assert.strictEqual(gb.listings, 1, 'one listing, however many instruments it sits in')
+    assert.strictEqual(gb.priced, 1)
+    db.close()
+})
