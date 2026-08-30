@@ -143,6 +143,39 @@ function marketPage (opened, url) {
     </tr>`
     }).join('')
 
+    /*
+        What has actually sold.
+
+        Put in front of the instrument table rather than behind it: the
+        clearing premium in that table is derived from exactly these rows, and
+        a derived number is easier to trust when the thing it came from is
+        visible above it.
+    */
+    const sales = repository.recentSales(15)
+    const spotNow = opened.spotAt(new Date().toISOString())
+    const salesHtml = sales.length === 0
+        ? '<p class="thin">No completed sales resolved yet.</p>'
+        : '<div class="card scroll"><table><thead><tr><th>Sold</th><th>Coin type</th>' +
+          '<th>Price</th><th>Bids</th><th>Premium over melt</th></tr></thead><tbody>' +
+          sales.map(sale => {
+              const paid = sale.finalPrice + (sale.finalShipping || 0)
+              const premium = spotNow === null || !Number.isFinite(sale.fineOz) || sale.fineOz <= 0
+                  ? null
+                  : (paid / (sale.fineOz * spotNow.gbpPerOz)) - 1
+              return '<tr>' +
+                  '<td class="thin">' + escapeHtml(String(sale.endedAt || '').slice(0, 10)) + '</td>' +
+                  '<td>' + (sale.itemWebUrl
+                      ? '<a href="' + escapeHtml(sale.itemWebUrl) + '" target="_blank" rel="noopener">' +
+                        escapeHtml(sale.title.slice(0, 58)) + '</a>'
+                      : escapeHtml(sale.title.slice(0, 58))) + '</td>' +
+                  '<td class="mono"><strong>' + gbp(paid) + '</strong></td>' +
+                  '<td class="mono">' + (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—') + '</td>' +
+                  '<td class="mono">' + (sale.censored === 1
+                      ? '<span class="thin">not published</span>'
+                      : pct(premium)) + '</td>' +
+                  '</tr>'
+          }).join('') + '</tbody></table></div>'
+
     /* Live opportunities, one per lot at its most specific instrument. */
     const candidates = []
     for (const entry of markets) {
@@ -241,6 +274,14 @@ ${suppressed > 0 ? '<p class="thin">' + suppressed + ' lot' + (suppressed === 1 
   ' hidden: priced below their own gold content, so they cannot be the coin the title claims. ' +
   'They are on the <a href="/review">review page</a> with the reason.</p>' : ''}
 ${opportunityHtml}
+
+<h2>What has actually sold (${sales.length})</h2>
+<p class="thin">Completed auctions with a hammer price. Every clearing figure on this page is
+built from these and nothing else &mdash; an asking price is an opinion, and this is what somebody
+paid. ${sales.length < 30
+    ? 'There are not many yet: they only arrive as lots this tool was already watching come to a close.'
+    : ''}</p>
+${salesHtml}
 
 <h2>Every tracked coin type</h2>
 <div class="card scroll">
@@ -613,7 +654,13 @@ function callControls (row) {
 
 function queueRow (row, verdictCell) {
     const big = largerImage(row.imageUrl)
-    const total = (row.price || 0) + (row.shipping || 0)
+    /*  A completed sale is quoted at what it fetched, not at whatever it was
+        asking the last time we looked. The asking price of a lot that has
+        already sold is history; the hammer price is the measurement. */
+    const sold = row.sold === 1 && Number.isFinite(row.finalPrice)
+    const total = sold
+        ? row.finalPrice + (row.finalShipping || 0)
+        : (row.price || 0) + (row.shipping || 0)
 
     const meta = []
     const reason = compactReason(row.reason)
@@ -638,8 +685,18 @@ function queueRow (row, verdictCell) {
     /*  Auction-only, and present on just 7.6% of the queue for that reason -
         its absence says "not an auction" rather than "we failed to fetch
         it", so it is emitted only when there is something to say. */
-    if (Number.isFinite(row.bidCount)) {
-        meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
+    const bids = sold && Number.isFinite(row.finalBidCount) ? row.finalBidCount : row.bidCount
+    if (Number.isFinite(bids)) {
+        meta.push(bids + (bids === 1 ? ' bid' : ' bids'))
+    }
+    if (sold && row.endedAt) {
+        meta.push('sold ' + escapeHtml(String(row.endedAt).slice(0, 10)))
+    }
+    /*  eBay never publishes what an accepted Best Offer went for, so these
+        are shown and excluded rather than counted at the list price - which
+        would systematically overstate every clearing figure. */
+    if (row.censored === 1) {
+        meta.push('<span class="badge">price not published</span>')
     }
     /*  A high ask that nobody has taken for weeks is priced badly, not
         priced rarely - which is a judgement the owner makes from exactly
@@ -691,7 +748,7 @@ function queueRow (row, verdictCell) {
     <div class="q-meta">${meta.join('<span aria-hidden="true">·</span>')}</div>
   </div>
   <div class="q-side">
-    <div class="q-price"><span class="mono">${total > 0 ? gbp(total) : '—'}</span>
+    <div class="q-price"><span class="mono">${sold ? 'sold ' : ''}${total > 0 ? gbp(total) : '—'}</span>
       ${verdictCell === undefined ? '' : verdictCell}</div>
     <div class="verdict">${callControls(row)}</div>
   </div>
@@ -733,8 +790,14 @@ function listingsPage (opened, url) {
         Live column that led you here. Ended lots still matter - they feed
         the clearing price - but they are not what the front page's live
         figures are made of. */
-    const live = rows.filter(r => r.live === 1)
-    const ended = rows.filter(r => r.live !== 1)
+    /*  Sold, live, and ended-unsold are three different kinds of evidence and
+        the first is worth more than the other two together: it is the only
+        number in the store that somebody actually paid. An asking price is an
+        opinion; an unsold lot is an opinion that was refused. */
+    const sold = rows.filter(r => r.sold === 1)
+        .sort((a, b) => String(b.endedAt || '').localeCompare(String(a.endedAt || '')))
+    const live = rows.filter(r => r.sold !== 1 && r.live === 1)
+    const unsold = rows.filter(r => r.sold !== 1 && r.live !== 1)
 
     /*  The number that justifies this page existing. Of the live listings
         counted into an instrument, most were never flagged for review at
@@ -770,6 +833,8 @@ function listingsPage (opened, url) {
 moving the numbers on the front page.</p>
 
 <div class="card hero">
+  <div><div class="n">${sold.length}</div><div class="l">completed sales &mdash; the evidence
+    everything else is measured against</div></div>
   <div><div class="n">${live.length}</div><div class="l">live listings counted here</div></div>
   <div><div class="n">${pct(market.liquidity.medianAskPremium)}</div>
     <div class="l">median asking premium over gold content</div></div>
@@ -779,15 +844,26 @@ moving the numbers on the front page.</p>
   ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged</div></div>' : ''}
 </div>
 
+<h2>Sold &mdash; what someone actually paid (${sold.length})</h2>
+<p class="thin">The only prices here that are not somebody's opinion. Everything the tool says a
+coin is worth is built from these, so a wrong one costs more than a wrong asking price.
+Most recent first.</p>
+${sold.length === 0
+    ? '<p class="thin">No completed sales under this coin type yet. They arrive as auctions this ' +
+      'tool was already watching close, so the count only grows with time on the market.</p>'
+    : list(sold)}
+
+<h2>On sale now (${live.length})</h2>
 <p class="thin">Dearest first &mdash; within one coin type that is also the highest premium, and a
 lot priced far from its neighbours is both the most likely to be wrong and the most visible when
 it is. Click a photo to see it large. If the coin is real but the denomination is wrong, set it
 in the dropdown and mark it genuine rather than dismissing it.</p>
 ${live.length === 0 ? '<p class="thin">Nothing live under this coin type.</p>' : list(live)}
 
-${ended.length === 0 ? '' : `<h2>Ended (${ended.length})</h2>
-<p class="thin">No longer on sale, but still feeding the clearing price for this coin type.</p>
-${list(ended)}`}
+${unsold.length === 0 ? '' : `<h2>Ended without selling (${unsold.length})</h2>
+<p class="thin">The asking price was refused. Useful for the sell-through rate, and worth
+nothing at all as a clearing price.</p>
+${list(unsold)}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
 `)

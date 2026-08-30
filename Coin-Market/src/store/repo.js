@@ -522,6 +522,13 @@ exports.newRepository = function (db, options) {
                        s.price, s.shipping, s.bid_count AS bidCount,
                        COALESCE(s.price, 0) + COALESCE(s.shipping, 0) AS totalCost,
                        1 AS priced,
+                       /*  What it actually fetched. This is the only honest
+                           number in the table - everything else is somebody's
+                           opinion of what a coin is worth, and this is what
+                           one was worth to a buyer. */
+                       o.sold, o.final_price AS finalPrice, o.shipping AS finalShipping,
+                       o.ended_at AS endedAt, o.bid_count AS finalBidCount,
+                       o.censored, o.sale_type AS saleType,
                        q.reason,
                        lb.verdict, lb.denomination AS labelledDenomination,
                        lb.quantity AS labelledQuantity,
@@ -615,6 +622,37 @@ exports.newRepository = function (db, options) {
 
         deleteLearnedRule (id) {
             return db.prepare('DELETE FROM learned_rule WHERE id = ?').run(id)
+        },
+
+        /*
+            Completed sales, newest first, across every coin type.
+
+            The scarcest and most valuable thing in the store: an asking price
+            is an opinion, and this is what somebody paid. It sat two clicks
+            down and mixed in with lots that ended unsold, which is the wrong
+            way round for the only measurement here that is not a guess.
+        */
+        recentSales (limit) {
+            return db.prepare(`
+                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
+                       l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
+                       l.item_country AS itemCountry,
+                       o.final_price AS finalPrice, o.shipping AS finalShipping,
+                       o.bid_count AS finalBidCount, o.ended_at AS endedAt,
+                       o.sale_type AS saleType, o.censored, o.sold,
+                       li.key AS instrumentKey, li.quantity AS lotQuantity,
+                       i.fine_oz * li.quantity AS fineOz
+                FROM listing_outcome o
+                JOIN listing l ON l.browse_id = o.browse_id
+                /*  Level 0 only: one row per sale, at the coarsest coin type
+                    it was filed under. Joining every level would repeat each
+                    sale five times. */
+                JOIN listing_instrument li ON li.browse_id = o.browse_id
+                JOIN instrument i ON i.key = li.key AND i.level = 0
+                WHERE o.sold = 1
+                ORDER BY o.ended_at DESC
+                LIMIT ?
+            `).all(limit || 20)
         },
 
         /* Retention: raw eBay rows roll off, derived statistics stay.
