@@ -1060,6 +1060,43 @@ The trailing word boundary is what makes the space safe: in "1887 Sovereign"
 the S is followed by "overeign", so no boundary follows it and the letter is
 not taken. Checked against 4,000 live titles with no false reading.
 
+## Auction / Buy-It-Now, and the hole it exposed
+
+The drill-down has three tabs - Everything, Auctions only, Buy-It-Now only. A
+completed lot is filtered on how it actually sold (`listing_outcome.sale_type`)
+and a live one on how it is offered (`listing.buying_options`), because those
+are different questions and must not use the same column. The filter rides in
+the URL and in the back link, so a decision does not reset it.
+
+The market page carries a composition chart: on sale now split auction against
+Buy-It-Now, auctions ended split sold against unsold.
+
+**And that chart exists mostly to show a hole.** Every completed outcome in the
+store is an auction - all 68 of them. A Buy-It-Now listing is
+Good-'Til-Cancelled, carries no end time, and `pendingOutcomes` only offers up
+listings whose end time has passed, so a BIN lot can never enter outcome
+resolution. Measured: 5,100 listings with no end time, every one of them BIN;
+416 with an end time, every one an auction.
+
+That matters more than it first sounds:
+
+- **94% of the live market is Buy-It-Now** (5,100 against 348).
+- Asking premiums are almost entirely BIN. Clearing premiums are entirely
+  auction.
+- So **the Spread compares two markets, not two ends of one**, and the
+  sell-through column is an auction sell-through wearing a general name.
+
+The bar for BIN outcomes is hatched and labelled "not observed" rather than
+drawn as a zero: a zero sell-through would be a lie, and a missing bar reads as
+nothing to see.
+
+**How it could be closed, when it is worth doing.** A BIN listing that stops
+appearing in sweeps has either sold or been withdrawn, and Trading `GetItem` on
+its legacy id would say which. That is one call per vanished listing against a
+5,000/day budget currently running at about 850, so it is affordable - but it
+is a new collector job with a real call cost, and it has not been built.
+`marketComposition().binVanished` already counts the candidates.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
