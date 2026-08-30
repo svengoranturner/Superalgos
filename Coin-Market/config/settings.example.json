@@ -9,7 +9,7 @@
     "devId": "YOUR-DEV-ID",
     "ruName": "YOUR-RUNAME",
     "refreshToken": null,
-    "userScopes": "https://api.ebay.com/oauth/api_scope https://api.ebay.com/oauth/api_scope/buy.item.feed",
+    "userScopes": "https://api.ebay.com/oauth/api_scope",
     "dailyCallLimit": 5000,
     "accountDeletion": {
       "endpointUrl": "https://metalhead.gold/ebay/account-deletion",

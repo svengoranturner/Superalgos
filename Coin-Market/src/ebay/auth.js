@@ -37,6 +37,27 @@ exports.endpointsFor = function (environment) {
     return environment === 'sandbox' ? SANDBOX : PRODUCTION
 }
 
+/*
+    The only scope a standard keyset has.
+
+    Every Buy-family scope is Limited Release and refused - measured against
+    the real production keyset, not assumed:
+
+        api_scope                  -> accepted, redirects to sign-in
+        api_scope buy.item.feed    -> invalid_scope
+        api_scope buy.offer.auction-> invalid_scope
+        api_scope buy.item.bulk    -> invalid_scope
+
+    And the refusal is quiet in the worst way: the first hop to
+    auth.ebay.com redirects happily, and only the SECOND hop lands on
+    errorOauth?errorId=invalid_scope. Anything checking the first response
+    concludes all is well.
+
+    The base scope is what the Trading API calls need - GetItem for outcome
+    resolution and GetMyeBayBuying for the watch list - so nothing here is
+    actually blocked by holding only it. Override with ebay.userScopes if a
+    Limited Release application is ever granted.
+*/
 const APPLICATION_SCOPE = 'https://api.ebay.com/oauth/api_scope'
 
 exports.newAuth = function (credentials, options) {
