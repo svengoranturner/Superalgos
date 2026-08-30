@@ -843,6 +843,56 @@ quarter's gold can be any sovereign. Read upwards it is nonsense - an ordinary
 full sovereign measured against a quarter reads 400% and was labelled "far
 above melt - rarity or error". That badge was on **1,346 of 2,674 rows**.
 
+## Country filter, lot quantity, and a denomination you rarely touch
+
+**Country.** A multi-select on the market page, defaulting to the UK, with the
+listing count beside each country so the cost of narrowing is visible before it
+is paid. Stored in `setting` in the database, not `config/settings.json`,
+because the dashboard writes it and the collector reads it and a file both edit
+is a race.
+
+Applied at both ends deliberately:
+
+- **At the search**, via `itemLocationCountry`. This is the cheap half - a
+  Browse call is billed per call and returns 200 listings, so a third fewer
+  results is a third fewer calls. It is also the blind half: what is never
+  fetched cannot appear in the review queue and cannot be argued with.
+- **At classification**, where it is visible with a reason and reversible.
+
+Empty means no filtering at both ends. Every reclassify path - the two label
+buttons, both rule paths, the country form and the CLI - passes the stored
+list, or one label click would silently widen the filter back out.
+
+**Quantity.** A multi-coin lot is excluded by default, because a job lot's
+per-coin price is not a single-coin sale. That is a default, not a law: the
+verdict controls carry a quantity box, and setting it admits the lot at its own
+melt.
+
+The first attempt at this was wrong in an instructive way. `fineOzFor` was
+multiplied by the quantity - and did nothing, because that value is written to
+the shared `instrument` row under `ON CONFLICT DO NOTHING`. Had the upsert
+updated instead it would have been worse: redefining the melt for every other
+sovereign filed under the same key. **The instrument says what one coin is; the
+assignment says how many the lot holds.** Migration 008 puts `quantity` on
+`listing_instrument` and the three queries that read a listing's melt multiply
+the two. Found by labelling a real lot on the Pi and reading back what the
+database actually held.
+
+**Denomination.** The dropdown arrives pre-selected to whatever the classifier
+already worked out, so the common case needs no interaction: clicking Genuine
+resubmits the denomination it already had. It only reads "denomination?" when
+there is genuinely a question - currently 298 rows of 548.
+
+Two behaviours worth knowing when working the queue:
+
+- Clicking **Genuine** without touching the dropdown keeps the classifier's own
+  denomination and marks it certain. No numbers move; the listing was already
+  counted. It only needs picking when the row says the denomination is unknown,
+  or the classifier got it wrong.
+- Confirming a coin now **skips** the exclusion rules rather than being excluded
+  and then restored. Restoring threw away the year, portrait and denomination
+  the parser had already found, so answering one question created three.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
