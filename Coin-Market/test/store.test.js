@@ -123,3 +123,75 @@ test('outcome resolution queue respects the 90-day GetItem window', () => {
     assert.deepStrictEqual(pending.map(p => p.legacyId), ['6'],
         'lots past the 90-day window are unresolvable and must not be retried forever')
 })
+
+/*
+    Multi-variation listings.
+
+    eBay Browse ids are v1|<legacyItemId>|<variationId>, so one listing with
+    several variations arrives as several rows sharing a legacy item number.
+    legacy_id was UNIQUE, which made the second variation throw and cost the
+    rest of that discovery partition.
+*/
+
+function variationFixture () {
+    const db = newDatabase(':memory:')
+    const repo = newRepository(db, { sellerSalt: 'salt' })
+    const base = {
+        marketplace: 'EBAY_GB', title: 'Gold Sovereign', buyingOptions: 'FIXED_PRICE',
+        currency: 'GBP', firstSeen: '2026-08-01T00:00:00Z', lastSeen: '2026-08-01T00:00:00Z',
+        endTime: '2026-08-02T00:00:00Z'
+    }
+    return { db, repo, base }
+}
+
+test('two variations of one listing both store, sharing a legacy id', () => {
+    const { db, repo, base } = variationFixture()
+    repo.saveListing(Object.assign({}, base, {
+        browseId: 'v1|327041911935|515924774139', legacyId: '327041911935'
+    }))
+    repo.saveListing(Object.assign({}, base, {
+        browseId: 'v1|327041911935|515924774151', legacyId: '327041911935'
+    }))
+    const n = db.prepare('SELECT COUNT(*) c FROM listing WHERE legacy_id = ?').get('327041911935').c
+    assert.strictEqual(n, 2)
+    db.close()
+})
+
+test('one physical sale yields one outcome to resolve, not one per variation', () => {
+    const { db, repo, base } = variationFixture()
+    for (const suffix of ['515924774139', '515924774151', '515924774163']) {
+        repo.saveListing(Object.assign({}, base, {
+            browseId: 'v1|327041911935|' + suffix, legacyId: '327041911935'
+        }))
+    }
+    const pending = repo.pendingOutcomes(50)
+    assert.strictEqual(pending.length, 1, 'three variations, one lot to resolve')
+    assert.strictEqual(pending[0].legacyId, '327041911935')
+    db.close()
+})
+
+/*  Without this the group would nominate an unresolved sibling next cycle
+    and the same lot would be resolved forever, spending a call each time. */
+test('once any variation is resolved, no sibling is offered again', () => {
+    const { db, repo, base } = variationFixture()
+    for (const suffix of ['515924774139', '515924774151']) {
+        repo.saveListing(Object.assign({}, base, {
+            browseId: 'v1|327041911935|' + suffix, legacyId: '327041911935'
+        }))
+    }
+    const first = repo.pendingOutcomes(50)
+    repo.saveOutcome(first[0].browseId, {
+        endTime: base.endTime, sold: true, finalPrice: 851.27, bidCount: 3,
+        saleType: 'AUCTION', source: 'GetItem'
+    })
+    assert.strictEqual(repo.pendingOutcomes(50).length, 0)
+    db.close()
+})
+
+test('separate listings are still resolved separately', () => {
+    const { db, repo, base } = variationFixture()
+    repo.saveListing(Object.assign({}, base, { browseId: 'v1|111|0', legacyId: '111' }))
+    repo.saveListing(Object.assign({}, base, { browseId: 'v1|222|0', legacyId: '222' }))
+    assert.strictEqual(repo.pendingOutcomes(50).length, 2)
+    db.close()
+})

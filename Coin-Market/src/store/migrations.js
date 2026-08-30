@@ -208,5 +208,80 @@ exports.MIGRATIONS = [
         ALTER TABLE listing ADD COLUMN condition_band TEXT;
         CREATE INDEX idx_listing_cert ON listing(cert_number);
         `
+    },
+    {
+        name: '003-legacy-id-is-not-unique',
+        sql: `
+        /* ---------------------------------------------------------------
+           legacy_id was declared UNIQUE. It is not unique, and eBay says so.
+
+           A Browse id has the form v1|<legacyItemId>|<variationId>, and a
+           multi-variation listing returns one row per variation, each with
+           its own browse id and all carrying the SAME legacy item number.
+           Observed live on EBAY_GB:
+
+               legacyItemId 327041911935
+                 -> v1|327041911935|515924774139
+                 -> v1|327041911935|515924774151
+
+           The upsert only handles ON CONFLICT(browse_id), so the second
+           variation violated a constraint the upsert could not absorb, the
+           statement threw, and discover.js abandoned the rest of that
+           partition. Ten partitions in a single sweep. The cost is not the
+           duplicate - it is every listing after it in that partition, and
+           discovery cannot be backfilled once a lot has closed.
+
+           browse_id is the real identity and stays the primary key. The
+           legacy id keeps its index, because outcome resolution looks up by
+           it, but loses the constraint it never satisfied.
+
+           SQLite cannot drop an inline constraint, so the table is rebuilt.
+           --------------------------------------------------------------- */
+        CREATE TABLE listing_rebuilt (
+            browse_id           TEXT PRIMARY KEY,
+            legacy_id           TEXT,
+            marketplace         TEXT NOT NULL DEFAULT 'EBAY_GB',
+            title               TEXT NOT NULL,
+            category_id         TEXT,
+            condition_label     TEXT,
+            buying_options      TEXT NOT NULL,
+            currency            TEXT NOT NULL DEFAULT 'GBP',
+            seller_hash         TEXT,
+            seller_feedback_pct REAL,
+            seller_feedback_cnt INTEGER,
+            item_web_url        TEXT,
+            image_url           TEXT,
+            start_time          TEXT,
+            end_time            TEXT,
+            first_seen          TEXT NOT NULL,
+            last_seen           TEXT NOT NULL,
+            aspects_fetched     INTEGER NOT NULL DEFAULT 0,
+            expires_at          TEXT,
+            seller_id_hash      TEXT,
+            cert_number         TEXT,
+            grading_company     TEXT,
+            grade_numeric       TEXT,
+            grade_letter        TEXT,
+            condition_band      TEXT
+        );
+
+        INSERT INTO listing_rebuilt SELECT
+            browse_id, legacy_id, marketplace, title, category_id, condition_label,
+            buying_options, currency, seller_hash, seller_feedback_pct, seller_feedback_cnt,
+            item_web_url, image_url, start_time, end_time, first_seen, last_seen,
+            aspects_fetched, expires_at, seller_id_hash, cert_number, grading_company,
+            grade_numeric, grade_letter, condition_band
+        FROM listing;
+
+        DROP TABLE listing;
+        ALTER TABLE listing_rebuilt RENAME TO listing;
+
+        CREATE INDEX idx_listing_end       ON listing(end_time);
+        CREATE INDEX idx_listing_expires   ON listing(expires_at);
+        CREATE INDEX idx_listing_legacy    ON listing(legacy_id);
+        CREATE INDEX idx_listing_seller    ON listing(seller_hash);
+        CREATE INDEX idx_listing_seller_id ON listing(seller_id_hash);
+        CREATE INDEX idx_listing_cert      ON listing(cert_number);
+        `
     }
 ]

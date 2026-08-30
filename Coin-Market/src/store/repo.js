@@ -173,18 +173,37 @@ exports.newRepository = function (db, options) {
 
         /* Lots that have ended but whose outcome we have not resolved.
            Ordered oldest-first because the 90-day GetItem window is a
-           deadline: an unresolved lot eventually becomes unresolvable. */
+           deadline: an unresolved lot eventually becomes unresolvable.
+
+           One row per LEGACY id, not per browse id. A multi-variation
+           listing appears once per variation, each with its own browse id
+           but all sharing the legacy item number - and GetItem answers for
+           the listing, not the variation. Resolving each variation would
+           spend a Trading call per variation and, worse, write an outcome
+           row per variation for a single physical sale, so every one of
+           them would be counted again in the clearing statistics. One sale,
+           one outcome.
+
+           The NOT EXISTS is what keeps that true over time: once any
+           variation of a listing has an outcome, none of its siblings are
+           offered again. Without it the group would simply nominate an
+           unresolved sibling next cycle and resolve the same lot forever. */
         pendingOutcomes (limit) {
             return db.prepare(`
-                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.end_time AS endTime
+                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, MIN(l.end_time) AS endTime
                 FROM listing l
-                LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
-                WHERE o.browse_id IS NULL
-                  AND l.end_time IS NOT NULL
+                WHERE l.end_time IS NOT NULL
                   AND l.end_time < ?
                   AND l.end_time > ?
                   AND l.legacy_id IS NOT NULL
-                ORDER BY l.end_time ASC
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM listing_outcome o
+                      JOIN listing sibling ON sibling.browse_id = o.browse_id
+                      WHERE sibling.legacy_id = l.legacy_id
+                  )
+                GROUP BY l.legacy_id
+                ORDER BY endTime ASC
                 LIMIT ?
             `).all(
                 new Date().toISOString(),
