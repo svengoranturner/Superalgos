@@ -56,7 +56,11 @@ function extractDenomination (title) {
         to review, which is what keyAt already does with an unknown mint. Far
         better than calling a GBP 120 eighth a full sovereign and leaving it
         in the bullion median. */
-    if (/\b1\s*\/\s*(8|10|16|20|25|32|50)\b|\b(eighth|tenth|sixteenth|twentieth)\b/.test(t)) {
+    /*  The ordinal suffix matters: sellers write "1/8th Gold Sovereign" as
+        often as "1/8", and a word boundary after the digit does not match
+        "8th". Missing it put a GBP 138 eighth into the full-sovereign
+        pricing, where it is compared against 7.99g of gold. */
+    if (/\b1\s*\/\s*(8|10|16|20|25|32|50)\s*(th|nd|rd|st)?\b|\b(eighth|tenth|sixteenth|twentieth)\b/.test(t)) {
         return { denomination: null, confidence: 0 }
     }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }

@@ -242,6 +242,12 @@ test('the genuine Double Sovereign is not caught by the commemorative rule', () 
 test('an eighth or tenth sovereign is not a full sovereign', () => {
     for (const title of [
         '2025 King Charles III Classics Remastered 1/8 Sovereign 22ct Gold',
+        /*  Sellers write the ordinal as often as the bare fraction, and a
+            word boundary after the digit does not match "8th". */
+        'Hattons Of London 1/8th Gold Sovereign Coin 2022',
+        'King Charles III Accession 1/8th Gold Sovereign',
+        '2024 D-Day 80th Anniversary Gold Proof One-Eighth Sovereign',
+        '1/10th Gold Proof Sovereign',
         'Tenth Sovereign gold coin'
     ]) {
         assert.strictEqual(classify({ title }).attributes.denomination, null, title)
