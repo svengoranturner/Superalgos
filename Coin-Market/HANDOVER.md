@@ -1,15 +1,18 @@
 # Handover
 
-**Live on production eBay.** Steps 1-4 are done: deployed on the Pi, reading the
-real gold feed, account-deletion endpoint public and validated, production
-keyset created and **enabled**. `smoke` against production: **7 pass, 0 fail,
-1 unknown, 2 skip**.
+**Live on production eBay, fully authorised, and nothing is blocked.**
+Steps 1-5 are done bar running the collector: deployed on the Pi, reading the
+real gold feed, deletion endpoint validated, production keyset enabled, RuName
+created and a user refresh token stored. `smoke` against production:
+**9 pass, 0 fail, 1 unknown, 0 skip**.
 
-**The assumption that could have forced a redesign survived**: `ItemSummary`
-carries `bidCount` on 50/50 live auctions, so cheap snapshotting holds.
+**Both assumptions that could have forced a redesign survived.** `ItemSummary`
+carries `bidCount` on 50/50 live auctions, so cheap snapshotting holds. And
+`GetItem` returns final prices for listings the caller does not own, so the
+outcome-resolution path — and every clearing premium built on it — stands.
 
-Step 5 is what remains, and it is blocked on one thing only: a **RuName**, which
-unlocks the user token, which answers the last open assumption and the two SKIPs.
+What remains is operational, not unknown: start the collector and let it watch
+lots close.
 
 This document was written for a Claude Code session on the user's laptop, which
 — unlike the session that built this — is on the same LAN as the Pi. That
@@ -69,10 +72,13 @@ not explicitly marked `powershell` is bash, meant for the Pi.
   asks — a 17.6pp spread, which is the phenomenon the tool exists to measure.
 - **The real gold feed is connected and mirrored.** 876 observations, 20-minute
   cadence, gold at GBP 3,372/oz. See below.
-- **Production eBay is configured and smoke has been run against it.**
-  `config/settings.json` on the Pi holds the production keyset (mode 0600,
-  gitignored), `environment: production`. `smoke`: **7 pass, 0 fail, 1 unknown,
-  2 skip**. No collector is running yet.
+- **Production eBay is fully configured.** `config/settings.json` on the Pi
+  holds the production keyset, the RuName
+  `Rhys_Turner-RhysTurn-metalh-gxmycctz`, and a user refresh token good for
+  ~18 months (mode 0600, gitignored), `environment: production`. `smoke`:
+  **9 pass, 0 fail, 1 unknown, 0 skip**. No collector is running yet.
+- **The watch list mirrors**: 200 watching, 0 bidding, 0 won, 3 lost. Those
+  three lost auctions are what proved `GetItem` — ended, and not owned.
 - **The call budget has real numbers at last.** Browse: **limit 5000, remaining
   5000, window 86400s**, resetting 07:00 UTC. Sandbox had only reported stub
   values (`apiName: "api name"`, a resource called `DELETE1`), so this is the
@@ -82,8 +88,12 @@ not explicitly marked `powershell` is bash, meant for the Pi.
   `leafCategoryIds`, `seller` and `shippingOptions`, and notably **no
   `conditionDescriptors`**. That file carries no credentials and is safe to
   share.
-- **`ebay.ruName` is still a placeholder**, which blocks the user token. `auth-url`
-  now refuses it rather than printing a consent URL that eBay will reject.
+- **Only the base OAuth scope is available.** `api_scope` is accepted;
+  `buy.item.feed`, `buy.offer.auction` and `buy.item.bulk` are each refused
+  with `invalid_scope` — all Limited Release, the same wall as `getItems`. The
+  base scope is enough for both Trading calls, so nothing is lost. Beware how
+  it fails: the **first** hop to `auth.ebay.com` redirects happily and only the
+  **second** lands on `errorOauth?errorId=invalid_scope`.
 - **The Pi's DNS is fixed** — see `DEPLOY.md` §1a. It was not the router: glibc's
   parallel A/AAAA queries were the cause, `getaddrinfo` failed 14/20, and
   `single-request-reopen` took it to 0/20. Persisted via netplan, survives reboot.
@@ -103,10 +113,19 @@ Settle these early; each has a fallback but two of them change the architecture.
    the last snapshot before close (already implemented behind the same
    interface in `src/collect/resolve.js`) — less exact, still usable.
 
-   **STILL UNANSWERED — it needs a user token, which needs a RuName.** One
-   piece of good news from the shapes though: search results carry
-   **`legacyItemId`**, which is the identifier `GetItem` takes. So the
-   plumbing to attempt it is there; only the token is missing.
+   **ANSWERED — YES.** `GetItem` returned final prices for three ended
+   auctions the user bid on and **lost**, so does not own:
+
+   | item | result |
+   |---|---|
+   | 398300977598 | `sold=true final=64.43 bids=15 type=AUCTION` |
+   | 188792465114 | `sold=true final=21.48` |
+   | 257657114359 | `sold=true final=20.77` |
+
+   The outcome-resolution path stands as designed. The
+   last-snapshot-before-close fallback in `src/collect/resolve.js` stays as
+   insurance, but is not needed. Every clearing premium the tool reports rests
+   on this, and it holds.
 
 2. **Does `ItemSummary` carry `bidCount` in search results?** Bulk item lookup
    (`getItems`) is Limited Release and unavailable, so snapshotting works by
@@ -125,14 +144,20 @@ Settle these early; each has a fallback but two of them change the architecture.
    several field shapes *because this was unconfirmed* — tighten it to reality
    once seen, don't leave it guessing forever.
 
-   **STILL UNKNOWN, and now with evidence: 0 of 50 live UK listings carried
-   `conditionDescriptors`.** The captured field list (`smoke-shapes.json`)
-   has `condition` and `conditionId` but no descriptors at all. Two readings
-   fit: the mandatory coin condition detail has not reached `EBAY_GB` yet, or
-   it is absent from *search* results and appears only on `getItem`. Do not
-   tighten `conditions.js` on this evidence — the tolerant reader is still
-   doing exactly the job it was written for. Re-check when a user token makes
-   `getItem` reachable.
+   **STILL UNKNOWN, but one of the two explanations is now ruled out.**
+   `conditionDescriptors` were absent from **0 of 50 live search results** and
+   also absent from **`getItem` on all three ended coin listings**. So it is
+   not a case of search omitting what `getItem` carries — the field simply is
+   not present on these UK coin listings at all.
+
+   The likeliest remaining reading is that eBay's mandatory coin condition
+   detail has not reached `EBAY_GB`. A narrower one survives too: that it
+   applies only to particular categories or graded coins, none of which were
+   in this sample of three ended Canadian silver pieces plus 50 live auctions.
+
+   **Do not tighten `conditions.js`.** The tolerant reader is doing exactly the
+   job it was written for, and there is still nothing real to tighten against.
+   Re-check when the collector has seen a wider spread of listings.
 
 `node bin/cli.js smoke` probes all three and reports **pass / fail / unknown /
 skip** per capability. **UNKNOWN is a real verdict, not a soft pass** — sandbox
