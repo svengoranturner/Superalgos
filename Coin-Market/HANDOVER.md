@@ -635,6 +635,87 @@ conventions it still leaves genuine coins with sloppy weights ("George V 1912
 10g gold"), so a stated weight that matches no sovereign is worth surfacing but
 not excluding on.
 
+## Working the queue: layout, preview, and reaching a bad number
+
+The owner was scrolling sideways to read the review queue, could not preview a
+listing without opening a tab, and could see wrong listings on the market page
+with no way to dismiss them.
+
+**The queue is a list, not a table.** Titles run to 84 characters and the
+*reasons* to 170 - the reasons were the bigger driver - and the global
+`table { min-width:720px }` / `td { white-space:nowrap }` are right for the
+market statistics and wrong for a queue. Scoped `.q-*` classes, so the wide
+statistics table keeps the horizontal scroll it needs. Verified zero document
+overflow from 1440px down to 360px, with the verdict buttons at one constant x.
+
+**No iframe preview is possible.** eBay item pages send
+`X-Frame-Options: SAMEORIGIN` and no CSP at all - measured, not assumed. So the
+preview is composed locally: the stored thumbnail inline, and a 340px card on
+hover or keyboard focus. Swapping the `s-l225` suffix to `s-l500` works (all of
+500/960/1600 do; a bogus size clamps rather than 404s).
+
+The large image is named **only inside the hover rule**, so it is fetched on
+demand: 550 rows load 22 thumbnails and one large image. `<img loading="lazy">`
+was rejected for this - it never fires on a keyboard tab-through, where a CSS
+background does.
+
+**A market number now drills down** to the listings behind it at
+`/listings?key=`, carrying the same verdict controls, with `back` so a decision
+returns you where you made it rather than to the review queue. This matters
+more than it sounds: **2,740 of 3,447 live priced listings have no review-queue
+row at all** - they classified confidently and wrongly, so the review queue
+could not reach them from any direction.
+
+The queue itself now leads with the listings that are *making a number wrong*
+- flagged as uncertain and still counted - because newest-first buried those
+among 1,536 already-dropped rows shown for auditability.
+
+## Two performance bugs, both the same shape
+
+**A full reclassify was not in a transaction.** Every insert was its own
+transaction: ~20,000 fsyncs on an SD card. A label click took over two minutes
+and the HTTP request timed out. Wrapped in one transaction it is **3.9s**, and
+a single verdict now calls `reclassify.one()`, which touches only that coin's
+listings - **56ms**. A rule still rebuilds everything, because a rule can reach
+anything.
+
+**`activeListings` ranked every snapshot to use one instrument's.** 435ms per
+call, once per coin type, so the market page took **19 seconds** and was getting
+worse with every sweep. Restricting the window to the instrument's own listings
+first: **1.4s**. Pre-existing, not introduced. `reviewQueue` had the same shape
+and got the same fix.
+
+## What is actually still wrong on the market page
+
+Measured, not guessed: **318 of 3,459 live listings (9.2%)**, and it is a mix.
+167 are genuine sovereigns in the wrong denomination; 151 are not a single
+British sovereign at all.
+
+The dominant single cause was `extractDenomination` requiring the multiplier
+immediately before the word, so nine seller phrasings fell through to FULL -
+`5 POUNDS SOVEREIGN` (the plural breaks adjacency), `GBP 5 GOLD SOVEREIGN`,
+bare `5 Sovereign`, `2 SOV.`, and every piedfort. **87 lots were priced against
+a half or a fifth of their actual gold**, and a GBP 9,654 five-sovereign piece
+duly read 1146% over melt. Fixed; DOUBLE went 54 -> 98 live and QUINTUPLE
+11 -> 36. A piedfort maps to DOUBLE deliberately: it is struck at double
+thickness, so it carries a double sovereign's gold, and gold content is the
+quantity this tool measures. `Type 2 Sovereign` is guarded with a lookbehind -
+it is a portrait variety, not a multiplier.
+
+**Two premiums that look wrong are not.** Sovereign / William IV asks 371% over
+melt across 35 live listings, and they are genuine 1832 sovereigns at GBP 10,000.
+Half Sovereign / Victoria Young Head (Shield) asks 133% - one dealer holds 83 of
+its 165 listings and the median sits inside their genuine Sydney Mint stock.
+Removing every judged-junk row moves it by zero. The real weakness there is that
+one seller can set an instrument's median single-handedly; a seller-diversity
+warning on the Asks column would say more than any data fix.
+
+Per-instrument junk rates are wildly uneven and worth knowing before spending
+effort: the HALF buckets are essentially clean (0-4%), while the modern FULL
+buckets are 13-36%. That is causal - the Royal Mint only strikes the GBP 2 /
+GBP 5 / piedfort variants of the *full* sovereign, and only in modern proof
+ranges.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
