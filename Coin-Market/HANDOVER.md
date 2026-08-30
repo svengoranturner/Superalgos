@@ -954,6 +954,58 @@ and price stay visible while the picture is open. The large image is still
 named only in the `[open]` rule, so it is downloaded when asked for and not
 before: 546 rows, one image fetched.
 
+## Sold items lead, everywhere
+
+Completed sales are the only prices in the store that somebody actually paid.
+An asking price is an opinion and an unsold lot is an opinion that was
+refused, and the two were filed together under "Ended", at the bottom of the
+drill-down.
+
+- The drill-down now opens with **Sold - what someone actually paid**, then
+  *On sale now*, then *Ended without selling*. A sold row is quoted at its
+  hammer price and bid count, not at whatever it was asking the last time we
+  looked.
+- The market page carries a **What has actually sold** panel above the
+  instrument table, because every clearing figure in that table is derived
+  from exactly those rows and a derived number is easier to trust when its
+  source is visible above it.
+- Accepted Best Offers are shown and marked *price not published*. eBay never
+  publishes what they went for, and counting them at list price would
+  overstate every clearing figure.
+
+**The row limit was hiding them.** `listingsForInstrument` sorted live lots
+first, so on an instrument with 500 live listings the completed sales fell
+outside the limit entirely - it reported "0 sold" while holding more sales
+than any other key. Sales now sort first unconditionally; they number in the
+tens against thousands, so it costs nothing. There is a test with twelve dear
+live lots, one modest sale and a limit of five.
+
+## Two phrases were eating the best data in the store
+
+Of 23 completed sales, only 14 were being counted. Five of the nine missing
+were genuine coins:
+
+| lost | excluded on | what the title said |
+|---|---|---|
+| GBP 861, 28 bids | `mounted` | "Never Cleaned/**mounted**" |
+| GBP 829, 15 bids | `Mounted` | "Never Cleaned Or **Mounted**" |
+| GBP 809, 7 bids | `Mounted` | "Never Cleaned Or **Mounted**" |
+| GBP 795, 1 bid | `Capsule` | "Full Sovereign Gold Coin, 22ct **in Capsule**" |
+| GBP 405, 2 bids | `Capsule` | "Gold Half Sovereign **In Capsule**" |
+
+"Never mounted" is the strongest possible statement that a coin is *not*
+jewellery, and a capsule is what the coin arrived in. `readableAs()` strips
+negated and packaging phrases before the rules run, so a rule can no longer be
+tripped by a title saying the opposite of what it looks for. Measured over the
+corpus: **15 genuine sovereigns recovered, 2 newly dropped** (a gold ore lot
+and a genuine boxed *pair*, which is correctly a multi-lot). Counted sales went
+14 -> 19; the remaining 4 are correctly excluded - a wristwatch, a brass
+guinea weight, a plated FAUX set and a 9ct pendant.
+
+And the plural bug again: `capsule` carried a trailing word boundary, so
+"Capsules" never matched it at all and a listing selling ten of them read as a
+coin. Every noun in that file is worth checking for this.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
