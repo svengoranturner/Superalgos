@@ -517,6 +517,50 @@ title alone cannot separate shield from St George, and those trade
 differently. Most of "denomination not identified" is the eighths and tenths
 being correctly refused.
 
+## Does the price make sense? - the melt-floor verdict
+
+`src/analytics/plausibility.js`, shown on the review page and used to filter
+the opportunities panel.
+
+Gold has a floor. A genuine sovereign cannot be offered for less than the gold
+in it, because the metal alone is worth that to a scrap dealer. So a "gold
+sovereign" at GBP 107 against GBP 775 of melt is not a bargain - it is
+something else wearing the word, and the test does not care what the seller
+called it. That makes it stronger than any title rule, and it is the honest
+answer to "is this flagged listing genuine?"
+
+Four verdicts, with the percentage of melt beside them: **below melt - not
+this coin**, **priced like bullion**, **priced like a collector coin**, **far
+above melt**. Where the classifier managed a best guess its denomination sets
+the melt; where it did not, the quarter is used - the smallest sovereign
+struck - so an "impossible" verdict is the conservative call.
+
+**The opportunities panel drops the impossible ones and says how many.** An
+edge computed against a lot that cannot be the coin claimed is arithmetic on a
+category error, and it is exactly the listing that floats to the top of an
+edge-ranked list, because the bigger the mismatch the better the bargain
+looks. A book about sovereigns showed an 87% edge. Eight to nine lots are
+hidden at any time, linked to the review page so a wrong call is findable.
+
+**It also works as a detector of the classifier's own mistakes.** A genuine
+2012 quarter sovereign came up "below melt", which is only possible if it was
+measured against the wrong coin - the typographic fraction was unread and it
+had fallen through to FULL. Nothing in the code review found that; the verdict
+did, because a mis-denominated coin and a fake are indistinguishable from the
+price side.
+
+## Title rules for what the category ancestry cannot reach
+
+The Marsh reference work, the Sovereign-brand sunglasses, the "*No Coins*"
+empty box and the "Without Gold Sovereign's" set are all listed in genuine
+coin categories, so ancestry could not touch them. Two of those slipped rules
+written in the singular - "coin" not matching "Coins" - which is a cheap
+mistake to keep making, and there are tests pinning the plurals now.
+
+The fraction test refuses any 1/N below a quarter rather than a hand-listed
+set, and reads the typographic forms, so 1/100 oz tokens stop being priced as
+full sovereigns.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
