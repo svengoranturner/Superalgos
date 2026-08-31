@@ -67,9 +67,45 @@ module.exports = {
 
     /*  How this series talks about itself, for buttons and review copy that
         would otherwise hard-code the word "sovereign". */
+    /*
+        What counts as an odd price for a sovereign. These are the values
+        that were hard-coded in plausibility.js, moved here unchanged: a
+        sovereign is bullion-adjacent, so anything past 25% over its gold is
+        already a premium and three times is extraordinary. A silver series
+        needs entirely different numbers, which is why they are a property
+        of the series rather than of the tool.
+    */
+    plausibility: {
+        impossibleBelow: 0.85,
+        premiumAbove: 1.25,
+        extremeAbove: 3
+    },
+
     vocabulary: {
         one: 'sovereign',
         notOne: 'Not a sovereign',
         plural: 'sovereigns'
+    },
+
+    /*
+        Does this title describe one of ours?
+
+        The word does the work: nothing else on eBay is called a sovereign,
+        and the things that borrow the name - sovereign rings, sovereign
+        cases, Hattons' "1/10 sovereign" - are caught by the exclusion rules
+        rather than by pretending they are not sovereign-shaped.
+
+        Deliberately NOT keyed on "gold": a title reading "22ct full
+        sovereign" says nothing about gold and is still obviously one.
+    */
+    recognise (title) {
+        const t = ' ' + String(title || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' '
+        if (/\bsovereigns?\b/.test(t)) {
+            return { confidence: 0.95, reasons: ['names the sovereign'] }
+        }
+        if (/\bsov\b/.test(t)) {
+            return { confidence: 0.7, reasons: ['abbreviated as sov'] }
+        }
+        return null
     }
 }

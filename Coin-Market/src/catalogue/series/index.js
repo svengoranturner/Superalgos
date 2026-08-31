@@ -72,6 +72,64 @@ exports.forKey = function (key) {
 }
 
 /*
+    Which series a title belongs to.
+
+    A listing acquires its series from a pack that RECOGNISES it, never from
+    the search that found it. reclassify has no memory of which query
+    returned a stored listing, so a partition can only ever be a hint - and
+    the hint alone must never decide, or a Peace dollar found by the Morgan
+    sweep becomes a Morgan and a sovereign found by it becomes one too.
+
+    The outcome is one of:
+      { pack, confidence, reasons }         one series claims it
+      { pack: null, candidates, reasons }   nobody claims it, or several do
+
+    Two strong claimants go to REVIEW naming both, never to a coin flip. That
+    is the case worth being slow about: a Britannia priced as a sovereign is
+    invisible until somebody notices the premium looks odd.
+*/
+const STRONG = 0.8
+
+exports.recognise = function (title, options) {
+    const hint = options && options.hint ? packs.get(options.hint) : undefined
+
+    const claims = []
+    for (const pack of byLength) {
+        if (typeof pack.recognise !== 'function') { continue }
+        const claim = pack.recognise(title)
+        if (claim && Number.isFinite(claim.confidence) && claim.confidence > 0) {
+            claims.push({ pack, confidence: claim.confidence, reasons: claim.reasons || [] })
+        }
+    }
+    claims.sort((a, b) => b.confidence - a.confidence)
+
+    const strong = claims.filter(c => c.confidence >= STRONG)
+    if (strong.length === 1) { return strong[0] }
+    if (strong.length > 1) {
+        return {
+            pack: null,
+            candidates: strong.map(c => c.pack.id),
+            reasons: ['Could be ' + strong.map(c => c.pack.label).join(' or ') + ' - which is it?']
+        }
+    }
+
+    /*  One weak claim, and the search that found it agrees. Good enough to
+        file, not good enough to be quiet about: the caller flags it. */
+    if (claims.length === 1 && hint !== undefined && claims[0].pack === hint) {
+        return claims[0]
+    }
+    if (claims.length === 1) { return claims[0] }
+
+    return {
+        pack: null,
+        candidates: claims.map(c => c.pack.id),
+        reasons: claims.length === 0
+            ? ['No tracked series recognises this']
+            : ['Several series might claim this, none confidently']
+    }
+}
+
+/*
     The metal a key is priced against.
 
     Falls back to gold for a key no series claims, because every row in the
@@ -117,3 +175,4 @@ exports.resolve = function (packOrId) {
     enough to have the tool's series available and there is no order-of-
     require hazard. New packs are added to this list. */
 exports.register(require('./sovereign.js'))
+exports.register(require('./morgan.js'))
