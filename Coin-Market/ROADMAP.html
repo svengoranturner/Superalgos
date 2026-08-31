@@ -86,15 +86,17 @@
   <p class="eyebrow">Coin&#8209;Market &middot; status board &middot; 2026-08-31</p>
   <h1>What is being built, and in what order</h1>
   <div class="intro"><p>Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
-last edit: <strong>5,617 listings</strong>, <strong>26 completed sales</strong>, <strong>179 coins judged by hand</strong>, <strong>4 learned
-rules</strong>, <strong>214 tests green</strong>.</p>
+last edit: <strong>5,652 listings</strong>, <strong>26 completed sales</strong>, <strong>216 coins judged by hand</strong>, <strong>6 learned
+rules</strong>, <strong>221 tests green</strong>.</p>
 <p><strong>Four measurement bugs found and fixed this week, three of them by the owner reading the screen.</strong>
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
 (MKT-12); an instrument&#x27;s gold came from whichever lot sorted first (MKT-13); and the offers panel
 recommended lots that had already sold (UI-13). Every one of them was a number the tool stated
 confidently and could not support.</p>
-<p>The next wave is structural: a second coin series, staged behind a golden fixture (OPS-04) so the
-sovereign definition cannot move without saying so.</p>
+<p><strong>The safety net for the next wave is in.</strong> OPS-04 freezes what the tool believes a sovereign is —
+1,807 instrument keys, 682 real titles across every pool, denomination, review reason and
+known-dangerous phrasing, and 234 category paths — and answers &quot;did I just change that?&quot; in 70ms.
+Six deliberate mutations were each caught by the right test. The series work (CLS-10) can start.</p>
 <p><strong>One dependency gates a disproportionate share of everything below: completed sales.</strong> The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
 no clearing price at all — correctly, because they have fewer than three sales each. That is not a
@@ -105,13 +107,13 @@ time and the resolution queue only accepts listings whose end time has passed. <
 and it is deliberately parked — see the row.</p></div>
 
   <div class="tally">
-    <div><b>2</b><span>Now</span></div>
+    <div><b>1</b><span>Now</span></div>
     <div><b>8</b><span>Next</span></div>
     <div><b>4</b><span>Later</span></div>
-    <div><b>35</b><span>Done</span></div>
+    <div><b>36</b><span>Done</span></div>
     <div><b>1</b><span>Rejected</span></div>
   </div>
-  <p class="open">Open right now: <code>COL-01 · COL-02 · COL-08 · MKT-06 · CLS-10 · CLS-11 · UI-10 · UI-12 · OPS-04 · OPS-05</code> &mdash; point at an ID and any session
+  <p class="open">Open right now: <code>COL-01 · COL-02 · COL-08 · MKT-06 · CLS-10 · CLS-11 · UI-10 · UI-12 · OPS-05</code> &mdash; point at an ID and any session
   can find it.</p>
 
   <section class="area"><div class="area-head"><h2>COL</h2><p class="area-sub">collector, eBay API, call budget</p></div><p class="blurb">What the collector fetches, and what it costs to fetch it.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-now"><td class="id">COL-02</td><td class="what">Find out eBay&#x27;s real Trading GetItem allowance</td><td><span class="pill p-now">Now</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">One call. <code>smoke.js</code> already hits the rate-limit endpoint and throws away everything except the Browse entry. Until then COL-01 is costed against an assumption</td></tr>
@@ -160,11 +162,11 @@ and it is deliberately parked — see the row.</p></div>
 <tr class="s-done"><td class="id">UI-11</td><td class="what">Live auctions ending soonest first</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">The % of spot badge already says what a lot is worth; the ordering should say how long you have to act. <code>liveAuctions</code> had no test at all, so the ordering it now guarantees was unpinned</td></tr>
 <tr class="s-done"><td class="id">UI-13</td><td class="what">Never send you to a lot that has gone</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">The offers panel&#x27;s top suggestion had not been seen for 21.3 hours and had already sold. A Buy-It-Now lot has no end time and its outcome is never resolved (COL-01), so <code>last_seen</code> is the only evidence it exists - and nothing selected the column, so no surface could even see it. Two hours, measured from the <strong>last sweep</strong> not the clock: 88.6% of long gaps in this store begin at one collector outage, and a clock rule would have blanked the panels over that</td></tr>
 <tr class="s-done"><td class="id">UI-14</td><td class="what">Put the market page back in reach</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">Eight sections, 55 lot rows, and the two panels worth acting on were <strong>67.7% of the page</strong> - stacked, so the offers heading sat 4,855px down and was reached by text search. Capped to 10 and 8 with the rest folded inside the same form, evidence collapsed, sticky jump bar. Page 11,144px → 4,261px; offers 4,855px → 1,907px</td></tr></tbody></table></div></section>
-<section class="area"><div class="area-head"><h2>OPS</h2><p class="area-sub">repo, deploy, docs</p></div><p class="blurb">Repo, deploy and the traps worth never falling into twice.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-now"><td class="id">OPS-04</td><td class="what">A golden fixture of every instrument key</td><td><span class="pill p-now">Now</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">The safety net the series work needs before it starts. Every <code>(key, level, display_name, metal, fine_oz)</code> plus the titles behind them, so &quot;did I just silently change what a sovereign is?&quot; is answerable in 200ms rather than weeks later</td></tr>
-<tr class="s-next"><td class="id">OPS-05</td><td class="what">Drop a series without losing anything</td><td><span class="pill p-next">Next</span></td><td class="sz">S</td><td class="blk">CLS-10</td><td class="why">Deletes instruments and assignments; never touches listings, snapshots, outcomes or labels, which cost API calls that cannot be re-spent or human time. So a drop is reversible: re-add the pack, reclassify, and every lot comes back</td></tr>
+<section class="area"><div class="area-head"><h2>OPS</h2><p class="area-sub">repo, deploy, docs</p></div><p class="blurb">Repo, deploy and the traps worth never falling into twice.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-next"><td class="id">OPS-05</td><td class="what">Drop a series without losing anything</td><td><span class="pill p-next">Next</span></td><td class="sz">S</td><td class="blk">CLS-10</td><td class="why">Deletes instruments and assignments; never touches listings, snapshots, outcomes or labels, which cost API calls that cannot be re-spent or human time. So a drop is reversible: re-add the pack, reclassify, and every lot comes back</td></tr>
 <tr class="s-done"><td class="id">OPS-01</td><td class="what">This board, generated from one source</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>scripts/roadmap.py</code> reads <code>ROADMAP.md</code> and writes <code>ROADMAP.html</code>, so the board and the file cannot drift</td></tr>
 <tr class="s-done"><td class="id">OPS-02</td><td class="what">Every bulk write inside one transaction</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Unwrapped, the Pi fsyncs per row: a label click took over two minutes and timed out. In a transaction the full rebuild is 3.9s and a single verdict is 56ms</td></tr>
-<tr class="s-done"><td class="id">OPS-03</td><td class="what">Never rank every snapshot to use one instrument&#x27;s</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>activeListings</code> cost 435ms per call, once per coin type — the market page took <strong>19 seconds</strong> and was getting worse with every sweep. Scoped first, it is 1.4s</td></tr></tbody></table></div></section>
+<tr class="s-done"><td class="id">OPS-03</td><td class="what">Never rank every snapshot to use one instrument&#x27;s</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>activeListings</code> cost 435ms per call, once per coin type — the market page took <strong>19 seconds</strong> and was getting worse with every sweep. Scoped first, it is 1.4s</td></tr>
+<tr class="s-done"><td class="id">OPS-04</td><td class="what">A golden fixture of every instrument key</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">The safety net the series work needed before it started. <strong>1,807 keys, 682 real titles</strong> stratified across every pool, denomination, review reason and known-dangerous phrasing, and <strong>234 category paths</strong> — 70ms. Six deliberate mutations (separator, pool threshold, negation reading, fine ounces, spaced mintmark, category screen) were each caught by the right test. Regenerate with <code>npm run golden &lt;db&gt;</code>; never hand-edit it</td></tr></tbody></table></div></section>
 
   <footer>
     Generated from <code>ROADMAP.md</code> by <code>scripts/roadmap.py</code>. The reasoning behind

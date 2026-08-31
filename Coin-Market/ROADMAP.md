@@ -23,8 +23,8 @@ here, run the script, republish. The two cannot drift.
 ## Where things stand — 2026-08-31
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
-last edit: **5,617 listings**, **26 completed sales**, **179 coins judged by hand**, **4 learned
-rules**, **214 tests green**.
+last edit: **5,652 listings**, **26 completed sales**, **216 coins judged by hand**, **6 learned
+rules**, **221 tests green**.
 
 **Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
@@ -32,8 +32,10 @@ Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried
 recommended lots that had already sold (UI-13). Every one of them was a number the tool stated
 confidently and could not support.
 
-The next wave is structural: a second coin series, staged behind a golden fixture (OPS-04) so the
-sovereign definition cannot move without saying so.
+**The safety net for the next wave is in.** OPS-04 freezes what the tool believes a sovereign is —
+1,807 instrument keys, 682 real titles across every pool, denomination, review reason and
+known-dangerous phrasing, and 234 category paths — and answers "did I just change that?" in 70ms.
+Six deliberate mutations were each caught by the right test. The series work (CLS-10) can start.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
@@ -119,6 +121,6 @@ and it is deliberately parked — see the row.
 | --- | --- | --- | --- | --- | --- |
 | OPS-01 | This board, generated from one source | Done | S | | `scripts/roadmap.py` reads `ROADMAP.md` and writes `ROADMAP.html`, so the board and the file cannot drift |
 | OPS-02 | Every bulk write inside one transaction | Done | S | | Unwrapped, the Pi fsyncs per row: a label click took over two minutes and timed out. In a transaction the full rebuild is 3.9s and a single verdict is 56ms |
-| OPS-04 | A golden fixture of every instrument key | Now | S | | The safety net the series work needs before it starts. Every `(key, level, display_name, metal, fine_oz)` plus the titles behind them, so "did I just silently change what a sovereign is?" is answerable in 200ms rather than weeks later |
+| OPS-04 | A golden fixture of every instrument key | Done | S | | The safety net the series work needed before it started. **1,807 keys, 682 real titles** stratified across every pool, denomination, review reason and known-dangerous phrasing, and **234 category paths** — 70ms. Six deliberate mutations (separator, pool threshold, negation reading, fine ounces, spaced mintmark, category screen) were each caught by the right test. Regenerate with `npm run golden <db>`; never hand-edit it |
 | OPS-05 | Drop a series without losing anything | Next | S | CLS-10 | Deletes instruments and assignments; never touches listings, snapshots, outcomes or labels, which cost API calls that cannot be re-spent or human time. So a drop is reversible: re-add the pack, reclassify, and every lot comes back |
 | OPS-03 | Never rank every snapshot to use one instrument's | Done | S | | `activeListings` cost 435ms per call, once per coin type — the market page took **19 seconds** and was getting worse with every sweep. Scoped first, it is 1.4s |
