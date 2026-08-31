@@ -85,6 +85,9 @@ exports.start = function (opened, options) {
     })
 
     server.listen(config.port, config.host, () => {
+        /*  Quiet for tests, which start this on an ephemeral port and would
+            otherwise print a banner per request-set into the results. */
+        if (config.quiet) { return }
         console.log('Coin Market dashboard: http://' + config.host + ':' + config.port)
         console.log('Press Ctrl+C to stop.')
     })
