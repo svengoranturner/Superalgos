@@ -87,6 +87,28 @@ const RULES = [
         test: /\b24\s?(ct|k|kt|carat)\b|\.999\d?\b|\b999\.9\b|\b999\s*(fine|purity)\b|\b(bars?|ingots?|wafer)\b|\b(umicore|pamp|valcambi|metalor|heraeus|argor)\b|\bguineas?\b|\bbritannia\b/i
     },
     {
+        code: 'NOVELTY',
+        reason: 'A souvenir copy, not a coin',
+        /*  "2023 Gold-Coloured Sovereign Style Coins St George & the Dragon
+            (10pcs)" reached the live opportunities panel at GBP 710 with a
+            13% edge. Ten of them, gold-COLOURED, sovereign-STYLE. The
+            existing COUNTERFEIT rule looks for copy/replica/fake and none of
+            those words appear - the seller is not claiming they are coins,
+            and is not hiding it either. */
+        test: /\bgold[\s-]?colou?red\b|\bsovereign\s+style\b|\bstyle\s+coins?\b|\b\d+\s?pcs\b|\bnovelty\b|\bsouvenir\b/i
+    },
+    {
+        code: 'PICK_YOUR_COIN',
+        reason: 'One listing covering several different coins',
+        /*  "2026 Royal Mint Sovereign Range Sets & Singles - CHOOSE YOUR
+            COIN!" is a variation listing: the price shown is whichever
+            variant is cheapest, and the coin is whichever you pick. There is
+            no single coin to price, so the headline price belongs to a
+            quarter while the title says sovereign - which is exactly how it
+            came to show a 10.9% edge. */
+        test: /\bchoose\s+your\b|\bselect\s+your\b|\byour\s+choice\b|\bpick\s+your\b|\bsets?\s*(&|and)\s*singles?\b|\brange\s+sets?\b|\bmultiple\s+(years|dates)\b|\bany\s+year\b/i
+    },
+    {
         code: 'FANTASY_ISSUE',
         reason: 'A coin that was never struck as a sovereign',
         /*  There is no Edward VIII sovereign. He abdicated before any

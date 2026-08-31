@@ -65,8 +65,31 @@ function extractYear (title) {
 
 /* -------------------------------------------------------- denomination */
 
+/*
+    Punctuation carries no denominational meaning, so it is removed before
+    the denomination is read.
+
+    This is the third time the same bug has been fixed by widening a list of
+    allowed gap characters: first brackets and commas ("1/2 (Half) Sovereign",
+    "quarter new design ,sovereign"), now asterisks and hashes ("*HALF*
+    SOVEREIGN", "HALF SOLID #GOLD SOVEREIGN"). Both of the latter were sitting
+    in the live opportunities panel priced against a FULL sovereign's gold -
+    a half sovereign at GBP 663 looks like a 19% edge and is nothing of the
+    kind.
+
+    Enumerating permitted characters loses to the next seller who reaches for
+    a symbol. Stripping the ones that cannot mean anything wins once. Kept:
+    letters, digits, the fraction glyphs, the solidus in "1/2", and the pound
+    sign for the multi-weight forms.
+*/
+function readableTitle (title) {
+    return String(title).toLowerCase()
+        .replace(/[^a-z0-9£¼½⅛⅑⅒/.\s-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+}
+
 function extractDenomination (title) {
-    const t = title.toLowerCase()
+    const t = readableTitle(title)
     /*  The gap tolerance matters, and so does what is allowed IN the gap.
         Sellers write "Quarter-Sovereign", "Quarter 2g Sovereign",
         "1/2 (Half) Sovereign" and "quarter new design ,sovereign" - and a
@@ -86,8 +109,8 @@ function extractDenomination (title) {
 
     /*  "Qtr" is how dealers abbreviate it, and the Royal Mint's own listing
         titles use it - "Gold Proof Qtr Sovereign AGW 1.83g". */
-    if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w.,()&'/]{0,16}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
-    if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w.,()&'/]{0,16}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
+    if (/(\bquarter\b|\bqtr\b|\bqrtr\b|\b1\s*\/\s*4\b|¼)[\s\-\w./]{0,16}?sovereign/.test(t)) { return { denomination: 'QUARTER', confidence: 1 } }
+    if (/(\bhalf\b|\b1\s*\/\s*2\b|½)[\s\-\w./]{0,16}?sovereign/.test(t) || /\bhalf[-\s]?sov\b/.test(t)) { return { denomination: 'HALF', confidence: 1 } }
     /*  The multi-weight sovereigns, which sellers write nine different ways.
 
         Adjacency was the bug: requiring the multiplier immediately before
