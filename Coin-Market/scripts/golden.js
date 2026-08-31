@@ -161,7 +161,38 @@ function build (dbPath) {
 const dbPath = process.argv[2] || PATH.join(__dirname, '..', 'coin-market.db')
 const outPath = process.argv[3] || PATH.join(__dirname, '..', 'test', 'fixtures', 'series-golden.json')
 const fixture = build(dbPath)
+
+/*  One line per entry. Pretty-printing at indent 1 doubled this file to
+    884KB for no gain: the fixture exists to be read as a DIFF, and a diff is
+    most legible when one changed key is one changed line. */
+function render (f) {
+    const rows = (name, list) =>
+        '"' + name + '": [\n' + list.map(x => ' ' + JSON.stringify(x)).join(',\n') + '\n]'
+    return '{\n' +
+        '"note": ' + JSON.stringify(f.note) + ',\n' +
+        '"counts": ' + JSON.stringify(f.counts) + ',\n' +
+        rows('strata', f.strata) + ',\n' +
+        rows('keys', f.keys) + ',\n' +
+        rows('titles', f.titles) + ',\n' +
+        rows('screens', f.screens) + '\n}\n'
+}
+
 FS.mkdirSync(PATH.dirname(outPath), { recursive: true })
-FS.writeFileSync(outPath, JSON.stringify(fixture, null, 1) + '\n')
+FS.writeFileSync(outPath, render(fixture))
 console.log('golden: ' + fixture.counts.keys + ' keys, ' + fixture.counts.titles + ' titles, ' +
             fixture.counts.screens + ' category screens -> ' + outPath)
+
+/*  A name the tool computes and a name the store persisted should agree.
+    saveClassification writes display_name once and never revisits it, so a
+    change to displayName() silently leaves every existing row on the old
+    name. Worth knowing at generation time rather than never. */
+const drift = fixture.keys.filter(k => k.storedName !== k.displayName)
+if (drift.length > 0) {
+    console.log('  NOTE: ' + drift.length + ' of ' + fixture.keys.length +
+        ' keys have a stored name differing from the computed one, e.g.')
+    for (const d of drift.slice(0, 5)) {
+        console.log('    ' + d.key)
+        console.log('      stored:   ' + JSON.stringify(d.storedName))
+        console.log('      computed: ' + JSON.stringify(d.displayName))
+    }
+}
