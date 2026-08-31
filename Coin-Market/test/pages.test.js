@@ -187,3 +187,40 @@ test('the country filter holds on every path that asks eBay for listings', async
             'a request went out with no country restriction: ' + params.filter)
     }
 })
+
+/*
+    The owner spotted this within an hour of the second series going live:
+    silver dollars valued against gold, and against a sovereign's weight.
+
+    Both halves were true. The plausibility cell took a single spot price -
+    gold - and measured every row against it, and when it could not read a
+    denomination it fell back to a QUARTER SOVEREIGN. A Morgan holds 0.7734
+    oz of silver: against silver it is worth about GBP 38, against gold
+    about GBP 2,545, so a lot at GBP 70 read as 3% of spot and got badged
+    "below spot - not this coin".
+
+    Two series sharing one metal is not a rounding error, and it arrives
+    disguised as either a bargain or a fake.
+*/
+test('a silver coin is measured against silver, on the page as well as in the store', async () => {
+    const opened = twoSeriesStore()
+    const { '/review': review, '/listings?key=US.MORGAN.COMMON.DOLLAR': drill } =
+        await fetchAll(opened, ['/review', '/listings?key=US.MORGAN.COMMON.DOLLAR'])
+
+    /*  The fixture prices its Morgans at GBP 70-75 against silver at
+        GBP 49.70/oz and 0.7734 oz, so roughly 180-195% of spot. Measured
+        against gold the same rows would read about 3%. */
+    const percents = [...drill.body.matchAll(/(\d+)% of spot/g)].map(m => Number(m[1]))
+    assert.ok(percents.length > 0, 'no plausibility figures rendered at all')
+    for (const p of percents) {
+        assert.ok(p > 100 && p < 400,
+            'a Morgan read ' + p + '% of spot - that is another metal, not this coin')
+    }
+
+    /*  And nothing on either page should be calling them impossible. */
+    for (const [name, page] of [['review', review], ['drill-down', drill]]) {
+        const impossible = (page.body.match(/below spot - not this coin/g) || []).length
+        assert.strictEqual(impossible, 0, name + ' badged a correctly priced coin impossible')
+    }
+    opened.db.close()
+})

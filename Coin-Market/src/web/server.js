@@ -429,7 +429,7 @@ function marketPage (opened, url) {
           }, 8, n => 'Show the other ' + n + ' offer' + (n === 1 ? '' : 's')) +
           '</form>'
 
-    const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
+    const opportunityVerdict = newPlausibilityCell(opened.spotAt)
     const opportunityHtml = shown.length === 0
         ? '<p class="thin">No live auction is currently at or near the spot value of its gold. ' +
           considered + ' were checked.</p>'
@@ -618,23 +618,53 @@ ${salesHtml}
     right spot to measure against. Where it did not, the quarter is used -
     the smallest sovereign struck - so the verdict is the conservative one.
 */
-function newPlausibilityCell (spot) {
+/*
+    Takes the spot LOOKUP, not one price.
+
+    It used to take a single figure - gold - and measure every row against
+    it. With one series that was the same thing; with two it valued a Morgan
+    dollar against the gold price, which reads about sixty-six times too
+    dear, and fell back to a QUARTER SOVEREIGN's weight when it could not
+    read a denomination. Both halves of the calculation belonged to a coin
+    the row was not.
+
+    So the metal and the fallback denomination now both come from the row's
+    own series, and a row whose series has no spot data gets a blank rather
+    than another metal's price.
+*/
+function newPlausibilityCell (spotAt) {
     const PLAUSIBILITY = require('../analytics/plausibility.js')
-    const COINS = require('../catalogue/coins.js')
+    const now = new Date().toISOString()
 
     return (row) => {
-        if (spot === null) { return '' }
         const total = (row.price || 0) + (row.shipping || 0)
+
+        /*  The row's own series, from whatever it carries: the listing's
+            attribution, the key it was filed under, or the tool's best
+            guess at one. */
+        const key = row.instrumentKey || row.bestGuess || null
+        const found = key === null ? null : SERIES.forKey(key)
+        const pack = (found && found.pack) ||
+            (row.series ? SERIES.get(row.series) : null) ||
+            SERIES.defaultPack()
+
+        const spot = spotAt(now, pack.metal)
+        if (spot === null || spot === undefined) { return '' }
 
         let fineOz = Number.isFinite(row.fineOz) ? row.fineOz : null
         let measuredAgainst = 'the coin it is classified as'
         let assumed = false
 
         if (fineOz === null) {
-            const guessed = typeof row.bestGuess === 'string'
-                ? row.bestGuess.split('.').find(part => COINS.DENOMINATIONS[part] !== undefined)
+            /*  The smallest denomination this SERIES mints, as a floor - a
+                quarter sovereign is not a floor for a silver dollar. */
+            const names = Object.keys(pack.denominations)
+            const guessed = typeof key === 'string'
+                ? key.split('.').find(part => pack.denominations[part] !== undefined)
                 : undefined
-            const denomination = COINS.DENOMINATIONS[guessed] || COINS.DENOMINATIONS.QUARTER
+            const smallest = names.reduce((a, b) =>
+                pack.denominations[a].fineOz <= pack.denominations[b].fineOz ? a : b)
+            const denomination = pack.denominations[guessed] || pack.denominations[smallest]
             fineOz = denomination.fineOz
             measuredAgainst = denomination.label
             assumed = guessed === undefined
@@ -651,7 +681,8 @@ function newPlausibilityCell (spot) {
             sovereign is not what counts for a key-date silver dollar. */
         const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz, {
             liveAuction: running,
-            key: row.instrumentKey || row.bestGuess || null
+            key,
+            series: pack.id
         })
         if (v === null) { return '' }
 
@@ -671,7 +702,7 @@ function newPlausibilityCell (spot) {
         const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_SPOT' ? '' : 'good')
         return '<span class="badge ' + tone + '" title="' +
             escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
-                (assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
+                (assumed ? ', the smallest this series mints, because the denomination is unknown.' : '.')) +
             '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
             Math.round(v.percentOfSpot) + '% of spot</span>'
     }
@@ -807,7 +838,7 @@ function reviewPage (opened, url) {
     const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1, chosen)
     const truncated = fetched.length > QUEUE_LIMIT
     const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
-    const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
+    const verdictCell = newPlausibilityCell(opened.spotAt)
 
     const sale = ['auction', 'bin'].includes(url === undefined ? null : url.searchParams.get('sale'))
         ? url.searchParams.get('sale')
@@ -1229,7 +1260,7 @@ function listingsPage (opened, url) {
         ? url.searchParams.get('sale')
         : 'all'
     const rows = repository.listingsForInstrument(key, 500, sale)
-    const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
+    const verdictCell = newPlausibilityCell(opened.spotAt)
     /*  This page deliberately shows everything, including lots the sweep has
         stopped seeing - it is the route to a listing that classified wrongly
         and never reached the review queue. So the departed ones are badged
