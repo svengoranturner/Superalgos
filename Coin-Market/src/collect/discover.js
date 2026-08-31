@@ -26,6 +26,19 @@ exports.newDiscoverer = function (browseClient, repository, options) {
     const config = Object.assign(
         { marketplace: 'EBAY_GB', currency: 'GBP', allowedCountries: [] }, options || {})
 
+    /*
+        Re-read per call, not captured once.
+
+        The caller's comment has always said "re-read on every sweep, so
+        changing it on the page takes effect on the next one without a
+        restart" - and the code snapshotted it at construction, so it did
+        not. A country chosen on the dashboard sat unapplied until somebody
+        restarted the collector, which nobody would connect to the click.
+    */
+    const allowedCountries = () => typeof config.allowedCountries === 'function'
+        ? (config.allowedCountries() || [])
+        : (config.allowedCountries || [])
+
 
     /*
         Builds the partitioned query set. Partitioning exists because a
@@ -59,8 +72,8 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                     applied again at classification, where it is visible and
                     reversible, and why an empty list here means "ask for
                     everything" rather than "ask for nothing". */
-                if (config.allowedCountries.length > 0) {
-                    filter.itemLocationCountry = config.allowedCountries
+                if (allowedCountries().length > 0) {
+                    filter.itemLocationCountry = allowedCountries()
                 }
                 queries.push({
                     name: partition.name + (band ? '-' + band[0] + '-' + band[1] : ''),
@@ -104,7 +117,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 evidence than a category the seller picked. */
             if (label === null || label.verdict === LEARNED.VERDICT.UNSURE) {
                 const wrongCategory = EXCLUSIONS.screenCategory(item.categoryPath) ||
-                    EXCLUSIONS.screenLocation(item.itemCountry, config.allowedCountries)
+                    EXCLUSIONS.screenLocation(item.itemCountry, allowedCountries())
                 if (wrongCategory !== null) {
                     repository.queueForReview(item.browseId, 'EXCLUDED: ' + wrongCategory.reason, null, 0)
                     continue
@@ -211,7 +224,19 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                     const payload = await browseClient.search({
                         q: partition.q,
                         category_ids: (coins.categoryIds || []).join(',') || undefined,
-                        filter: BROWSE.buildFilter({ buyingOptions: ['AUCTION'] }),
+                        /*  The same country restriction the sweep applies.
+                            Omitting it here meant the five-minute poller
+                            fetched lots the owner cannot buy, every five
+                            minutes, for every series - and it is the reason
+                            a Morgan sweep pulled 3,664 US listings into a
+                            UK-only store within the hour. A filter that
+                            holds on one path and not the other is not a
+                            filter, it is a leak with a schedule. */
+                        filter: BROWSE.buildFilter(Object.assign(
+                            { buyingOptions: ['AUCTION'] },
+                            allowedCountries().length > 0
+                                ? { itemLocationCountry: allowedCountries() }
+                                : {})),
                         sort: 'endingSoonest',
                         limit: BROWSE.MAX_LIMIT
                     }, 'endingSoon')

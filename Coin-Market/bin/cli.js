@@ -330,7 +330,10 @@ COMMANDS.run = {
         const discoverer = require('../src/collect/discover.js').newDiscoverer(browse, repository, {
             marketplace: settings.ebay.marketplaceId,
             currency: settings.coins.currency,
-            allowedCountries: repository.setting('allowedCountries', []) || []
+            /*  A function, so the dashboard's choice reaches the next sweep
+                rather than the next restart - which is what the comment
+                above has always claimed. */
+            allowedCountries: () => repository.setting('allowedCountries', []) || []
         })
 
         /* Outcome resolution needs a user token. Without one the collector

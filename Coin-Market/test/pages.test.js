@@ -146,3 +146,44 @@ test('a lot you can see is a lot you can judge', async () => {
         'rows with no verdict buttons')
     opened.db.close()
 })
+
+/*  The country filter has to hold on every path that fetches.
+
+    It held on the hourly sweep and not on the five-minute poller, so the
+    poller went on fetching lots the owner cannot buy - every five minutes,
+    for every series. It surfaced when a Morgan sweep pulled 3,664 US
+    listings into a UK-only store within the hour, but it had been leaking
+    on the sovereign side all along.
+
+    A filter that holds on one path and not the other is not a filter. */
+test('the country filter holds on every path that asks eBay for listings', async () => {
+    const DISCOVER = require('../src/collect/discover.js')
+    const asked = []
+    const browse = {
+        async search (params) { asked.push(params); return { itemSummaries: [] } },
+        async searchAll (params) { asked.push(params); return { items: [], truncated: false } }
+    }
+    const coins = {
+        currency: 'GBP',
+        partitions: [{ name: 'p', q: 'gold sovereign', buyingOptions: ['AUCTION'] }],
+        priceBands: [[100, 300]]
+    }
+
+    /*  A function, because the dashboard writes this setting and the
+        collector has to see the change on the next sweep, not the next
+        restart. */
+    const discoverer = DISCOVER.newDiscoverer(browse, {
+        saveListing () {}, saveSnapshot () {}, queueForReview () {},
+        setListingSeries () {}, saveClassification () {},
+        labelIndex: () => new Map(), learnedRules: () => []
+    }, { allowedCountries: () => ['GB'] })
+
+    await discoverer.sweep(coins, 'GB.SOV')
+    await discoverer.endingSoon(coins, 'GB.SOV')
+
+    assert.ok(asked.length >= 2, 'both paths should have asked eBay something')
+    for (const params of asked) {
+        assert.match(String(params.filter), /itemLocationCountry/,
+            'a request went out with no country restriction: ' + params.filter)
+    }
+})
