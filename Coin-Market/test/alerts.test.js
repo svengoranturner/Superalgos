@@ -165,3 +165,27 @@ test('a collector outage does not make the market look dead', () => {
     assert.strictEqual(missed.length, 0,
         'a lot the recent sweeps have not seen is gone')
 })
+
+/*  The owner spotted this on the page: an offer of GBP 813.64 sat beside an
+    ask of GBP 853.05 and claimed 3.5% under, when those two numbers say
+    4.6%. Both figures were right about different things - the offer is an
+    ITEM price, because that is what eBay's offer box takes, while the ask
+    displayed beside it includes postage. Nothing on screen said which.
+
+    So the property worth pinning is not the arithmetic, it is that a reader
+    can check the percentage from the two numbers in front of them. */
+test('the discount can be verified from the numbers on the row', () => {
+    const alert = RULES.evaluate(viewOf([lotCosting(CEILING * 1.10)]), null, {})[0]
+    const postage = alert.shipping
+
+    const askOnTheRow = alert.askPrice + postage
+    const offerOnTheRow = alert.suggestedOffer + postage
+    assert.ok(Math.abs(alert.discount - (1 - offerOnTheRow / askOnTheRow)) < 1e-12,
+        'stated ' + alert.discount + ', but the row shows ' +
+        offerOnTheRow.toFixed(2) + ' against ' + askOnTheRow.toFixed(2))
+
+    /*  And postage must actually move it, or the test is passing on a lot
+        where the two bases happen to agree. */
+    assert.ok(postage > 0, 'the fixture lot needs postage for this to mean anything')
+    assert.notStrictEqual(alert.discount, 1 - alert.suggestedOffer / alert.askPrice)
+})

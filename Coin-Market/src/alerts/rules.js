@@ -157,7 +157,19 @@ exports.evaluate = function (view, curve, options) {
             buyingOptions: listing.buyingOptions,
             askPremium: listing.askPremium,
             suggestedOffer,
-            discount: 1 - (suggestedOffer / listing.price),
+            /*
+                Postage on BOTH sides, because the offer is an ITEM price -
+                that is what eBay's offer box takes - while every figure the
+                tool shows beside it includes postage. Compared item-price to
+                posted-ask, an offer of GBP 813.64 against an ask displayed as
+                GBP 853.05 claimed 3.5% while the two visible numbers said
+                4.6%. Both were right about different things, which is worse
+                than one being wrong: nothing on screen said which.
+            */
+            discount: (listing.price + (listing.shipping || 0)) > 0
+                ? 1 - ((suggestedOffer + (listing.shipping || 0)) /
+                       (listing.price + (listing.shipping || 0)))
+                : null,
             daysToSale: listing.medianDaysToSale === undefined ? null : listing.medianDaysToSale
         })
     }

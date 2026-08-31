@@ -327,13 +327,34 @@ function marketPage (opened, url) {
               if (entry.liquidity.sellThroughRate !== null) {
                   evidence.push(pct(entry.liquidity.sellThroughRate, 0) + ' of them sell at all')
               }
-              const cell = '<span class="badge good" title="Your ceiling for a ' +
-                  escapeHtml(entry.name) + ' less postage, with the buyer protection fee eBay ' +
-                  'adds on top already taken out - so this is the number to type into the offer ' +
-                  'box. Asking ' + gbp(a.currentTotal) + ' all-in against a ceiling of ' +
-                  gbp(a.bidCeiling) + '.' + (evidence.length ? ' ' + evidence.join('; ') + '.' : '') +
+              /*
+                  Three numbers, three bases, and the row only shows two of
+                  them - which is why the percentage read wrong.
+
+                  The offer is an ITEM price, because that is what eBay's
+                  offer box takes. The figure beside it on the row is the ask
+                  WITH postage, like every other row on the site. So an offer
+                  of GBP 813.64 sat next to an ask of GBP 853.05 and claimed
+                  3.5%, while the two visible numbers say 4.6%. Both were
+                  right about different things, which is worse than one being
+                  wrong: nothing on screen let you tell which.
+
+                  So the offer is now also stated with postage added, on the
+                  same basis as the number beside it, and the percentage is
+                  the one you can check by dividing them.
+              */
+              const postage = a.shipping || 0
+              const cell = '<span class="badge good" title="What to type into the offer box: ' +
+                  'your ceiling for a ' + escapeHtml(entry.name) + ', less postage, with the ' +
+                  'buyer protection fee eBay adds on top already taken out. ' +
+                  gbp(a.suggestedOffer) + ' + ' + gbp(postage) + ' postage + fee = ' +
+                  gbp(PREMIUM.totalCost(a.suggestedOffer, postage)) + ' all-in, against ' +
+                  gbp(a.currentTotal) + ' all-in at the asking price.' +
+                  (evidence.length ? ' ' + evidence.join('; ') + '.' : '') +
                   '">offer ' + gbp(a.suggestedOffer) + '</span> ' +
-                  '<span class="thin mono">' + pct(a.discount) + ' under ask</span>'
+                  '<span class="thin mono">' +
+                  (postage > 0 ? '+ ' + gbp(postage) + ' post &mdash; ' : '') +
+                  pct(a.discount) + ' under</span>'
               return queueRow(row, cell)
           }, 8, n => 'Show the other ' + n + ' offer' + (n === 1 ? '' : 's')) +
           '</form>'
