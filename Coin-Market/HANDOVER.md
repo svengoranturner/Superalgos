@@ -1,5 +1,10 @@
 # Handover
 
+**The roadmap lives as an artifact**, published from this repo as ROADMAP.html:
+https://claude.ai/code/artifact/634ee9ad-5f07-447d-af5a-1ba56a22ad33
+Republish that same file to update it in place. This document stays the
+state-of-play and the reasoning; the roadmap is what happens next.
+
 **Live on production eBay, fully authorised, and nothing is blocked.**
 Steps 1-5 are done bar running the collector: deployed on the Pi, reading the
 real gold feed, deletion endpoint validated, production keyset enabled, RuName

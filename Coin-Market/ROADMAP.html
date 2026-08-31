@@ -1,0 +1,410 @@
+<title>Coin Market Roadmap</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+
+<style>
+  :root {
+    --paper:      #f9f9f7;
+    --card:       #ffffff;
+    --ink:        #0b0b0b;
+    --ink-2:      #52514e;
+    --muted:      #8b8983;
+    --rule:       #e3e2db;
+    --rule-soft:  #eeede7;
+    --clearing:   #2a78d6;
+    --ask:        #c2521f;
+    --metal:      #9a6f1e;
+    --good:       #1f6b33;
+    --risk:       #b4392f;
+    --chip-ground: rgba(11,11,11,0.045);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:     #0d0d0d;
+      --card:      #17171a;
+      --ink:       #f4f4f2;
+      --ink-2:     #b9b8b2;
+      --muted:     #86847e;
+      --rule:      #2b2b2e;
+      --rule-soft: #202023;
+      --clearing:  #5b9df0;
+      --ask:       #e8763f;
+      --metal:     #d3a445;
+      --good:      #4fb166;
+      --risk:      #e8736a;
+      --chip-ground: rgba(255,255,255,0.06);
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper:     #0d0d0d;
+    --card:      #17171a;
+    --ink:       #f4f4f2;
+    --ink-2:     #b9b8b2;
+    --muted:     #86847e;
+    --rule:      #2b2b2e;
+    --rule-soft: #202023;
+    --clearing:  #5b9df0;
+    --ask:       #e8763f;
+    --metal:     #d3a445;
+    --good:      #4fb166;
+    --risk:      #e8736a;
+    --chip-ground: rgba(255,255,255,0.06);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
+
+  h1, h2, h3, .eyebrow, .chip, .lane-n {
+    font-family: Archivo, ui-sans-serif, system-ui, sans-serif;
+  }
+  .mono, .fig, .ev, .rd { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  .eyebrow {
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted); margin: 0 0 10px;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 42px); font-weight: 700; letter-spacing: -0.02em;
+    line-height: 1.08; margin: 0 0 14px; text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 17px; color: var(--ink-2); margin: 0; max-width: 62ch;
+  }
+
+  /* ---- instrument strip: what the tool reads right now ---- */
+  .readout {
+    margin: 40px 0 8px; border-top: 1px solid var(--rule);
+    border-bottom: 1px solid var(--rule);
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  }
+  .cell { padding: 18px 18px 16px; border-left: 1px solid var(--rule-soft); }
+  .cell:first-child { border-left: 0; padding-left: 0; }
+  .fig {
+    font-size: 25px; font-weight: 500; letter-spacing: -0.02em;
+    font-variant-numeric: tabular-nums; line-height: 1;
+  }
+  .fig.gold { color: var(--metal); }
+  .fig.warn { color: var(--risk); }
+  .cell .l {
+    margin-top: 7px; font-size: 12px; line-height: 1.4; color: var(--muted);
+  }
+  .asof { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
+
+  /* ---- lanes ---- */
+  .lane { margin-top: 56px; }
+  .lane-head {
+    display: flex; align-items: baseline; gap: 12px;
+    padding-bottom: 10px; border-bottom: 2px solid var(--ink);
+  }
+  .lane h2 {
+    font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0;
+  }
+  .lane-n {
+    font-size: 12px; font-weight: 600; color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .lane-note { font-size: 14px; color: var(--ink-2); margin: 12px 0 0; max-width: 64ch; }
+
+  .item { padding: 22px 0; border-bottom: 1px solid var(--rule-soft); }
+  .item:last-child { border-bottom: 0; }
+  .item h3 {
+    font-size: 17px; font-weight: 600; letter-spacing: -0.005em;
+    margin: 0 0 8px; text-wrap: balance;
+  }
+  .item p { margin: 0 0 10px; color: var(--ink-2); font-size: 15px; max-width: 66ch; }
+  .item p:last-child { margin-bottom: 0; }
+  .item strong { color: var(--ink); font-weight: 500; }
+
+  .chip {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.09em; text-transform: uppercase;
+    padding: 3px 8px; border-radius: 3px; background: var(--chip-ground);
+    color: var(--ink-2); vertical-align: 2px; margin-right: 9px;
+  }
+  .chip.free   { color: var(--good); }
+  .chip.spend  { color: var(--ask); }
+  .chip.block  { color: var(--risk); }
+  .chip.metal  { color: var(--metal); }
+
+  /* every item earns its place with a measurement */
+  .ev {
+    font-size: 12.5px; line-height: 1.65; color: var(--ink-2);
+    background: var(--card); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 11px 13px; margin-top: 12px;
+    font-variant-numeric: tabular-nums; overflow-x: auto;
+  }
+  .ev b { color: var(--ink); font-weight: 500; }
+  .ev .k { color: var(--muted); }
+
+  table.rd {
+    width: 100%; border-collapse: collapse; margin-top: 12px;
+    font-size: 12.5px; font-variant-numeric: tabular-nums;
+  }
+  table.rd th {
+    text-align: left; font-weight: 500; color: var(--muted);
+    border-bottom: 1px solid var(--rule); padding: 6px 10px 6px 0; white-space: nowrap;
+  }
+  table.rd td {
+    padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule-soft);
+    color: var(--ink-2); white-space: nowrap;
+  }
+  table.rd td:first-child { color: var(--ink); white-space: normal; }
+  .scroll { overflow-x: auto; }
+
+  .steps { margin: 12px 0 0; padding-left: 0; list-style: none; counter-reset: s; }
+  .steps li {
+    counter-increment: s; position: relative; padding-left: 30px;
+    margin-bottom: 8px; font-size: 14.5px; color: var(--ink-2);
+  }
+  .steps li::before {
+    content: counter(s); position: absolute; left: 0; top: 1px;
+    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
+    color: var(--muted); border: 1px solid var(--rule);
+    width: 19px; height: 19px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+  }
+
+  footer {
+    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--rule);
+    font-size: 13px; color: var(--muted);
+  }
+  a { color: var(--clearing); text-underline-offset: 3px; }
+  a:focus-visible, .item:focus-visible { outline: 2px solid var(--clearing); outline-offset: 3px; }
+</style>
+
+<div class="wrap">
+
+  <p class="eyebrow">Coin&#8209;Market &middot; Raspberry Pi &middot; eBay UK</p>
+  <h1>What the sovereign tracker does next</h1>
+  <p class="standfirst">
+    A running plan for the tool that measures what gold sovereigns actually sell for, against
+    the gold in them. Every item here carries the measurement that justifies it &mdash; if there
+    is no number, it is not on the list.
+  </p>
+
+  <div class="readout">
+    <div class="cell">
+      <div class="fig">5,617</div>
+      <div class="l">listings tracked</div>
+    </div>
+    <div class="cell">
+      <div class="fig gold">26</div>
+      <div class="l">completed sales &mdash; the only prices anyone actually paid</div>
+    </div>
+    <div class="cell">
+      <div class="fig warn">0</div>
+      <div class="l">Buy&#8209;It&#8209;Now outcomes ever observed</div>
+    </div>
+    <div class="cell">
+      <div class="fig">179</div>
+      <div class="l">coins you have judged</div>
+    </div>
+    <div class="cell">
+      <div class="fig">4</div>
+      <div class="l">rules learned from them</div>
+    </div>
+  </div>
+  <p class="asof">
+    Read from the live store on 31 August 2026. Auction clearing sits at 9.6% over melt against
+    41.4% asked &mdash; both now including eBay&rsquo;s buyer protection fee.
+  </p>
+
+  <!-- ================= NEXT ================= -->
+  <section class="lane">
+    <div class="lane-head">
+      <h2>Next</h2>
+      <span class="lane-n">3 items</span>
+    </div>
+    <p class="lane-note">
+      Ordered by what each one unblocks, not by effort.
+    </p>
+
+    <div class="item">
+      <h3><span class="chip spend">costs calls</span>Learn whether Buy&#8209;It&#8209;Now listings ever sell</h3>
+      <p>
+        The tool is blind to 94% of the market on the outcome side. A Buy&#8209;It&#8209;Now
+        listing is Good&#8209;&rsquo;Til&#8209;Cancelled, carries no end time, and the resolution
+        queue only accepts listings whose end time has passed &mdash; so a BIN lot can never enter
+        it. Every completed outcome in the store is an auction.
+      </p>
+      <p>
+        <strong>It would not give you BIN clearing prices.</strong> The tool refuses those by
+        design: a Buy&#8209;It&#8209;Now sale says what one buyer would pay on demand, not where
+        the market clears. What it gives you is <strong>BIN sell&#8209;through</strong> &mdash;
+        currently unknown, and arguably the more useful number. Knowing that shelf sovereigns at
+        40% over melt essentially never sell tells you what to ignore.
+      </p>
+      <div class="scroll">
+        <table class="rd">
+          <thead>
+            <tr><th>Trigger</th><th>Calls/day</th><th>Precision</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Absent from one sweep</td><td>~2,030</td><td>25%</td></tr>
+            <tr><td>Absent from four sweeps</td><td>~445</td><td>72%</td></tr>
+            <tr><td>Four sweeps, classified, no same&#8209;seller twin</td><td>~79&ndash;160</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:12px">
+        The naive trigger is a trap: most apparent departures are eBay rotating which of a
+        dealer&rsquo;s identical variation listings it surfaces. 73.6% of departed listings share
+        a title with another listing, and every one of those twins is the same seller.
+      </p>
+      <ol class="steps">
+        <li>Collect a clean week &mdash; the churn figures rest on 13 hours and 19 collector restarts, and two independent passes disagreed on the blip rate by an order of magnitude.</li>
+        <li>Settle eBay&rsquo;s real Trading allowance. One call: <span class="mono">smoke.js</span> already hits the rate&#8209;limit endpoint and throws away everything except the Browse entry.</li>
+        <li>Trigger on four consecutive absent sweeps, gated to classified listings with no same&#8209;seller twin.</li>
+        <li>Split sell&#8209;through by format before writing any BIN outcome &mdash; folding it into the existing column would pollute a number that is auction&#8209;derived today.</li>
+      </ol>
+      <div class="ev">
+        <span class="k">budget</span> Browse <b>732</b>/5,000 today &middot; Trading <b>6</b>, on its own allowance<br>
+        <span class="k">stock</span> <b>5,187</b> live BIN &middot; <b>356</b> live auction &middot; all 5,187 carry a legacy id<br>
+        <span class="k">catch</span> <b>51%</b> of BIN listings accept Best Offers, whose price eBay never publishes
+      </div>
+    </div>
+
+    <div class="item">
+      <h3><span class="chip free">no API cost</span>Report how long a listing sits before it sells</h3>
+      <p>
+        <span class="mono">medianDaysToSale</span> has been silently dead since the tool was
+        built: it needs a listing start date, and eBay&rsquo;s
+        <span class="mono">itemCreationDate</span> was being thrown away. It is captured now and
+        backfilling. This is the Buy&#8209;It&#8209;Now question that costs nothing to answer, and
+        it may make the job above unnecessary.
+      </p>
+      <div class="ev">
+        <span class="k">backfill</span> <b>5,380</b> of 5,617 listings now carry a start date, filling on each sweep
+      </div>
+    </div>
+
+    <div class="item">
+      <h3><span class="chip metal">accuracy</span>Calibrate the buyer protection fee on more than one order</h3>
+      <p>
+        Every premium now includes what eBay charges the buyer on top &mdash; the 1919&nbsp;P
+        sovereign recorded at &pound;829.12 cost its winner &pound;852.40. The schedule is
+        inferred from eBay&rsquo;s published terms and fitted to exactly one real order. A second
+        and third would turn an inference into a measurement.
+      </p>
+      <div class="ev">
+        <span class="k">fit</span> computed <b>&pound;23.33</b> against an actual <b>&pound;23.28</b> &mdash; 5p on &pound;829<br>
+        <span class="k">effect</span> +5.5% on a &pound;50 lot, +2.3% on a &pound;2,000 one &mdash; it moves quarters more than quintuples<br>
+        <span class="k">how</span> add the order to <span class="mono">OBSERVED</span> in <span class="mono">buyercost.js</span>; the test reports the fit
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= WATCHING ================= -->
+  <section class="lane">
+    <div class="lane-head">
+      <h2>Watching</h2>
+      <span class="lane-n">3 items</span>
+    </div>
+    <p class="lane-note">
+      Measured, understood, and not yet worth acting on. Each needs more data rather than more code.
+    </p>
+
+    <div class="item">
+      <h3><span class="chip block">thin</span>The clearing side is 26 sales</h3>
+      <p>
+        Every number the tool exists to report rests on completed auctions, and it gains roughly
+        one a day. Splitting the collector pool into six was right, but it also means proof,
+        graded and pre&#8209;1871 sovereigns show no clearing price at all until each accumulates
+        its own three sales.
+      </p>
+      <div class="ev">
+        <span class="k">by pool</span> bullion <b>5</b> &middot; branch mint <b>4</b> &middot; unattributed <b>6</b> &middot; graded <b>1</b> &middot; pre&#8209;1871 <b>2</b> &middot; proof <b>0</b>
+      </div>
+    </div>
+
+    <div class="item">
+      <h3><span class="chip block">thin</span>The closing&#8209;uplift curve knows 23 auctions</h3>
+      <p>
+        It now gives each auction one vote rather than one per snapshot, so its sample count is
+        honest &mdash; but honest and small. No auction alert has ever fired, because auctions
+        more than two hours from closing are discarded before the projection is reached.
+      </p>
+      <div class="ev">
+        <span class="k">buckets</span> 5m <b>17</b> &middot; 15m <b>19</b> &middot; 1h <b>21</b> &middot; 6h <b>20</b> &middot; 24h <b>10</b> auctions &middot; 3d and beyond, none yet
+      </div>
+    </div>
+
+    <div class="item">
+      <h3><span class="chip">judgement</span>One dealer can set a whole coin type&rsquo;s asking median</h3>
+      <p>
+        Half Sovereign &middot; Victoria Young Head asks 133% over melt, and one seller holds 83 of
+        its 165 listings. That is a real market number, not contamination &mdash; but a
+        seller&#8209;diversity warning on the Asks column would say more than any data fix.
+      </p>
+    </div>
+  </section>
+
+  <!-- ================= SETTLED ================= -->
+  <section class="lane">
+    <div class="lane-head">
+      <h2>Settled</h2>
+      <span class="lane-n">recent</span>
+    </div>
+    <p class="lane-note">
+      Kept here because each one cost real data before it was found, and the shape of the mistake
+      tends to recur.
+    </p>
+
+    <div class="item">
+      <h3>Punctuation no longer hides a denomination</h3>
+      <p>
+        Fixed three times by widening a list of allowed characters &mdash; brackets, then commas,
+        then asterisks and hashes. <span class="mono">*HALF* SOVEREIGN</span> was priced against a
+        full sovereign&rsquo;s gold and showed a 19% edge that did not exist. Punctuation is now
+        stripped before the denomination is read, which ends the whole class.
+      </p>
+    </div>
+
+    <div class="item">
+      <h3>Country filtering is opt&#8209;in, and defaults to the UK</h3>
+      <p>
+        Screening to GB alone removed <strong>1,268 genuine sovereigns</strong> in one pass, 744
+        of them Australian &mdash; Sydney, Melbourne and Perth mint coins are British sovereigns
+        and the scarcest part of the series. The filter is a multi&#8209;select on the market page
+        with the cost of narrowing shown beside each country.
+      </p>
+    </div>
+
+    <div class="item">
+      <h3>Two phrases were eating the best data in the store</h3>
+      <p>
+        Of 23 completed sales only 14 were counted. Three sovereigns that fetched &pound;809,
+        &pound;829 and &pound;861 said <em>&ldquo;Never Cleaned Or Mounted&rdquo;</em> and were
+        dropped as jewellery; two more said <em>&ldquo;in Capsule&rdquo;</em>. Negations and
+        packaging are stripped before the rules run.
+      </p>
+    </div>
+
+    <div class="item">
+      <h3>A stray click could have excluded 414 sovereigns</h3>
+      <p>
+        Accepting a learned rule was one click, and <span class="mono">george</span> would have
+        stopped pricing 414 lots. Rules that break nothing keep their button; anything that would
+        remove priced coins goes behind a confirmation page that names them.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    Coin&#8209;Market &middot; state of play in <span class="mono">HANDOVER.md</span> &middot;
+    201 tests &middot; collector, dashboard and deletion endpoint all running on the Pi.
+  </footer>
+
+</div>
