@@ -90,12 +90,14 @@ function build (dbPath) {
             level: r.level,
             fineOz: r.fineOz,
             metal: r.metal,
-            displayName: INSTRUMENTS.displayName(r.key),
-            /*  What the store has written for this key. Recorded separately
-                because saveClassification PERSISTS the name, so the computed
-                and the stored one can drift and nothing would say so. */
-            storedName: r.storedName
+            displayName: INSTRUMENTS.displayName(r.key)
         }))
+    /*  Not emitted, only checked: saveClassification PERSISTS display_name
+        and never revisits it, so the computed name and the stored one can
+        drift silently. Comparing here costs nothing and keeps 1,807 copies
+        of an identical string out of the fixture. */
+    const drift = all('SELECT key, display_name AS storedName FROM instrument ORDER BY key')
+        .filter(r => r.storedName !== INSTRUMENTS.displayName(r.key))
 
     /* ---- titles, stratified by the behaviour they exercise ------------- */
     const chosen = new Map()
@@ -154,7 +156,8 @@ function build (dbPath) {
         strata,
         keys,
         titles,
-        screens
+        screens,
+        drift
     }
 }
 
@@ -182,17 +185,14 @@ FS.writeFileSync(outPath, render(fixture))
 console.log('golden: ' + fixture.counts.keys + ' keys, ' + fixture.counts.titles + ' titles, ' +
             fixture.counts.screens + ' category screens -> ' + outPath)
 
-/*  A name the tool computes and a name the store persisted should agree.
-    saveClassification writes display_name once and never revisits it, so a
-    change to displayName() silently leaves every existing row on the old
-    name. Worth knowing at generation time rather than never. */
-const drift = fixture.keys.filter(k => k.storedName !== k.displayName)
-if (drift.length > 0) {
-    console.log('  NOTE: ' + drift.length + ' of ' + fixture.keys.length +
-        ' keys have a stored name differing from the computed one, e.g.')
-    for (const d of drift.slice(0, 5)) {
+if (fixture.drift.length > 0) {
+    console.log('  NOTE: ' + fixture.drift.length + ' of ' + fixture.counts.keys +
+        ' keys have a stored display_name differing from the computed one, e.g.')
+    for (const d of fixture.drift.slice(0, 5)) {
         console.log('    ' + d.key)
         console.log('      stored:   ' + JSON.stringify(d.storedName))
-        console.log('      computed: ' + JSON.stringify(d.displayName))
+        console.log('      computed: ' + JSON.stringify(INSTRUMENTS.displayName(d.key)))
     }
+} else {
+    console.log('  every stored display_name matches the computed one')
 }
