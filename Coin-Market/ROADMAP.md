@@ -24,12 +24,16 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,617 listings**, **26 completed sales**, **179 coins judged by hand**, **4 learned
-rules**, **210 tests green**.
+rules**, **214 tests green**.
 
-**The tool was quoting bid ceilings nobody could act on.** Fair value is fee-inclusive; the bid you
-type into eBay is not, and nothing took the fee back out. Fixed in MKT-10, and it is what made
-MKT-11 buildable. The next wave is structural: a second coin series, staged behind a golden fixture
-(OPS-04) so the sovereign definition cannot move without saying so.
+**Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
+Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
+(MKT-12); an instrument's gold came from whichever lot sorted first (MKT-13); and the offers panel
+recommended lots that had already sold (UI-13). Every one of them was a number the tool stated
+confidently and could not support.
+
+The next wave is structural: a second coin series, staged behind a golden fixture (OPS-04) so the
+sovereign definition cannot move without saying so.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
@@ -61,7 +65,9 @@ and it is deliberately parked — see the row.
 | ID | Item | Status | Size | Blocked by | Why / evidence |
 | --- | --- | --- | --- | --- | --- |
 | MKT-01 | Charge eBay's buyer protection fee in every premium | Done | M | | The premium reported was one nobody paid: a sale recorded at £829.12 cost its winner £852.40. Sovereign (bullion) moved 6.6% → 9.6% clearing, 37.0% → 41.4% asking |
-| MKT-02 | Calibrate the fee schedule on more than one order | Now | S | | Fitted to exactly one real order; reproduces it to 5p on £829. Add orders to `OBSERVED` in `buyercost.js` and the test reports the fit |
+| MKT-02 | Calibrate the fee schedule on more than one order | Done | S | | Fitted to one order it was 5p over on that one **and 5p over on the second** - a constant offset, which one observation cannot tell from a good fit. At `fixed: 0.70` both reproduce exactly with a round 2%. Two orders £7 apart still cannot separate the fixed term from the rate; a cheap order would |
+| MKT-12 | Charge the fee on completed sales too | Done | S | | The owner found it: a 1968 sovereign that cost its winner £845.40 was reported at £822.25 and **6.2%** over spot when the true figure is **9.1%**. The sold table did its own arithmetic and never went through `totalCost()` - MKT-01's error surviving in the one place that skipped the choke point MKT-01 created. It also priced every sale against TODAY'S gold rather than the gold when the lot closed |
+| MKT-13 | One coin's gold, never one lot's | Done | S | | The instrument's fine ounces came from `active[0].fineOz`, which is `fine_oz × quantity` - a LOT's gold. A nine-coin set was due at the front of `GB.SOV.UNATTRIBUTED.HALF` on 03 Sep and would have multiplied that key's bid ceiling by nine. CLS-07 kept lot size off the shared instrument row for exactly this reason; the read path had to learn it too |
 | MKT-03 | One vote per auction in the closing-uplift curve | Done | S | | `n` counted snapshots, not auctions: 1,418 "samples" from 23 auctions, one contributing 110. Buckets now read 17/19/21/20/10 auctions |
 | MKT-04 | Split the collector pool by why a coin is not ordinary | Done | M | | One bucket held a £10,000 1832 William IV beside a modern proof and reported one median. Pre-1871 alone asks **215.6%**; the three ordinary pools now sit in a coherent 37–43% band |
 | MKT-05 | Spread must use the clearing median the page prints | Done | S | | The table could show `Clears at: —` beside `Spread: 40.3%` — a spread against a number it had just declined to show, off a single sale |
@@ -101,6 +107,8 @@ and it is deliberately parked — see the row.
 | UI-07 | Reach the listings behind any market number | Done | M | | 2,740 of 3,447 live priced listings had no review-queue row — they classified confidently and wrongly, so this page is the only route to them |
 | UI-08 | Every column carries its definition | Done | S | | Several are not what they look like: Asks is fixed-price only, Live counts auctions too, Bids excludes auctions that got none |
 | UI-09 | Say "spot", never "melt" | Done | S | | Melt in the UK is scrap, and scrap pays **under** spot. The tool measures gold content at spot, so the word was wrong |
+| UI-13 | Never send you to a lot that has gone | Done | M | | The offers panel's top suggestion had not been seen for 21.3 hours and had already sold. A Buy-It-Now lot has no end time and its outcome is never resolved (COL-01), so `last_seen` is the only evidence it exists - and nothing selected the column, so no surface could even see it. Two hours, measured from the **last sweep** not the clock: 88.6% of long gaps in this store begin at one collector outage, and a clock rule would have blanked the panels over that |
+| UI-14 | Put the market page back in reach | Done | M | | Eight sections, 55 lot rows, and the two panels worth acting on were **67.7% of the page** - stacked, so the offers heading sat 4,855px down and was reached by text search. Capped to 10 and 8 with the rest folded inside the same form, evidence collapsed, sticky jump bar. Page 11,144px → 4,261px; offers 4,855px → 1,907px |
 | UI-10 | A watchlist of coins you are hunting | Next | M | | The tool tells you what the market is doing; it does not yet know what you want. Ships as two kinds - a specific coin type, and a coin type under a price - because collection gaps need mintmark-level holdings and MetalHead does not record a mintmark |
 | UI-11 | Live auctions ending soonest first | Done | S | | The % of spot badge already says what a lot is worth; the ordering should say how long you have to act. `liveAuctions` had no test at all, so the ordering it now guarantees was unpinned |
 | UI-12 | Group the market page by series, and cap per series | Next | M | CLS-10 | `instruments(0,3)` is ordered by listing count and sliced to 40 GLOBALLY. 5,617 sovereign listings against a new Morgan corpus means Morgan falls off the bottom and never appears - not clutter, invisibility |
