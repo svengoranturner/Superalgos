@@ -27,11 +27,12 @@ function lotCosting (allIn, extra) {
     }, extra || {})
 }
 
-function viewOf (listings) {
+function viewOf (listings, sweepAt) {
     return {
         fairValue: { sufficient: true },
         bidCeiling: { allInValue: CEILING },
         spot: { gbpPerOz: 3292 },
+        sweepAt: sweepAt === undefined ? new Date().toISOString() : sweepAt,
         active: listings
     }
 }
@@ -135,4 +136,32 @@ test('freshness is measured in hours and described for a human', () => {
         than the window that decides what is worth acting on - the statistics
         need the sample and are not sending anyone to a checkout. */
     assert.ok(FRESHNESS.ACTIONABLE_HOURS < 24)
+})
+
+/*  The correction that mattered most.
+
+    Freshness is measured from the last completed sweep, not the wall clock.
+    Of 5,431 gaps over two hours between sightings of a lot in this store,
+    4,813 - 88.6% - begin at one single moment: the collector outage of
+    2026-08-30 13:56 to 15:58. Measured against the clock, that outage would
+    have emptied both actionable panels for two hours because of a failure in
+    the collector rather than any change in the market. */
+test('a collector outage does not make the market look dead', () => {
+    const now = Date.now()
+    const at = h => new Date(now - h * 3600000).toISOString()
+
+    /*  The collector has been down five hours. The last sweep it managed saw
+        this lot, so as far as anyone knows the lot is exactly as live as it
+        was - there has been no sweep since that could have missed it. */
+    const outage = RULES.evaluate(
+        viewOf([lotCosting(CEILING * 1.09, { lastSeen: at(5) })], at(5)), null, {})
+    assert.strictEqual(outage.length, 1,
+        'a lot seen by the most recent sweep is current, however long ago that sweep was')
+
+    /*  Sweeps have been running normally and this lot has missed at least
+        two of them. That is the real signal, and it still fires. */
+    const missed = RULES.evaluate(
+        viewOf([lotCosting(CEILING * 1.09, { lastSeen: at(5) })], at(0.1)), null, {})
+    assert.strictEqual(missed.length, 0,
+        'a lot the recent sweeps have not seen is gone')
 })

@@ -448,6 +448,32 @@ exports.newRepository = function (db, options) {
             made a nine-coin set redefine the gold content of every coin
             filed under the same key.
         */
+        /*
+            When the last full sweep ran.
+
+            discover.js stamps ONE seenAt at the start of a sweep onto every
+            listing it saw, so the newest last_seen among Good-'Til-Cancelled
+            lots is exactly the clock of the last completed sweep. Restricted
+            to end_time IS NULL because the five-minute ending-soon poller
+            only ever refreshes auctions - including them would make this the
+            poller's clock instead, which is not the same thing.
+
+            Freshness is judged against this rather than against the wall
+            clock. Of 5,431 gaps over two hours between sightings of a lot,
+            4,813 - 88.6% - start at one single moment: the collector outage
+            of 2026-08-30 13:56 to 15:58. Judged against the clock, that
+            outage would have emptied the actionable panels for two hours
+            over an event in the collector rather than in the market. Judged
+            against the last sweep, an outage freezes the anchor and nothing
+            becomes stale that was not already.
+        */
+        lastSweepAt () {
+            const row = db.prepare(
+                'SELECT MAX(last_seen) AS at FROM listing WHERE end_time IS NULL'
+            ).get()
+            return row === undefined || !row.at ? null : row.at
+        },
+
         instrumentFineOz (key) {
             const row = db.prepare('SELECT fine_oz FROM instrument WHERE key = ?').get(key)
             return row === undefined || row.fine_oz === null ? null : row.fine_oz

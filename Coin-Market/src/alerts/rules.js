@@ -34,6 +34,10 @@ exports.evaluate = function (view, curve, options) {
     }
 
     const now = Date.now()
+    /*  Freshness is judged against the last completed sweep, not the clock -
+        otherwise a collector outage empties the panel over a failure in the
+        collector rather than a change in the market. */
+    const sweepAt = view.sweepAt || now
     const ceiling = view.bidCeiling.allInValue
 
     for (const listing of view.active) {
@@ -44,7 +48,7 @@ exports.evaluate = function (view, curve, options) {
             had not been seen for 21.3 hours and had already sold. See
             analytics/freshness.js for why two hours, and what it costs.
         */
-        if (!FRESHNESS.isActionable(listing.lastSeen, now, config.staleAfterHours)) { continue }
+        if (!FRESHNESS.isActionable(listing.lastSeen, sweepAt, config.staleAfterHours)) { continue }
 
         const total = PREMIUM.totalCost(listing.price, listing.shipping)
         if (!Number.isFinite(total) || total <= 0) { continue }

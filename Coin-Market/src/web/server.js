@@ -217,6 +217,10 @@ function marketPage (opened, url) {
         for months.
     */
     const NEAR_SPOT = 1.05
+    /*  Judged against the last completed sweep, never the wall clock: 88.6%
+        of all long gaps in this store begin at one collector outage, and a
+        clock rule would have blanked these panels because of it. */
+    const sweepAt = repository.lastSweepAt()
     const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
     const spotForOpportunities = opened.spotAt(new Date().toISOString())
 
@@ -234,7 +238,7 @@ function marketPage (opened, url) {
         /*  An auction carries a real end time, so it cannot linger the way a
             Buy-It-Now can - but one the sweep has stopped seeing has usually
             been pulled, and telling you to bid on it is the same failure. */
-        opportunities = opportunities.filter(row => FRESHNESS.isActionable(row.lastSeen))
+        opportunities = opportunities.filter(row => FRESHNESS.isActionable(row.lastSeen, sweepAt))
         opportunities = opportunities
             .filter(row => row.ratio <= NEAR_SPOT)
             /*  A coin you have already judged not to be a sovereign is not an
@@ -256,7 +260,7 @@ function marketPage (opened, url) {
     }
 
     const shown = opportunities.slice(0, 40)
-    for (const row of shown) { row.back = '/' }
+    for (const row of shown) { row.back = '/'; row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
         not silently widen the sample underneath them. */
@@ -304,8 +308,7 @@ function marketPage (opened, url) {
           'Genuine &mdash; selected</button>' +
           '<span class="thin">A wrong coin here is worth more than a dismissal: it is setting ' +
           'the clearing price these offers are measured against.</span></div>' +
-          '<div class="card"><div class="queue">' +
-          offers.map(entry => {
+          cappedQueue(offers, entry => {
               const a = entry.alert
               /*  Shaped for queueRow so the picture, the checkbox and the
                   verdict controls are the same ones as everywhere else -
@@ -314,7 +317,7 @@ function marketPage (opened, url) {
                   legacyId: a.legacyId, title: a.title, itemWebUrl: a.url,
                   imageUrl: a.imageUrl, price: a.askPrice, shipping: a.shipping,
                   buyingOptions: a.buyingOptions, instrumentKey: entry.key,
-                  priced: 1, back: '/'
+                  lastSeen: a.lastSeen, sweepAt, priced: 1, back: '/'
               }
               const days = entry.liquidity.medianDaysToSale
               const evidence = []
@@ -332,8 +335,8 @@ function marketPage (opened, url) {
                   '">offer ' + gbp(a.suggestedOffer) + '</span> ' +
                   '<span class="thin mono">' + pct(a.discount) + ' under ask</span>'
               return queueRow(row, cell)
-          }).join('') +
-          '</div></div></form>'
+          }, 8, n => 'Show the other ' + n + ' offer' + (n === 1 ? '' : 's')) +
+          '</form>'
 
     const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
     const opportunityHtml = shown.length === 0
@@ -348,9 +351,9 @@ function marketPage (opened, url) {
           'Genuine &mdash; selected</button>' +
           '<span class="thin">Tick anything that is not what it says it is; it leaves this ' +
           'panel and every statistic at once.</span></div>' +
-          '<div class="card"><div class="queue">' +
-          shown.map(row => queueRow(row, opportunityVerdict(row))).join('') +
-          '</div></div></form>'
+          cappedQueue(shown, row => queueRow(row, opportunityVerdict(row)), 10,
+              n => 'Show the other ' + n + ' auction' + (n === 1 ? '' : 's')) +
+          '</form>'
 
     const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
     const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
@@ -381,10 +384,16 @@ ${countryPicker(repository)}
   </div>
 </div>
 
-<h2>Where each coin type clears, against what sellers ask</h2>
-<div class="card">${RENDER.premiumChart(chartRows)}</div>
 
-<h2>Live auctions at or near spot (${shown.length})</h2>
+<div class="jump">
+  <a href="#auctions">Auctions near spot <span class="n">${shown.length}</span></a>
+  <a href="#offers">Open to an offer <span class="n">${offers.length}</span></a>
+  <a href="#sold">Actually sold <span class="n">${sales.length}</span></a>
+  <a href="#evidence">The evidence behind these</a>
+  <a href="/review">Needs review</a>
+</div>
+
+<h2 id="auctions">Live auctions at or near spot (${shown.length})</h2>
 <p class="thin">Auctions on coins the tool can identify, whose current bid is within 5% of the
 spot value of the gold in them. Worth watching even if you do not bid: where one of these
 finishes is how fair value gets measured.
@@ -392,30 +401,14 @@ ${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
 ${opportunitySort}
 ${opportunityHtml}
 
-<h2>Buy-It-Now, open to an offer (${offers.length})</h2>
+<h2 id="offers">Buy-It-Now, open to an offer (${offers.length})</h2>
 <p class="thin">Lots with a Best Offer button, asking no more than a quarter above where their coin
 type actually clears. The Best Offer button says a seller will listen, not that the price is
 keener &mdash; measured here, these lots ask a shade MORE than rigid Buy-It-Nows &mdash; so the
 suggested figure comes from your own ceiling rather than from their asking price.</p>
 ${offerHtml}
 
-<h2>What the tracked market is made of</h2>
-<div class="card">
-  ${RENDER.compositionChart(composition)}
-  <p class="thin" style="margin:14px 0 0">
-    <strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing is
-    Good-'Til-Cancelled and carries no end time, so it never becomes eligible for outcome
-    resolution &mdash; every one of the ${composition.auctionSold + composition.auctionUnsold}
-    completed lots here is an auction. So the clearing prices describe the auction market, the
-    asking prices are ${Math.round(100 * composition.liveBin / (composition.liveBin + composition.liveAuction))}%
-    Buy-It-Now, and the spread between them compares two markets rather than two ends of one.
-    ${composition.binVanished > 0
-        ? '<strong>' + composition.binVanished + '</strong> Buy-It-Now listings have gone quiet ' +
-          'without being resolved; each has either sold or been withdrawn and we cannot yet tell which.'
-        : ''}</p>
-</div>
-
-<h2>What has actually sold (${sales.length})</h2>
+<h2 id="sold">What has actually sold (${sales.length})</h2>
 <p class="thin">Completed auctions with a hammer price. Every clearing figure on this page is
 built from these and nothing else &mdash; an asking price is an opinion, and this is what somebody
 paid. ${sales.length < 30
@@ -423,41 +416,76 @@ paid. ${sales.length < 30
     : ''}</p>
 ${salesHtml}
 
-<h2>Every tracked coin type</h2>
-<div class="card scroll">
-<table>
-  <thead><tr>
-    <th>Coin type</th>
-    <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
-    <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
-    <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25–p75</th>
-    <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
-    <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
-    <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
-    <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
-    <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
-    <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
-  </tr></thead>
-  <tbody>${tableRows}</tbody>
-</table>
-</div>
+<h2 id="evidence" class="sub" style="margin:34px 0 4px">The evidence behind these</h2>
 
-<h2>How much auctions rise before the hammer</h2>
-<div class="card">
-  ${RENDER.upliftChart(curve)}
-  <p class="thin">Learned from this tool's own snapshots. It is why an alert can fire while
-  you can still act, instead of after the lot has gone.</p>
-</div>
+<details class="fold">
+  <summary>Where each coin type clears, against what sellers ask
+    <span class="why">the gap you are trying to buy inside</span></summary>
+  <div class="card">${RENDER.premiumChart(chartRows)}</div>
+</details>
 
-<h2>What this cannot see</h2>
-<div class="card">
-  <p class="thin" style="margin:0">
-    <strong>${censored}</strong> ended listings are excluded from clearing prices because eBay never
-    publishes what an accepted Best Offer sold for — counting those at list price would
-    systematically overstate the market.
-    ${spotGaps > 0 ? '<br><strong>' + spotGaps + '</strong> sales have no premium because the gold feed had a gap at the moment they closed; they are withheld rather than priced against a stale figure.' : ''}
-  </p>
-</div>`
+<details class="fold">
+  <summary>Every tracked coin type <span class="why">${markets.length} of them, with what to bid</span></summary>
+  <div class="card scroll">
+  <table>
+    <thead><tr>
+      <th>Coin type</th>
+      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
+      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
+      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
+      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
+      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
+      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
+      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
+      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
+      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
+    </tr></thead>
+    <tbody>${tableRows}</tbody>
+  </table>
+  </div>
+</details>
+
+<details class="fold">
+  <summary>What the tracked market is made of
+    <span class="why">and the hole in it</span></summary>
+  <div class="card">
+    ${RENDER.compositionChart(composition)}
+    <p class="thin" style="margin:14px 0 0">
+      <strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing is
+      Good-'Til-Cancelled and carries no end time, so it never becomes eligible for outcome
+      resolution &mdash; every one of the ${composition.auctionSold + composition.auctionUnsold}
+      completed lots here is an auction. So the clearing prices describe the auction market, the
+      asking prices are ${Math.round(100 * composition.liveBin / (composition.liveBin + composition.liveAuction))}%
+      Buy-It-Now, and the spread between them compares two markets rather than two ends of one.
+      ${composition.binVanished > 0
+          ? '<strong>' + composition.binVanished + '</strong> Buy-It-Now listings have gone quiet ' +
+            'without being resolved; each has either sold or been withdrawn and we cannot yet tell which.'
+          : ''}</p>
+  </div>
+</details>
+
+<details class="fold">
+  <summary>How much auctions rise before the hammer
+    <span class="why">why an alert can fire while you can still act</span></summary>
+  <div class="card">
+    ${RENDER.upliftChart(curve)}
+    <p class="thin">Learned from this tool's own snapshots. It is why an alert can fire while
+    you can still act, instead of after the lot has gone.</p>
+  </div>
+</details>
+
+<details class="fold">
+  <summary>What this cannot see
+    <span class="why">${censored} sales withheld${spotGaps > 0 ? ', ' + spotGaps + ' unpriced' : ''}</span></summary>
+  <div class="card">
+    <p class="thin" style="margin:0">
+      <strong>${censored}</strong> ended listings are excluded from clearing prices because eBay never
+      publishes what an accepted Best Offer sold for &mdash; counting those at list price would
+      systematically overstate the market.
+      ${spotGaps > 0 ? '<br><strong>' + spotGaps + '</strong> sales have no premium because the gold feed had a gap at the moment they closed; they are withheld rather than priced against a stale figure.' : ''}
+    </p>
+  </div>
+</details>`
 
     return RENDER.page('Coin Market', body)
 }
@@ -549,6 +577,25 @@ function tabs (basePath, param, options, current, params) {
                 : '<a class="tab" href="' + escapeHtml(href) + '">' +
                   escapeHtml(option.label) + '</a>'
         }).join('') + '</div>'
+}
+
+/*
+    A long list of lots, capped rather than truncated.
+
+    The market page ran to 55 lot rows and 163KB, and the two panels worth
+    acting on were 68% of that - stacked, so the second began roughly 3,900px
+    below the first and the owner reached it with the browser's text search.
+    The rows past the cap are still here and still inside the same form, so a
+    bulk decision still covers them; they are just folded away.
+*/
+function cappedQueue (rows, render, visible, moreLabel) {
+    const head = rows.slice(0, visible)
+    const tail = rows.slice(visible)
+    const card = list => '<div class="card"><div class="queue">' + list.map(render).join('') + '</div></div>'
+    if (tail.length === 0) { return card(head) }
+    return card(head) +
+        '<details class="more"><summary>' + escapeHtml(moreLabel(tail.length)) + '</summary>' +
+        card(tail) + '</details>'
 }
 
 function saleTabs (basePath, current, params) {
@@ -922,7 +969,7 @@ function queueRow (row, verdictCell) {
     if (!sold) {
         const seen = FRESHNESS.describe(row.lastSeen)
         if (seen !== null) {
-            const stale = !FRESHNESS.isActionable(row.lastSeen)
+            const stale = !FRESHNESS.isActionable(row.lastSeen, row.sweepAt)
             meta.push(stale
                 ? '<span class="badge critical" title="The hourly sweep has stopped seeing this lot, ' +
                   'which usually means it has ended or been pulled. eBay does not tell us when a ' +
@@ -1013,7 +1060,13 @@ function listingsPage (opened, url) {
         : 'all'
     const rows = repository.listingsForInstrument(key, 500, sale)
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
+    /*  This page deliberately shows everything, including lots the sweep has
+        stopped seeing - it is the route to a listing that classified wrongly
+        and never reached the review queue. So the departed ones are badged
+        rather than hidden, which is the opposite of the actionable panels. */
+    const sweepAt = repository.lastSweepAt()
     for (const row of rows) {
+        row.sweepAt = sweepAt
         row.back = '/listings?key=' + encodeURIComponent(key) +
             (sale === 'all' ? '' : '&sale=' + sale)
         /*  The drill-down knows the instrument from the URL, so the controls

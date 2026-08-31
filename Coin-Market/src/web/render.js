@@ -88,6 +88,33 @@ td a:hover { text-decoration-color:var(--ink) }
 .badge { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11.5px; border:1px solid var(--border); color:var(--ink-2) }
 .warn { color:var(--critical) }
 nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
+/*  The section jump bar. The market page carries eight sections and the two
+    worth acting on were below the fold, so the owner was using the browser's
+    text search to reach them. Sticky, because the page is long enough that
+    scrolling back to a bar at the top is the same problem again. */
+.jump { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:6px;
+  align-items:center; padding:8px 0 9px; margin:0 0 22px;
+  background:var(--plane); border-bottom:1px solid var(--axis) }
+.jump a { font-size:12.5px; color:var(--ink-2); text-decoration:none;
+  padding:3px 9px; border:1px solid var(--border); border-radius:99px; white-space:nowrap }
+.jump a:hover, .jump a:focus-visible { color:var(--ink); border-color:var(--ink-2) }
+.jump .n { font-variant-numeric:tabular-nums; color:var(--muted) }
+/*  A section the page keeps but does not put in your way. <details> because
+    it needs no JavaScript and remembers nothing, which is right for a page
+    that is rebuilt on every request. */
+details.fold { border-top:1px solid var(--axis); padding:2px 0 }
+details.fold > summary { cursor:pointer; list-style:none; padding:13px 2px; font-size:15px;
+  font-weight:560; color:var(--ink-2); display:flex; gap:10px; align-items:baseline }
+details.fold > summary::-webkit-details-marker { display:none }
+details.fold > summary::before { content:"+"; font-family:var(--mono,monospace); color:var(--muted) }
+details.fold[open] > summary::before { content:"2" }
+details.fold > summary:hover { color:var(--ink) }
+details.fold > summary .why { font-weight:400; font-size:13px; color:var(--muted) }
+details.fold h2:first-of-type { margin-top:4px }
+/*  The overflow of a capped list: same affordance, quieter. */
+details.more > summary { cursor:pointer; font-size:13px; color:var(--ink-2); padding:10px 2px }
+details.more > summary:hover { color:var(--ink) }
+h2[id] { scroll-margin-top:56px }
 nav a { color:var(--ink-2); text-decoration:none; padding-bottom:3px; border-bottom:2px solid transparent }
 nav a.on { color:var(--ink); border-bottom-color:var(--ink) }
 .badge.good { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }

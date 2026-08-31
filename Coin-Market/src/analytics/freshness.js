@@ -19,15 +19,25 @@
     the lot most likely to look keenly priced. The best-looking suggestions
     were the deadest ones.
 
-    Two hours, chosen from the store rather than from intuition. The sweep
-    runs hourly and sees a stable ~6,510 listings each time, so it is not
-    rotating through a subset - an absence is evidence. Measured over 237,850
-    gaps between consecutive observations of a listing that was later seen
-    again (i.e. periods a live lot went unseen): p50 0.33h, p90 1.00h,
-    p99 2.04h. Only 2.3% of those gaps exceed two hours, so a two-hour rule
-    wrongly hides a live lot about that often. Against that, of the lots that
-    HAVE missed a sweep, 63% are still alive after one and 43% after two - so
-    beyond two hours a majority of what is shown is gone.
+    Two hours, chosen from the store rather than from intuition, and measured
+    from the LAST SWEEP rather than from the wall clock.
+
+    The sweep runs hourly, stamps one identical seenAt on everything it saw,
+    and sees a stable ~6,510 listings each time - so it is not rotating
+    through a subset, and an absence is evidence. Of lots that have missed a
+    full sweep, 70.4% are seen again after one (1,058/1,502) and 39.8% after
+    two (268/673), dropping to a 23-30% plateau thereafter. The cliff is
+    between one missed sweep and two: tolerate one, not two, which at an
+    hourly cadence is exactly two hours.
+
+    Anchoring on the sweep rather than the clock is not a detail. Of 5,431
+    gaps over two hours between sightings of a lot, 4,813 - 88.6% - begin at
+    one single moment: the collector outage of 2026-08-30 13:56 to 15:58. A
+    wall-clock rule would have emptied the actionable panels for two hours
+    over a failure in the collector rather than a change in the market. With
+    the anchor, an outage freezes the reference and nothing becomes newly
+    stale. It also beats counting sweeps, which would fire after about
+    fifteen minutes during the re-sweep bursts that follow a restart.
 
     It is close to free. Corpus freshness never fell below 92.5% at any hour
     boundary across a full retained day, and the panel shows 20 rows out of
@@ -46,12 +56,16 @@ exports.ACTIONABLE_HOURS = ACTIONABLE_HOURS
 
 const HOUR_MS = 60 * 60 * 1000
 
-/* Hours since a sweep last saw this lot, or null if we never recorded it. */
-exports.hoursSince = function (lastSeen, now) {
+/*  Hours between a reference moment and when this lot was last seen, or
+    null if we never recorded it. The reference is the last sweep for
+    judging, and the wall clock for describing. */
+exports.hoursSince = function (lastSeen, reference) {
     if (!lastSeen) { return null }
     const then = Date.parse(lastSeen)
     if (!Number.isFinite(then)) { return null }
-    const at = now === undefined ? Date.now() : now
+    const at = reference === undefined || reference === null ? Date.now()
+        : (typeof reference === 'string' ? Date.parse(reference) : reference)
+    if (!Number.isFinite(at)) { return null }
     return (at - then) / HOUR_MS
 }
 
@@ -63,8 +77,8 @@ exports.hoursSince = function (lastSeen, now) {
     column - and silently emptying a panel is a worse failure than showing a
     stale row, because the empty panel looks like a true "nothing to see".
 */
-exports.isActionable = function (lastSeen, now, hours) {
-    const age = exports.hoursSince(lastSeen, now)
+exports.isActionable = function (lastSeen, sweepAt, hours) {
+    const age = exports.hoursSince(lastSeen, sweepAt)
     if (age === null) { return true }
     return age <= (hours === undefined ? ACTIONABLE_HOURS : hours)
 }

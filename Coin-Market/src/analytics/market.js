@@ -26,6 +26,16 @@ exports.newMarketView = function (repository, spotAt, options) {
         halfLifeDays: 45
     }, options || {})
 
+    /*  The last sweep's clock, read once per view rather than per instrument:
+        a view is built per request, so this is as current as the page is. */
+    let sweepAt
+    function lastSweepAt () {
+        if (sweepAt === undefined) {
+            sweepAt = repository.lastSweepAt ? repository.lastSweepAt() : null
+        }
+        return sweepAt
+    }
+
     /* Attaches a premium to an outcome, or null when spot is unknown for
        that moment. Null premiums are counted, not silently dropped. */
     function withPremium (row, priceField, whenField) {
@@ -158,6 +168,9 @@ exports.newMarketView = function (repository, spotAt, options) {
 
             return {
                 key,
+                /*  Carried on the view so a consumer cannot forget to ask for
+                    it - the freshness guard is only as good as its anchor. */
+                sweepAt: lastSweepAt(),
                 fineOz,
                 spot: spotNow,
                 spotGaps,
