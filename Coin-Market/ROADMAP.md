@@ -24,7 +24,7 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,652 listings**, **26 completed sales**, **216 coins judged by hand**, **6 learned
-rules**, **240 tests green**.
+rules**, **243 tests green**.
 
 **Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
@@ -37,8 +37,13 @@ against silver rather than gold, with their own pools, their own idea of an odd 
 exclusions. Nothing about sovereigns moved: the golden fixture (OPS-04) held through every step, and
 old and new code reclassified the same snapshot to byte-identical rows.
 
-**Collection is not switched on.** The pack classifies Morgans correctly and the market page now has a place to put them, but no sweep looks for
-them, so the store holds none. Turning it on is a config change and a call-budget decision.
+**Both coins are being collected.** Morgan and Peace dollars have been sweeping since 31 Aug. The
+review queue is filtered to one coin at a time with every group's count on its tabs, so the two piles
+never mix.
+
+**And the first thing collection revealed is a decision to make.** With the country filter on `[GB]`
+the store holds 822 UK Morgans against 6,321 US ones it cannot price &mdash; see COL-09. The filter is
+right for a gold series and arguable for a silver one, and it is currently a single setting for both.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
@@ -63,6 +68,7 @@ and it is deliberately parked — see the row.
 | COL-05 | Capture item location, and filter at the query | Done | S | | `itemLocationCountry` on the search makes it genuinely cheaper — a Browse call returns 200 listings, so a third fewer results is a third fewer calls |
 | COL-06 | Refresh cadence: sweep 60m, ending-soon 5m, resolve 30m | Done | S | | Measured: 10 new listings an hour, 5,163 of 5,509 refreshed within the hour, 286 closing lots watched every 5 minutes |
 | COL-08 | Price silver against silver | Done | M | | The upstream feed already carries Ag, Au, Pd and Pt - 1,004 ticks each - and `spot`'s primary key is already `(observed_at, metal)`, so there is no migration. Only the mirror is gold-only: four `'XAU'` literals and a `spotAt(whenIso)` with no metal parameter. A Morgan priced against gold reads &pound;2,544 instead of &pound;38 &mdash; a 66&times; error arriving disguised as the find of the year. `spotAt(when, metal)` defaults to gold and NEVER falls back: a metal with no ticks returns blank. Silver backfilled its own 1,011-tick history on the first run, because each metal resumes from its own high-water mark |
+| COL-10 | The country filter leaked on the five-minute poller | Done | S | | `endingSoon` built its own Browse filter and left the country restriction out, so the poller fetched lots the owner cannot buy every five minutes, for every series. Surfaced when Morgan collection pulled **3,664 US listings into a UK-only store within the hour**, but it had been leaking on the sovereign side all along &mdash; it is where the 993 Australian rows in the review queue came from. `allowedCountries` is also a function now: the comment promised it was re-read each sweep and the code snapshotted it at construction, so a country chosen on the dashboard sat unapplied until a restart |
 | COL-07 | Back the Pi database up off-site | Later | S | | Local backups only. The SD card is the likeliest thing here to die |
 
 ## MKT — what the numbers mean
@@ -96,6 +102,7 @@ and it is deliberately parked — see the row.
 | CLS-05 | The multi-weight sovereigns — £2, £5, piedfort | Done | S | | Nine seller phrasings fell through to FULL; 87 lots were priced against a half or a fifth of their actual gold, and a £9,654 five-sovereign piece read 1146% over spot |
 | CLS-06 | Novelty copies and pick-your-coin listings | Done | S | | "Gold-Coloured Sovereign Style Coins (10pcs)" and "CHOOSE YOUR COIN" both reached the live opportunities panel. 20 variation listings caught |
 | CLS-07 | Let a multi-coin lot be admitted at its own gold | Done | M | | The lot size rides on the assignment, not the instrument — writing it to the shared instrument row would have redefined the spot value for every coin filed under the same key |
+| COL-09 | The country filter costs a gold series little and a silver one everything | Now | S | | **A decision, not a bug.** With the filter on `[GB]`, the store holds **822 UK Morgans (738 priced) against 6,321 US ones (0 priced)** &mdash; it excludes 88% of the market for an American coin. There is a real reason to keep it: UK gold coins are VAT-exempt and silver is not, so importing silver carries 20% plus handling. But the choice is currently one setting for every series, and the right answer may differ per coin |
 | CLS-08 | Screen listings by country, on by default | Rejected | — | | **Cost 1,268 genuine sovereigns in one pass**, 744 of them Australian — Sydney, Melbourne and Perth mint coins are British sovereigns and the scarcest part of the series. Now opt-in, with the cost of narrowing shown beside each country |
 | CLS-10 | Series packs, so a second coin is not a mess | Done | L | OPS-04 | `GB.SOV` is a dotted literal at `instruments.js:62`, 8 of 13 exclusion rules carry sovereign text, and `exclusions.js:307-313` returns NOT_GOLD for any silver composition - one line that excludes every silver coin. **Extraction landed and proven a no-op**: old and new code reclassified the same 5,652 listings and produced byte-identical `instrument` (1,807), `listing_instrument` (8,513) and `review_queue` (3,834) rows. `displayName` no longer parses keys by position; exclusion rules are tagged with a series rather than moved, because `screen()` returns on first match and splitting the list would silently reorder it. **Morgan and Peace dollars are in.** Validated on 400 real eBay listings rather than invented ones, which found three defects nobody would have imagined: a 2021 `.999` centenary filing itself beside genuine Carson City dollars, sealed bulk bags filing as single coins, and the fix for that excluding "Reverse of 78" as a lot of 78 coins. Proven inert for sovereigns: old and new code reclassified one snapshot to byte-identical instrument, assignment and review rows |
 | CLS-11 | Labels and rules scoped to a series | Done | M | CLS-10 | `learned.js` is binary, so it cannot say "this is a Britannia, not a sovereign". Worse, an unscoped rule on the word `britannia` would silently empty the Britannia pack the day it lands &mdash; accepted today for good reasons, discovered months later. Migration 009 rewrote **216 labels and 6 rules** exactly, none lost. Widening a rule to every coin is now a checkbox, never a default, and the rules page badges an unscoped rule in red. Uniqueness moved to `(phrase, kind, series)` so two series can rule on the same words without one silently re-scoping the other |
