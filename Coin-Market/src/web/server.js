@@ -8,6 +8,7 @@ const LEARNED = require('../catalogue/learned.js')
 const CLASSIFY = require('../catalogue/classify.js')
 const RECLASSIFY = require('../catalogue/reclassify.js')
 const PREMIUM = require('../analytics/premium.js')
+const FRESHNESS = require('../analytics/freshness.js')
 
 const { escapeHtml, pct, gbp } = RENDER
 
@@ -230,6 +231,10 @@ function marketPage (opened, url) {
             })
             .filter(row => Number.isFinite(row.ratio))
         considered = opportunities.length
+        /*  An auction carries a real end time, so it cannot linger the way a
+            Buy-It-Now can - but one the sweep has stopped seeing has usually
+            been pulled, and telling you to bid on it is the same failure. */
+        opportunities = opportunities.filter(row => FRESHNESS.isActionable(row.lastSeen))
         opportunities = opportunities
             .filter(row => row.ratio <= NEAR_SPOT)
             /*  A coin you have already judged not to be a sovereign is not an
@@ -909,6 +914,21 @@ function queueRow (row, verdictCell) {
     }
     if (sold && row.endedAt) {
         meta.push('sold ' + escapeHtml(String(row.endedAt).slice(0, 10)))
+    }
+    /*  How current this is. A Buy-It-Now lot has no end time and its outcome
+        is never resolved, so how recently a sweep saw it is the only thing
+        that says it still exists - and that belongs on the row rather than
+        in the filtering alone. */
+    if (!sold) {
+        const seen = FRESHNESS.describe(row.lastSeen)
+        if (seen !== null) {
+            const stale = !FRESHNESS.isActionable(row.lastSeen)
+            meta.push(stale
+                ? '<span class="badge critical" title="The hourly sweep has stopped seeing this lot, ' +
+                  'which usually means it has ended or been pulled. eBay does not tell us when a ' +
+                  'Buy-It-Now ends, so this is the only signal there is.">' + escapeHtml(seen) + '</span>'
+                : '<span class="thin">' + escapeHtml(seen) + '</span>')
+        }
     }
     /*  How long is left to act. On the opportunities panel this is the
         difference between a lot you can think about and one you cannot. */

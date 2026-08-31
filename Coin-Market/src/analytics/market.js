@@ -77,6 +77,7 @@ exports.newMarketView = function (repository, spotAt, options) {
                         dropped it, so an alert could name a listing but not
                         offer a way to judge it. */
                     legacyId: row.legacyId,
+                    lastSeen: row.lastSeen,
                     title: row.title,
                     buyingOptions: row.buyingOptions,
                     endTime: row.endTime,

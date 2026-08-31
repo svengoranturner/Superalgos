@@ -3,6 +3,7 @@
 const UPLIFT = require('../analytics/uplift.js')
 const PREMIUM = require('../analytics/premium.js')
 const BUYER = require('../analytics/buyercost.js')
+const FRESHNESS = require('../analytics/freshness.js')
 
 /*
     Alert rules.
@@ -20,7 +21,12 @@ const BUYER = require('../analytics/buyercost.js')
 exports.evaluate = function (view, curve, options) {
 
     const config = Object.assign(
-        { minEdge: 0.03, endingWithinMinutes: 120, maxOfferGap: 0.25 }, options || {})
+        {
+            minEdge: 0.03,
+            endingWithinMinutes: 120,
+            maxOfferGap: 0.25,
+            staleAfterHours: FRESHNESS.ACTIONABLE_HOURS
+        }, options || {})
     const alerts = []
 
     if (!view.fairValue.sufficient || view.bidCeiling === null || view.spot === null) {
@@ -31,6 +37,15 @@ exports.evaluate = function (view, curve, options) {
     const ceiling = view.bidCeiling.allInValue
 
     for (const listing of view.active) {
+        /*
+            An alert is an instruction to go and spend money, so it needs a
+            tighter test than the 24-hour window that decides what counts as
+            an active ask. The first lot the offers panel ever ranked first
+            had not been seen for 21.3 hours and had already sold. See
+            analytics/freshness.js for why two hours, and what it costs.
+        */
+        if (!FRESHNESS.isActionable(listing.lastSeen, now, config.staleAfterHours)) { continue }
+
         const total = PREMIUM.totalCost(listing.price, listing.shipping)
         if (!Number.isFinite(total) || total <= 0) { continue }
 
@@ -87,6 +102,7 @@ exports.evaluate = function (view, curve, options) {
                 currentTotal: total,
                 bidCeiling: ceiling,
                 edge,
+                lastSeen: listing.lastSeen,
                 askPremium: listing.askPremium,
                 suggestedOffer: BUYER.priceForCost(ceiling) - (listing.shipping || 0)
             })
@@ -131,6 +147,7 @@ exports.evaluate = function (view, curve, options) {
             currentTotal: total,
             bidCeiling: ceiling,
             gap,
+            lastSeen: listing.lastSeen,
             askPrice: listing.price,
             shipping: listing.shipping,
             buyingOptions: listing.buyingOptions,

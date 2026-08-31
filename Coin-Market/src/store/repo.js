@@ -291,6 +291,12 @@ exports.newRepository = function (db, options) {
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
                        l.end_time AS endTime, l.item_web_url AS itemWebUrl,
                        l.image_url AS imageUrl, l.legacy_id AS legacyId,
+                       /*  When a sweep last saw this lot. The window below
+                           decides what counts as active AT ALL; callers that
+                           tell you to go and spend money need a tighter test
+                           than callers computing a median, so they need the
+                           figure itself rather than just its verdict. */
+                       l.last_seen AS lastSeen,
                        i.fine_oz * li.quantity AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount
                 FROM listing l
@@ -740,6 +746,7 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.first_seen AS firstSeen,
+                       l.last_seen AS lastSeen,
                        scope.key AS instrumentKey, scope.quantity AS lotQuantity,
                        scope.fine_oz * scope.quantity AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount,

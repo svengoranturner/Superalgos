@@ -5,6 +5,7 @@ const assert = require('node:assert')
 
 const RULES = require('../src/alerts/rules.js')
 const BUYER = require('../src/analytics/buyercost.js')
+const FRESHNESS = require('../src/analytics/freshness.js')
 
 const CEILING = 850
 
@@ -14,6 +15,8 @@ const CEILING = 850
 function lotCosting (allIn, extra) {
     const shipping = 4.5
     return Object.assign({
+        /*  Seen by the sweep just now unless a test says otherwise. */
+        lastSeen: new Date().toISOString(),
         browseId: 'v1|x|0',
         legacyId: 'x',
         title: 'Gold Sovereign',
@@ -87,4 +90,49 @@ test('purchases rank above offers, and closer offers above distant ones', () => 
         Object.assign(lotCosting(CEILING * 0.90), { browseId: 'v1|buy|0', legacyId: 'buy' })
     ]), null, {})
     assert.deepStrictEqual(alerts.map(a => a.legacyId), ['buy', 'near', 'far'])
+})
+
+/*  The failure that prompted this: the offers panel's top suggestion had not
+    been seen for 21.3 hours and had already sold. A Buy-It-Now lot has no end
+    time and its outcome is never resolved (COL-01), so how recently a sweep
+    saw it is the only evidence it still exists - and the 24-hour window that
+    decides what counts as an active ask is far too loose to spend money on. */
+test('a lot the sweep has stopped seeing is never worth an alert', () => {
+    const stale = new Date(Date.now() - 21.3 * 3600000).toISOString()
+    const fresh = new Date(Date.now() - 20 * 60000).toISOString()
+
+    assert.strictEqual(
+        RULES.evaluate(viewOf([lotCosting(CEILING * 1.09, { lastSeen: stale })]), null, {}).length, 0,
+        'a lot last seen 21 hours ago must not be offered on')
+    assert.strictEqual(
+        RULES.evaluate(viewOf([lotCosting(CEILING * 1.09, { lastSeen: fresh })]), null, {}).length, 1,
+        'a lot seen 20 minutes ago is current')
+
+    /*  Same for the cheaper rule - a lot below clearing is no more real for
+        being cheap. */
+    assert.strictEqual(
+        RULES.evaluate(viewOf([lotCosting(CEILING * 0.90, { lastSeen: stale })]), null, {}).length, 0)
+
+    /*  Fails OPEN on an unrecorded last_seen: every stored row has one, so
+        this only fires when a caller forgot the column, and silently emptying
+        a panel looks like a true "nothing to see". */
+    assert.strictEqual(
+        RULES.evaluate(viewOf([lotCosting(CEILING * 1.09, { lastSeen: null })]), null, {}).length, 1)
+})
+
+test('freshness is measured in hours and described for a human', () => {
+    const now = Date.now()
+    const at = h => new Date(now - h * 3600000).toISOString()
+
+    assert.ok(FRESHNESS.isActionable(at(1.9), now))
+    assert.ok(!FRESHNESS.isActionable(at(2.1), now))
+    assert.strictEqual(FRESHNESS.describe(at(0.5), now), 'seen 30 min ago')
+    assert.strictEqual(FRESHNESS.describe(at(8), now), 'seen 8h ago')
+    assert.strictEqual(FRESHNESS.describe(at(50), now), 'seen 2d ago')
+    assert.strictEqual(FRESHNESS.describe(null, now), null)
+
+    /*  The window that decides what counts as an active ask must stay looser
+        than the window that decides what is worth acting on - the statistics
+        need the sample and are not sending anyone to a checkout. */
+    assert.ok(FRESHNESS.ACTIONABLE_HOURS < 24)
 })
