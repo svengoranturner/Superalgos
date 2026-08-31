@@ -409,10 +409,32 @@ exports.parsePsqlCsv = parsePsqlCsv
     place to look, and our premium history survives the portfolio app
     rotating or compacting its own data.
 */
-exports.mirror = async function (db, source, options) {
-    const config = Object.assign({ backfillDays: 400 }, options || {})
+/*
+    Which metals to mirror, and what the upstream feed calls each one.
 
-    const latest = db.prepare('SELECT MAX(observed_at) AS latest FROM spot WHERE metal = ?').get('XAU')
+    The feed already carries Ag, Au, Pd and Pt - only this tool's mirror was
+    gold-only. `store` is what goes in our spot table and on the instrument
+    row; `feed` is the value the source expects. A settings file that names
+    no metals keeps the old single-metal behaviour exactly, so nothing
+    changes for an installation that only tracks sovereigns.
+*/
+exports.metalsToMirror = function (spotSettings) {
+    const spec = spotSettings || {}
+    if (Array.isArray(spec.metals) && spec.metals.length > 0) { return spec.metals }
+    return [{ store: 'XAU', feed: spec.metalValue || 'Au' }]
+}
+
+exports.mirror = async function (db, source, options) {
+    /*  Which metal this source carries. Gold by default, because that is
+        what every existing caller means and what every row already in the
+        table is. A silver series prices against silver or it prices against
+        nothing - a Morgan dollar measured against gold reads about a
+        hundred times too cheap, which looks like the find of the year. */
+    const config = Object.assign({ backfillDays: 400, metal: 'XAU' }, options || {})
+
+    /*  Per metal, so silver gets its own backfill rather than inheriting
+        gold's high-water mark and skipping its own history entirely. */
+    const latest = db.prepare('SELECT MAX(observed_at) AS latest FROM spot WHERE metal = ?').get(config.metal)
     const since = latest && latest.latest
         ? latest.latest
         : new Date(Date.now() - config.backfillDays * DAY_MS).toISOString()
@@ -427,7 +449,7 @@ exports.mirror = async function (db, source, options) {
     db.exec('BEGIN')
     try {
         for (const row of rows) {
-            const result = insert.run(row.observedAt, 'XAU', row.gbpPerOz, row.usdPerOz, row.source)
+            const result = insert.run(row.observedAt, config.metal, row.gbpPerOz, row.usdPerOz, row.source)
             inserted += result.changes
         }
         db.exec('COMMIT')
@@ -503,11 +525,18 @@ exports.newSpotLookup = function (db, options) {
         'SELECT observed_at, gbp_per_oz FROM spot WHERE metal = ? AND observed_at >= ? ORDER BY observed_at ASC LIMIT 1'
     )
 
-    return function spotAt (whenIso) {
+    /*  metal defaults to gold so that market.js, server.js and cli.js keep
+        working unchanged. It never falls back: asking for silver when no
+        silver has been mirrored returns null, and a null premium is shown as
+        a blank. That is the whole safety property here - a coin priced
+        against the wrong metal is not a small error, it is a hundredfold
+        one, and it arrives disguised as an opportunity. */
+    return function spotAt (whenIso, metal) {
+        const want = metal === undefined || metal === null ? 'XAU' : metal
         const target = new Date(whenIso).getTime()
         if (!Number.isFinite(target)) { return null }
 
-        const candidates = [before.get('XAU', whenIso), after.get('XAU', whenIso)].filter(Boolean)
+        const candidates = [before.get(want, whenIso), after.get(want, whenIso)].filter(Boolean)
         let best = null
         let bestGap = Infinity
 
@@ -529,7 +558,7 @@ exports.newSpotLookup = function (db, options) {
             spirit as marking daily closes coarser than intraday ticks. */
         if (!exports.marketClosedAt(whenIso)) { return null }
 
-        const carried = before.get('XAU', whenIso)
+        const carried = before.get(want, whenIso)
         if (!carried) { return null }
 
         const carriedGap = target - new Date(carried.observed_at).getTime()

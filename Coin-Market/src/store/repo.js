@@ -163,6 +163,7 @@ exports.newRepository = function (db, options) {
         saveClassification (browseId, keys, confidence, method, fineOz, attributes) {
             const now = new Date().toISOString()
             const INSTRUMENTS = require('../catalogue/instruments.js')
+const SERIES = require('../catalogue/series/index.js')
             /*  The instrument records what ONE of these coins is; the
                 assignment records how many of them this lot holds. Writing a
                 three-coin lot straight into instrument.fine_oz would have
@@ -174,7 +175,11 @@ exports.newRepository = function (db, options) {
             for (const entry of keys) {
                 bindAll(statements.upsertInstrument, [
                     entry.key, entry.level, INSTRUMENTS.displayName(entry.key),
-                    'XAU', fineOz, JSON.stringify(attributes || {})
+                    /*  From the series, never a literal. This column existed,
+                        was written 'XAU' and was never read; a silver coin
+                        filed as gold prices about a hundred times too cheap
+                        and arrives disguised as the find of the year. */
+                    SERIES.metalForKey(entry.key), fineOz, JSON.stringify(attributes || {})
                 ])
                 bindAll(statements.assignInstrument,
                     [browseId, entry.key, confidence, method, 0, now, quantity])
@@ -240,7 +245,8 @@ exports.newRepository = function (db, options) {
                        o.shipping, o.bid_count AS bidCount, o.sale_type AS saleType,
                        o.sold, o.censored, l.title, l.seller_hash AS sellerHash,
                        l.seller_id_hash AS sellerIdHash, l.cert_number AS certNumber,
-                       l.start_time AS listedAt, i.fine_oz * li.quantity AS fineOz
+                       l.start_time AS listedAt, i.fine_oz * li.quantity AS fineOz,
+                       i.metal
                 FROM listing_outcome o
                 JOIN listing_instrument li ON li.browse_id = o.browse_id
                 JOIN listing l ON l.browse_id = o.browse_id
@@ -297,7 +303,7 @@ exports.newRepository = function (db, options) {
                            than callers computing a median, so they need the
                            figure itself rather than just its verdict. */
                        l.last_seen AS lastSeen,
-                       i.fine_oz * li.quantity AS fineOz,
+                       i.fine_oz * li.quantity AS fineOz, i.metal,
                        s.price, s.shipping, s.bid_count AS bidCount
                 FROM listing l
                 JOIN listing_instrument li ON li.browse_id = l.browse_id

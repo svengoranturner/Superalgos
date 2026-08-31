@@ -72,6 +72,20 @@ exports.forKey = function (key) {
 }
 
 /*
+    The metal a key is priced against.
+
+    Falls back to gold for a key no series claims, because every row in the
+    store today is a sovereign and a null would blank every premium on the
+    page. That fallback is safe only while gold is the only metal with data;
+    the guarantee that keeps it honest lives in spotAt, which returns null
+    rather than another metal's price when the one asked for has no ticks.
+*/
+exports.metalForKey = function (key) {
+    const found = exports.forKey(key)
+    return found === null ? 'XAU' : found.pack.metal
+}
+
+/*
     The pack to assume when a caller has not said which series it means.
 
     Every listing in the store today is a sovereign and every existing call

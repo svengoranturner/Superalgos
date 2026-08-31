@@ -352,7 +352,14 @@ COMMANDS.run = {
         const scheduler = require('../src/collect/scheduler.js').newScheduler({
             db, repository, discoverer, resolver, budget,
             browseRemaining: () => QUOTA.browseRemaining(auth),
-            spotSource: SPOT.newSpotSource(settings.spot),
+            /*  One source per metal the settings ask for. Each carries the
+                feed's own name for that metal, which newPostgresSource
+                already binds as a query variable - so the reader needed no
+                change at all, only telling which metal to ask for. */
+            spotMetals: SPOT.metalsToMirror(settings.spot).map(m => ({
+                store: m.store,
+                source: SPOT.newSpotSource(Object.assign({}, settings.spot, { metalValue: m.feed }))
+            })),
             coins: settings.coins
         }, settings.collector)
 

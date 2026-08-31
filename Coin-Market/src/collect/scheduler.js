@@ -17,7 +17,13 @@ const SPOT = require('../spot/spot.js')
 
 exports.newScheduler = function (parts, options) {
 
-    const { db, repository, discoverer, resolver, spotSource, coins, budget } = parts
+    const { db, repository, discoverer, resolver, spotSource, spotMetals: given, coins, budget } = parts
+
+    /*  A caller that supplied only the old single source still works: it
+        becomes the gold entry, which is what it always was. */
+    const spotMetals = given && given.length > 0
+        ? given
+        : [{ store: 'XAU', source: spotSource }]
     const config = Object.assign({
         sweepMinutes: 60,
         endingSoonMinutes: 5,
@@ -49,8 +55,15 @@ exports.newScheduler = function (parts, options) {
             log('scheduler', 'starting; budget ' + budget.remaining() + ' calls remaining today')
 
             every(config.spotMinutes, 'spot', async () => {
-                const result = await SPOT.mirror(db, spotSource)
-                if (result.inserted > 0) { log('spot', 'mirrored ' + result.inserted + ' new observations') }
+                /*  One source per metal, each with its own high-water mark,
+                    so silver backfills its own history rather than starting
+                    wherever gold happens to have reached. */
+                for (const metal of spotMetals) {
+                    const result = await SPOT.mirror(db, metal.source, { metal: metal.store })
+                    if (result.inserted > 0) {
+                        log('spot', 'mirrored ' + result.inserted + ' new ' + metal.store + ' observations')
+                    }
+                }
             })
 
             every(config.sweepMinutes, 'sweep', async () => {

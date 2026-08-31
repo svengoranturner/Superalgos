@@ -253,3 +253,55 @@ test('prices are only ever carried forward, never backwards', () => {
     assert.strictEqual(spotAt('2026-08-29T12:00:00Z'), null, 'Saturday must not borrow Monday')
     db.close()
 })
+
+/*  The whole reason the metal is a parameter.
+
+    A Morgan dollar holds 0.7734 oz of silver. Priced against silver at
+    roughly GBP 26/oz it is worth about GBP 20; priced against gold at
+    GBP 3,290/oz the same coin reads GBP 2,545 - so a lot asking GBP 30
+    would show as 98% BELOW spot, which is not a small error but the single
+    most attractive-looking number the tool could possibly print.
+
+    So a metal with no ticks returns null, and null is rendered as a blank.
+    Never the nearest other metal, never a fallback. */
+test('a metal with no observations returns nothing, never another metal price', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const SPOT = require('../src/spot/spot.js')
+    const db = newDatabase(':memory:')
+    const when = '2026-08-31T12:00:00.000Z'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(when, 'XAU', 3290, null, 'test')
+
+    const spotAt = SPOT.newSpotLookup(db)
+    assert.strictEqual(spotAt(when).gbpPerOz, 3290, 'gold is still the default')
+    assert.strictEqual(spotAt(when, 'XAU').gbpPerOz, 3290)
+    assert.strictEqual(spotAt(when, 'XAG'), null, 'silver has no ticks: blank, not gold')
+
+    /*  And once silver arrives, the two are kept apart. */
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(when, 'XAG', 26.4, null, 'test')
+    assert.strictEqual(spotAt(when, 'XAG').gbpPerOz, 26.4)
+    assert.strictEqual(spotAt(when, 'XAU').gbpPerOz, 3290)
+    db.close()
+})
+
+/*  Each metal backfills from its own high-water mark. Sharing gold's would
+    make silver start at today and never acquire a history at all. */
+test('mirroring a second metal does not inherit the first metal high-water mark', async () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const SPOT = require('../src/spot/spot.js')
+    const db = newDatabase(':memory:')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run('2026-08-30T00:00:00.000Z', 'XAU', 3290, null, 'test')
+
+    const asked = []
+    const source = { readSince: async (since) => { asked.push(since); return [] } }
+
+    await SPOT.mirror(db, source, { metal: 'XAU', backfillDays: 400 })
+    await SPOT.mirror(db, source, { metal: 'XAG', backfillDays: 400 })
+
+    assert.strictEqual(asked[0], '2026-08-30T00:00:00.000Z', 'gold resumes from its last tick')
+    assert.ok(asked[1] < '2026-08-01', 'silver backfills from scratch, not from gold: ' + asked[1])
+    db.close()
+})

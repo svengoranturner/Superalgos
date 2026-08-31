@@ -4,6 +4,7 @@ const PREMIUM = require('./premium.js')
 const FAIRVALUE = require('./fairvalue.js')
 const LIQUIDITY = require('./liquidity.js')
 const UPLIFT = require('./uplift.js')
+const SERIES = require('../catalogue/series/index.js')
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -39,7 +40,9 @@ exports.newMarketView = function (repository, spotAt, options) {
     /* Attaches a premium to an outcome, or null when spot is unknown for
        that moment. Null premiums are counted, not silently dropped. */
     function withPremium (row, priceField, whenField) {
-        const spot = spotAt(row[whenField])
+        /*  row.metal comes from the instrument, which gets it from the
+            series. A silver coin measured against gold is not a small error. */
+        const spot = spotAt(row[whenField], row.metal)
         if (spot === null) { return { premium: null, spotMissing: true } }
         const total = PREMIUM.totalCost(row[priceField], row.shipping)
         return {
@@ -78,7 +81,7 @@ exports.newMarketView = function (repository, spotAt, options) {
 
             const active = repository.activeListings(key).map(row => {
                 /* Live listings are priced against spot NOW. */
-                const spot = spotAt(new Date(asOf).toISOString())
+                const spot = spotAt(new Date(asOf).toISOString(), row.metal)
                 const total = PREMIUM.totalCost(row.price, row.shipping)
                 return {
                     browseId: row.browseId,
@@ -157,7 +160,11 @@ exports.newMarketView = function (repository, spotAt, options) {
                 exact reason; the read path had to learn the same lesson.
             */
             const fineOz = repository.instrumentFineOz(key)
-            const spotNow = spotAt(new Date(asOf).toISOString())
+            /*  One metal for the whole instrument, read from the store
+                rather than from whichever listing sorted first - the same
+                lesson as fineOz (MKT-13). */
+            const metal = SERIES.metalForKey(key)
+            const spotNow = spotAt(new Date(asOf).toISOString(), metal)
 
             const ceiling = (fair.sufficient && fineOz !== null && spotNow !== null)
                 ? FAIRVALUE.bidCeiling(fair, {
@@ -168,6 +175,7 @@ exports.newMarketView = function (repository, spotAt, options) {
 
             return {
                 key,
+                metal,
                 /*  Carried on the view so a consumer cannot forget to ask for
                     it - the freshness guard is only as good as its anchor. */
                 sweepAt: lastSweepAt(),
