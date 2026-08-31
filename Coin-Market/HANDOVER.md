@@ -1,9 +1,13 @@
 # Handover
 
-**The roadmap lives as an artifact**, published from this repo as ROADMAP.html:
+**The roadmap is ROADMAP.md**, a status board with permanent item IDs. Edit it,
+run scripts/roadmap.py, and republish the generated ROADMAP.html to
 https://claude.ai/code/artifact/634ee9ad-5f07-447d-af5a-1ba56a22ad33
-Republish that same file to update it in place. This document stays the
-state-of-play and the reasoning; the roadmap is what happens next.
+
+Point at an ID and any session can find it: grep -n COL-01 ROADMAP.md.
+IDs are never reused or renumbered; a dropped item becomes Rejected, not a
+gap. This document stays the archive of WHY; the roadmap is what happens next
+and in what order.
 
 **Live on production eBay, fully authorised, and nothing is blocked.**
 Steps 1-5 are done bar running the collector: deployed on the Pi, reading the

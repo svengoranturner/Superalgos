@@ -2,409 +2,153 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
-
 <style>
   :root {
-    --paper:      #f9f9f7;
-    --card:       #ffffff;
-    --ink:        #0b0b0b;
-    --ink-2:      #52514e;
-    --muted:      #8b8983;
-    --rule:       #e3e2db;
-    --rule-soft:  #eeede7;
-    --clearing:   #2a78d6;
-    --ask:        #c2521f;
-    --metal:      #9a6f1e;
-    --good:       #1f6b33;
-    --risk:       #b4392f;
-    --chip-ground: rgba(11,11,11,0.045);
+    --paper:#f9f9f7; --card:#ffffff; --ink:#0b0b0b; --ink-2:#52514e; --muted:#8b8983;
+    --rule:#e3e2db; --rule-soft:#efeee8;
+    --now:#b8471f; --next:#2a5fb8; --later:#6a6862; --someday:#8b8983;
+    --done:#1f6b33; --rejected:#9a2f2f; --metal:#9a6f1e;
+    --chip:rgba(11,11,11,0.05);
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
-      --paper:     #0d0d0d;
-      --card:      #17171a;
-      --ink:       #f4f4f2;
-      --ink-2:     #b9b8b2;
-      --muted:     #86847e;
-      --rule:      #2b2b2e;
-      --rule-soft: #202023;
-      --clearing:  #5b9df0;
-      --ask:       #e8763f;
-      --metal:     #d3a445;
-      --good:      #4fb166;
-      --risk:      #e8736a;
-      --chip-ground: rgba(255,255,255,0.06);
+      --paper:#0d0d0d; --card:#17171a; --ink:#f4f4f2; --ink-2:#b9b8b2; --muted:#86847e;
+      --rule:#2b2b2e; --rule-soft:#202023;
+      --now:#f08a52; --next:#6ba4f0; --later:#9a9892; --someday:#86847e;
+      --done:#4fb166; --rejected:#e0736a; --metal:#d3a445;
+      --chip:rgba(255,255,255,0.07);
     }
   }
   :root[data-theme="dark"] {
-    --paper:     #0d0d0d;
-    --card:      #17171a;
-    --ink:       #f4f4f2;
-    --ink-2:     #b9b8b2;
-    --muted:     #86847e;
-    --rule:      #2b2b2e;
-    --rule-soft: #202023;
-    --clearing:  #5b9df0;
-    --ask:       #e8763f;
-    --metal:     #d3a445;
-    --good:      #4fb166;
-    --risk:      #e8736a;
-    --chip-ground: rgba(255,255,255,0.06);
+    --paper:#0d0d0d; --card:#17171a; --ink:#f4f4f2; --ink-2:#b9b8b2; --muted:#86847e;
+    --rule:#2b2b2e; --rule-soft:#202023;
+    --now:#f08a52; --next:#6ba4f0; --later:#9a9892; --someday:#86847e;
+    --done:#4fb166; --rejected:#e0736a; --metal:#d3a445;
+    --chip:rgba(255,255,255,0.07);
   }
-
-  * { box-sizing: border-box; }
-
+  * { box-sizing:border-box }
   body {
-    margin: 0;
-    background: var(--paper);
-    color: var(--ink);
-    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-    font-size: 16px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
+    margin:0; background:var(--paper); color:var(--ink);
+    font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+    font-size:15px; line-height:1.6; -webkit-font-smoothing:antialiased;
   }
-
-  .wrap { max-width: 860px; margin: 0 auto; padding: 56px 24px 96px; }
-
-  h1, h2, h3, .eyebrow, .chip, .lane-n {
-    font-family: Archivo, ui-sans-serif, system-ui, sans-serif;
-  }
-  .mono, .fig, .ev, .rd { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
-
-  .eyebrow {
-    font-size: 11.5px; font-weight: 600; letter-spacing: 0.14em;
-    text-transform: uppercase; color: var(--muted); margin: 0 0 10px;
-  }
-  h1 {
-    font-size: clamp(30px, 5vw, 42px); font-weight: 700; letter-spacing: -0.02em;
-    line-height: 1.08; margin: 0 0 14px; text-wrap: balance;
-  }
-  .standfirst {
-    font-size: 17px; color: var(--ink-2); margin: 0; max-width: 62ch;
-  }
-
-  /* ---- instrument strip: what the tool reads right now ---- */
-  .readout {
-    margin: 40px 0 8px; border-top: 1px solid var(--rule);
-    border-bottom: 1px solid var(--rule);
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
-  }
-  .cell { padding: 18px 18px 16px; border-left: 1px solid var(--rule-soft); }
-  .cell:first-child { border-left: 0; padding-left: 0; }
-  .fig {
-    font-size: 25px; font-weight: 500; letter-spacing: -0.02em;
-    font-variant-numeric: tabular-nums; line-height: 1;
-  }
-  .fig.gold { color: var(--metal); }
-  .fig.warn { color: var(--risk); }
-  .cell .l {
-    margin-top: 7px; font-size: 12px; line-height: 1.4; color: var(--muted);
-  }
-  .asof { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
-
-  /* ---- lanes ---- */
-  .lane { margin-top: 56px; }
-  .lane-head {
-    display: flex; align-items: baseline; gap: 12px;
-    padding-bottom: 10px; border-bottom: 2px solid var(--ink);
-  }
-  .lane h2 {
-    font-size: 19px; font-weight: 700; letter-spacing: -0.01em; margin: 0;
-  }
-  .lane-n {
-    font-size: 12px; font-weight: 600; color: var(--muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .lane-note { font-size: 14px; color: var(--ink-2); margin: 12px 0 0; max-width: 64ch; }
-
-  .item { padding: 22px 0; border-bottom: 1px solid var(--rule-soft); }
-  .item:last-child { border-bottom: 0; }
-  .item h3 {
-    font-size: 17px; font-weight: 600; letter-spacing: -0.005em;
-    margin: 0 0 8px; text-wrap: balance;
-  }
-  .item p { margin: 0 0 10px; color: var(--ink-2); font-size: 15px; max-width: 66ch; }
-  .item p:last-child { margin-bottom: 0; }
-  .item strong { color: var(--ink); font-weight: 500; }
-
-  .chip {
-    display: inline-block; font-size: 10.5px; font-weight: 600;
-    letter-spacing: 0.09em; text-transform: uppercase;
-    padding: 3px 8px; border-radius: 3px; background: var(--chip-ground);
-    color: var(--ink-2); vertical-align: 2px; margin-right: 9px;
-  }
-  .chip.free   { color: var(--good); }
-  .chip.spend  { color: var(--ask); }
-  .chip.block  { color: var(--risk); }
-  .chip.metal  { color: var(--metal); }
-
-  /* every item earns its place with a measurement */
-  .ev {
-    font-size: 12.5px; line-height: 1.65; color: var(--ink-2);
-    background: var(--card); border: 1px solid var(--rule);
-    border-radius: 4px; padding: 11px 13px; margin-top: 12px;
-    font-variant-numeric: tabular-nums; overflow-x: auto;
-  }
-  .ev b { color: var(--ink); font-weight: 500; }
-  .ev .k { color: var(--muted); }
-
-  table.rd {
-    width: 100%; border-collapse: collapse; margin-top: 12px;
-    font-size: 12.5px; font-variant-numeric: tabular-nums;
-  }
-  table.rd th {
-    text-align: left; font-weight: 500; color: var(--muted);
-    border-bottom: 1px solid var(--rule); padding: 6px 10px 6px 0; white-space: nowrap;
-  }
-  table.rd td {
-    padding: 6px 10px 6px 0; border-bottom: 1px solid var(--rule-soft);
-    color: var(--ink-2); white-space: nowrap;
-  }
-  table.rd td:first-child { color: var(--ink); white-space: normal; }
-  .scroll { overflow-x: auto; }
-
-  .steps { margin: 12px 0 0; padding-left: 0; list-style: none; counter-reset: s; }
-  .steps li {
-    counter-increment: s; position: relative; padding-left: 30px;
-    margin-bottom: 8px; font-size: 14.5px; color: var(--ink-2);
-  }
-  .steps li::before {
-    content: counter(s); position: absolute; left: 0; top: 1px;
-    font-family: "IBM Plex Mono", monospace; font-size: 11.5px;
-    color: var(--muted); border: 1px solid var(--rule);
-    width: 19px; height: 19px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  footer {
-    margin-top: 64px; padding-top: 20px; border-top: 1px solid var(--rule);
-    font-size: 13px; color: var(--muted);
-  }
-  a { color: var(--clearing); text-underline-offset: 3px; }
-  a:focus-visible, .item:focus-visible { outline: 2px solid var(--clearing); outline-offset: 3px; }
+  .wrap { max-width:1180px; margin:0 auto; padding:52px 22px 88px }
+  h1,h2,.eyebrow,.pill,.id { font-family:Archivo,ui-sans-serif,system-ui,sans-serif }
+  code,.id,.sz,.tally b { font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace }
+  .eyebrow { font-size:11.5px; font-weight:600; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); margin:0 0 10px }
+  h1 { font-size:clamp(28px,4.4vw,40px); font-weight:700; letter-spacing:-.02em;
+    line-height:1.08; margin:0 0 16px; text-wrap:balance }
+  .intro p { color:var(--ink-2); margin:0 0 12px; max-width:74ch; font-size:15.5px }
+  .intro strong { color:var(--ink); font-weight:500 }
+  .tally { display:flex; flex-wrap:wrap; gap:0; margin:30px 0 6px;
+    border-top:1px solid var(--rule); border-bottom:1px solid var(--rule) }
+  .tally div { padding:15px 20px; border-left:1px solid var(--rule-soft) }
+  .tally div:first-child { border-left:0; padding-left:0 }
+  .tally b { display:block; font-size:23px; font-weight:500; letter-spacing:-.02em;
+    font-variant-numeric:tabular-nums }
+  .tally span { font-size:11.5px; color:var(--muted) }
+  .open { font-size:13px; color:var(--ink-2); margin:12px 0 0 }
+  .open code { background:var(--chip); padding:1px 6px; border-radius:3px; font-size:12.5px }
+  .area { margin-top:52px }
+  .area-head { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+    border-bottom:2px solid var(--ink); padding-bottom:9px }
+  .area-head h2 { font-size:19px; font-weight:700; letter-spacing:.02em; margin:0 }
+  .area-sub { margin:0; font-size:14px; color:var(--ink-2) }
+  .blurb { font-size:13.5px; color:var(--muted); margin:11px 0 14px; max-width:74ch }
+  .scroll { overflow-x:auto }
+  table { width:100%; border-collapse:collapse; font-size:13.5px; min-width:900px }
+  th { text-align:left; font-weight:500; font-size:11.5px; letter-spacing:.06em;
+    text-transform:uppercase; color:var(--muted);
+    border-bottom:1px solid var(--rule); padding:0 14px 8px 0; white-space:nowrap }
+  td { padding:13px 14px 13px 0; border-bottom:1px solid var(--rule-soft);
+    color:var(--ink-2); vertical-align:top }
+  .id { font-size:12.5px; color:var(--ink); white-space:nowrap; font-weight:500 }
+  .what { color:var(--ink); min-width:210px }
+  .sz { color:var(--muted); text-align:center; font-size:12.5px }
+  .blk { font-size:12.5px; color:var(--muted); max-width:130px }
+  .why { font-size:12.5px; line-height:1.55; min-width:300px }
+  tr.s-done .what, tr.s-rejected .what { color:var(--ink-2) }
+  tr.s-rejected .why { color:var(--ink-2) }
+  .pill { display:inline-block; font-size:10.5px; font-weight:600; letter-spacing:.08em;
+    text-transform:uppercase; padding:3px 8px; border-radius:3px;
+    background:var(--chip); white-space:nowrap }
+  .p-now { color:var(--now) } .p-next { color:var(--next) }
+  .p-later { color:var(--later) } .p-someday { color:var(--someday) }
+  .p-done { color:var(--done) } .p-rejected { color:var(--rejected) }
+  code { font-size:12px; background:var(--chip); padding:1px 5px; border-radius:3px }
+  a { color:var(--next); text-underline-offset:3px }
+  a:focus-visible { outline:2px solid var(--next); outline-offset:3px }
+  footer { margin-top:60px; padding-top:18px; border-top:1px solid var(--rule);
+    font-size:12.5px; color:var(--muted) }
 </style>
-
 <div class="wrap">
+  <p class="eyebrow">Coin&#8209;Market &middot; status board &middot; 2026-08-31</p>
+  <h1>What is being built, and in what order</h1>
+  <div class="intro"><p>Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
+last edit: <strong>5,617 listings</strong>, <strong>26 completed sales</strong>, <strong>179 coins judged by hand</strong>, <strong>4 learned
+rules</strong>, <strong>201 tests green</strong>. Browse spend 732 of 5,000 today; Trading 6.</p>
+<p><strong>One dependency gates a disproportionate share of everything below: completed sales.</strong> The tool
+gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
+no clearing price at all — correctly, because they have fewer than three sales each. That is not a
+bug to fix, it is a wait.</p>
+<p><strong>The second gate is Buy-It-Now outcomes, and it is structural.</strong> 94% of the live market is
+Buy-It-Now and not one of its outcomes has ever been observed, because a BIN listing carries no end
+time and the resolution queue only accepts listings whose end time has passed. <code>COL-01</code> is the fix
+and it is deliberately parked — see the row.</p></div>
 
-  <p class="eyebrow">Coin&#8209;Market &middot; Raspberry Pi &middot; eBay UK</p>
-  <h1>What the sovereign tracker does next</h1>
-  <p class="standfirst">
-    A running plan for the tool that measures what gold sovereigns actually sell for, against
-    the gold in them. Every item here carries the measurement that justifies it &mdash; if there
-    is no number, it is not on the list.
-  </p>
-
-  <div class="readout">
-    <div class="cell">
-      <div class="fig">5,617</div>
-      <div class="l">listings tracked</div>
-    </div>
-    <div class="cell">
-      <div class="fig gold">26</div>
-      <div class="l">completed sales &mdash; the only prices anyone actually paid</div>
-    </div>
-    <div class="cell">
-      <div class="fig warn">0</div>
-      <div class="l">Buy&#8209;It&#8209;Now outcomes ever observed</div>
-    </div>
-    <div class="cell">
-      <div class="fig">179</div>
-      <div class="l">coins you have judged</div>
-    </div>
-    <div class="cell">
-      <div class="fig">4</div>
-      <div class="l">rules learned from them</div>
-    </div>
+  <div class="tally">
+    <div><b>2</b><span>Now</span></div>
+    <div><b>2</b><span>Next</span></div>
+    <div><b>4</b><span>Later</span></div>
+    <div><b>27</b><span>Done</span></div>
+    <div><b>1</b><span>Rejected</span></div>
   </div>
-  <p class="asof">
-    Read from the live store on 31 August 2026. Auction clearing sits at 9.6% over melt against
-    41.4% asked &mdash; both now including eBay&rsquo;s buyer protection fee.
-  </p>
+  <p class="open">Open right now: <code>COL-01 · COL-02 · MKT-02 · MKT-06</code> &mdash; point at an ID and any session
+  can find it.</p>
 
-  <!-- ================= NEXT ================= -->
-  <section class="lane">
-    <div class="lane-head">
-      <h2>Next</h2>
-      <span class="lane-n">3 items</span>
-    </div>
-    <p class="lane-note">
-      Ordered by what each one unblocks, not by effort.
-    </p>
-
-    <div class="item">
-      <h3><span class="chip spend">costs calls</span>Learn whether Buy&#8209;It&#8209;Now listings ever sell</h3>
-      <p>
-        The tool is blind to 94% of the market on the outcome side. A Buy&#8209;It&#8209;Now
-        listing is Good&#8209;&rsquo;Til&#8209;Cancelled, carries no end time, and the resolution
-        queue only accepts listings whose end time has passed &mdash; so a BIN lot can never enter
-        it. Every completed outcome in the store is an auction.
-      </p>
-      <p>
-        <strong>It would not give you BIN clearing prices.</strong> The tool refuses those by
-        design: a Buy&#8209;It&#8209;Now sale says what one buyer would pay on demand, not where
-        the market clears. What it gives you is <strong>BIN sell&#8209;through</strong> &mdash;
-        currently unknown, and arguably the more useful number. Knowing that shelf sovereigns at
-        40% over melt essentially never sell tells you what to ignore.
-      </p>
-      <div class="scroll">
-        <table class="rd">
-          <thead>
-            <tr><th>Trigger</th><th>Calls/day</th><th>Precision</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Absent from one sweep</td><td>~2,030</td><td>25%</td></tr>
-            <tr><td>Absent from four sweeps</td><td>~445</td><td>72%</td></tr>
-            <tr><td>Four sweeps, classified, no same&#8209;seller twin</td><td>~79&ndash;160</td><td>&mdash;</td></tr>
-          </tbody>
-        </table>
-      </div>
-      <p style="margin-top:12px">
-        The naive trigger is a trap: most apparent departures are eBay rotating which of a
-        dealer&rsquo;s identical variation listings it surfaces. 73.6% of departed listings share
-        a title with another listing, and every one of those twins is the same seller.
-      </p>
-      <ol class="steps">
-        <li>Collect a clean week &mdash; the churn figures rest on 13 hours and 19 collector restarts, and two independent passes disagreed on the blip rate by an order of magnitude.</li>
-        <li>Settle eBay&rsquo;s real Trading allowance. One call: <span class="mono">smoke.js</span> already hits the rate&#8209;limit endpoint and throws away everything except the Browse entry.</li>
-        <li>Trigger on four consecutive absent sweeps, gated to classified listings with no same&#8209;seller twin.</li>
-        <li>Split sell&#8209;through by format before writing any BIN outcome &mdash; folding it into the existing column would pollute a number that is auction&#8209;derived today.</li>
-      </ol>
-      <div class="ev">
-        <span class="k">budget</span> Browse <b>732</b>/5,000 today &middot; Trading <b>6</b>, on its own allowance<br>
-        <span class="k">stock</span> <b>5,187</b> live BIN &middot; <b>356</b> live auction &middot; all 5,187 carry a legacy id<br>
-        <span class="k">catch</span> <b>51%</b> of BIN listings accept Best Offers, whose price eBay never publishes
-      </div>
-    </div>
-
-    <div class="item">
-      <h3><span class="chip free">no API cost</span>Report how long a listing sits before it sells</h3>
-      <p>
-        <span class="mono">medianDaysToSale</span> has been silently dead since the tool was
-        built: it needs a listing start date, and eBay&rsquo;s
-        <span class="mono">itemCreationDate</span> was being thrown away. It is captured now and
-        backfilling. This is the Buy&#8209;It&#8209;Now question that costs nothing to answer, and
-        it may make the job above unnecessary.
-      </p>
-      <div class="ev">
-        <span class="k">backfill</span> <b>5,380</b> of 5,617 listings now carry a start date, filling on each sweep
-      </div>
-    </div>
-
-    <div class="item">
-      <h3><span class="chip metal">accuracy</span>Calibrate the buyer protection fee on more than one order</h3>
-      <p>
-        Every premium now includes what eBay charges the buyer on top &mdash; the 1919&nbsp;P
-        sovereign recorded at &pound;829.12 cost its winner &pound;852.40. The schedule is
-        inferred from eBay&rsquo;s published terms and fitted to exactly one real order. A second
-        and third would turn an inference into a measurement.
-      </p>
-      <div class="ev">
-        <span class="k">fit</span> computed <b>&pound;23.33</b> against an actual <b>&pound;23.28</b> &mdash; 5p on &pound;829<br>
-        <span class="k">effect</span> +5.5% on a &pound;50 lot, +2.3% on a &pound;2,000 one &mdash; it moves quarters more than quintuples<br>
-        <span class="k">how</span> add the order to <span class="mono">OBSERVED</span> in <span class="mono">buyercost.js</span>; the test reports the fit
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= WATCHING ================= -->
-  <section class="lane">
-    <div class="lane-head">
-      <h2>Watching</h2>
-      <span class="lane-n">3 items</span>
-    </div>
-    <p class="lane-note">
-      Measured, understood, and not yet worth acting on. Each needs more data rather than more code.
-    </p>
-
-    <div class="item">
-      <h3><span class="chip block">thin</span>The clearing side is 26 sales</h3>
-      <p>
-        Every number the tool exists to report rests on completed auctions, and it gains roughly
-        one a day. Splitting the collector pool into six was right, but it also means proof,
-        graded and pre&#8209;1871 sovereigns show no clearing price at all until each accumulates
-        its own three sales.
-      </p>
-      <div class="ev">
-        <span class="k">by pool</span> bullion <b>5</b> &middot; branch mint <b>4</b> &middot; unattributed <b>6</b> &middot; graded <b>1</b> &middot; pre&#8209;1871 <b>2</b> &middot; proof <b>0</b>
-      </div>
-    </div>
-
-    <div class="item">
-      <h3><span class="chip block">thin</span>The closing&#8209;uplift curve knows 23 auctions</h3>
-      <p>
-        It now gives each auction one vote rather than one per snapshot, so its sample count is
-        honest &mdash; but honest and small. No auction alert has ever fired, because auctions
-        more than two hours from closing are discarded before the projection is reached.
-      </p>
-      <div class="ev">
-        <span class="k">buckets</span> 5m <b>17</b> &middot; 15m <b>19</b> &middot; 1h <b>21</b> &middot; 6h <b>20</b> &middot; 24h <b>10</b> auctions &middot; 3d and beyond, none yet
-      </div>
-    </div>
-
-    <div class="item">
-      <h3><span class="chip">judgement</span>One dealer can set a whole coin type&rsquo;s asking median</h3>
-      <p>
-        Half Sovereign &middot; Victoria Young Head asks 133% over melt, and one seller holds 83 of
-        its 165 listings. That is a real market number, not contamination &mdash; but a
-        seller&#8209;diversity warning on the Asks column would say more than any data fix.
-      </p>
-    </div>
-  </section>
-
-  <!-- ================= SETTLED ================= -->
-  <section class="lane">
-    <div class="lane-head">
-      <h2>Settled</h2>
-      <span class="lane-n">recent</span>
-    </div>
-    <p class="lane-note">
-      Kept here because each one cost real data before it was found, and the shape of the mistake
-      tends to recur.
-    </p>
-
-    <div class="item">
-      <h3>Punctuation no longer hides a denomination</h3>
-      <p>
-        Fixed three times by widening a list of allowed characters &mdash; brackets, then commas,
-        then asterisks and hashes. <span class="mono">*HALF* SOVEREIGN</span> was priced against a
-        full sovereign&rsquo;s gold and showed a 19% edge that did not exist. Punctuation is now
-        stripped before the denomination is read, which ends the whole class.
-      </p>
-    </div>
-
-    <div class="item">
-      <h3>Country filtering is opt&#8209;in, and defaults to the UK</h3>
-      <p>
-        Screening to GB alone removed <strong>1,268 genuine sovereigns</strong> in one pass, 744
-        of them Australian &mdash; Sydney, Melbourne and Perth mint coins are British sovereigns
-        and the scarcest part of the series. The filter is a multi&#8209;select on the market page
-        with the cost of narrowing shown beside each country.
-      </p>
-    </div>
-
-    <div class="item">
-      <h3>Two phrases were eating the best data in the store</h3>
-      <p>
-        Of 23 completed sales only 14 were counted. Three sovereigns that fetched &pound;809,
-        &pound;829 and &pound;861 said <em>&ldquo;Never Cleaned Or Mounted&rdquo;</em> and were
-        dropped as jewellery; two more said <em>&ldquo;in Capsule&rdquo;</em>. Negations and
-        packaging are stripped before the rules run.
-      </p>
-    </div>
-
-    <div class="item">
-      <h3>A stray click could have excluded 414 sovereigns</h3>
-      <p>
-        Accepting a learned rule was one click, and <span class="mono">george</span> would have
-        stopped pricing 414 lots. Rules that break nothing keep their button; anything that would
-        remove priced coins goes behind a confirmation page that names them.
-      </p>
-    </div>
-  </section>
+  <section class="area"><div class="area-head"><h2>COL</h2><p class="area-sub">collector, eBay API, call budget</p></div><p class="blurb">What the collector fetches, and what it costs to fetch it.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-now"><td class="id">COL-02</td><td class="what">Find out eBay&#x27;s real Trading GetItem allowance</td><td><span class="pill p-now">Now</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">One call. <code>smoke.js</code> already hits the rate-limit endpoint and throws away everything except the Browse entry. Until then COL-01 is costed against an assumption</td></tr>
+<tr class="s-next"><td class="id">COL-01</td><td class="what">Resolve Buy-It-Now outcomes so sell-through is knowable</td><td><span class="pill p-next">Next</span></td><td class="sz">L</td><td class="blk">COL-02, one clean week</td><td class="why"><strong>Would NOT give BIN clearing prices</strong> — the tool refuses those by design (<code>market.js:92</code> filters <code>saleType === &#x27;AUCTION&#x27;</code>). It gives BIN <strong>sell-through</strong>, currently unknown for 94% of the market. Gated trigger ~79–160 calls/day; the naive &quot;absent from one sweep&quot; trigger costs ~2,030/day and is right 25% of the time, because 73.6% of apparent departures are eBay rotating one dealer&#x27;s identical variation listings</td></tr>
+<tr class="s-later"><td class="id">COL-07</td><td class="what">Back the Pi database up off-site</td><td><span class="pill p-later">Later</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Local backups only. The SD card is the likeliest thing here to die</td></tr>
+<tr class="s-done"><td class="id">COL-03</td><td class="what">Cap Trading spend</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Nothing capped it: <code>browse.js:37</code> held the <strong>only</strong> <code>allows()</code> call in the codebase and every Trading site merely <code>record()</code>ed after the fact. Harmless at a few calls a day, not harmless for anything scaling with the corpus</td></tr>
+<tr class="s-done"><td class="id">COL-04</td><td class="what">Keep <code>itemCreationDate</code> as the listing start date</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">eBay sends it on every summary and it was discarded, so <code>start_time</code> was NULL on all 5,516 rows — which silently disabled <code>medianDaysToSale</code>. Backfills on the conflict path too, or only new listings would ever have got one</td></tr>
+<tr class="s-done"><td class="id">COL-05</td><td class="what">Capture item location, and filter at the query</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>itemLocationCountry</code> on the search makes it genuinely cheaper — a Browse call returns 200 listings, so a third fewer results is a third fewer calls</td></tr>
+<tr class="s-done"><td class="id">COL-06</td><td class="what">Refresh cadence: sweep 60m, ending-soon 5m, resolve 30m</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Measured: 10 new listings an hour, 5,163 of 5,509 refreshed within the hour, 286 closing lots watched every 5 minutes</td></tr></tbody></table></div></section>
+<section class="area"><div class="area-head"><h2>MKT</h2><p class="area-sub">what the numbers mean</p></div><p class="blurb">What the numbers mean, and whether they mean it honestly.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-now"><td class="id">MKT-02</td><td class="what">Calibrate the fee schedule on more than one order</td><td><span class="pill p-now">Now</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Fitted to exactly one real order; reproduces it to 5p on £829. Add orders to <code>OBSERVED</code> in <code>buyercost.js</code> and the test reports the fit</td></tr>
+<tr class="s-next"><td class="id">MKT-06</td><td class="what">Report how long a listing sits before it sells</td><td><span class="pill p-next">Next</span></td><td class="sz">S</td><td class="blk">COL-04 backfill</td><td class="why"><code>medianDaysToSale</code> has never worked. This is the Buy-It-Now question that costs no API calls, and it may make COL-01 unnecessary</td></tr>
+<tr class="s-later"><td class="id">MKT-07</td><td class="what">Warn when one seller sets a coin type&#x27;s asking median</td><td><span class="pill p-later">Later</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Half Sovereign · Victoria Young Head asks 133% and one seller holds 83 of its 165 listings. A real number, but not a market</td></tr>
+<tr class="s-later"><td class="id">MKT-08</td><td class="what">More completed sales</td><td><span class="pill p-later">Later</span></td><td class="sz">L</td><td class="blk">time</td><td class="why">26 sales, about one a day. Not code — the note is here so the thinness stays visible</td></tr>
+<tr class="s-later"><td class="id">MKT-09</td><td class="what">Auction alerts fire only inside the last 120 minutes</td><td><span class="pill p-later">Later</span></td><td class="sz">S</td><td class="blk">MKT-08</td><td class="why">Which is why none has ever fired. Widening it needs the uplift curve to know the 3-day and long buckets, and both are at zero auctions</td></tr>
+<tr class="s-done"><td class="id">MKT-01</td><td class="what">Charge eBay&#x27;s buyer protection fee in every premium</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">The premium reported was one nobody paid: a sale recorded at £829.12 cost its winner £852.40. Sovereign (bullion) moved 6.6% → 9.6% clearing, 37.0% → 41.4% asking</td></tr>
+<tr class="s-done"><td class="id">MKT-03</td><td class="what">One vote per auction in the closing-uplift curve</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>n</code> counted snapshots, not auctions: 1,418 &quot;samples&quot; from 23 auctions, one contributing 110. Buckets now read 17/19/21/20/10 auctions</td></tr>
+<tr class="s-done"><td class="id">MKT-04</td><td class="what">Split the collector pool by why a coin is not ordinary</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">One bucket held a £10,000 1832 William IV beside a modern proof and reported one median. Pre-1871 alone asks <strong>215.6%</strong>; the three ordinary pools now sit in a coherent 37–43% band</td></tr>
+<tr class="s-done"><td class="id">MKT-05</td><td class="what">Spread must use the clearing median the page prints</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">The table could show <code>Clears at: —</code> beside <code>Spread: 40.3%</code> — a spread against a number it had just declined to show, off a single sale</td></tr></tbody></table></div></section>
+<section class="area"><div class="area-head"><h2>CLS</h2><p class="area-sub">what counts as a sovereign</p></div><p class="blurb">What counts as a sovereign — the question everything else rests on.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-someday"><td class="id">CLS-09</td><td class="what">Read the grade from the photograph</td><td><span class="pill p-someday">Someday</span></td><td class="sz">L</td><td class="blk">&mdash;</td><td class="why">The thumbnails are more instructive than the titles. Whether that is automatable here is an open question, not a plan</td></tr>
+<tr class="s-done"><td class="id">CLS-01</td><td class="what">Human labels, and rules learned from them</td><td><span class="pill p-done">Done</span></td><td class="sz">L</td><td class="blk">&mdash;</td><td class="why">Every exclusion rule is a guess made from outside the market. 179 coins judged, 4 rules accepted. A rule that would remove priced coins goes behind a confirmation page naming them — <code>george</code> would have stopped pricing 414 lots from one click</td></tr>
+<tr class="s-done"><td class="id">CLS-02</td><td class="what">Strip punctuation before reading a denomination</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Fixed three times by widening an allowed-character list — brackets, commas, then asterisks and hashes. <code><em>HALF</em> SOVEREIGN</code> was priced against a full sovereign&#x27;s gold and showed a 19% edge that did not exist</td></tr>
+<tr class="s-done"><td class="id">CLS-03</td><td class="what">Read negations and packaging as what they are</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Of 23 completed sales only 14 were counted. Three that fetched £809, £829 and £861 said <em>&quot;Never Cleaned Or Mounted&quot;</em>; two more said <em>&quot;in Capsule&quot;</em></td></tr>
+<tr class="s-done"><td class="id">CLS-04</td><td class="what">Read a spaced mintmark — <code>1919 P</code> as well as <code>1887S</code></td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">52 listings had an unread mint for want of a space in the pattern. A coin whose mint goes unread lands in the wrong pool for the wrong reason</td></tr>
+<tr class="s-done"><td class="id">CLS-05</td><td class="what">The multi-weight sovereigns — £2, £5, piedfort</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Nine seller phrasings fell through to FULL; 87 lots were priced against a half or a fifth of their actual gold, and a £9,654 five-sovereign piece read 1146% over spot</td></tr>
+<tr class="s-done"><td class="id">CLS-06</td><td class="what">Novelty copies and pick-your-coin listings</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">&quot;Gold-Coloured Sovereign Style Coins (10pcs)&quot; and &quot;CHOOSE YOUR COIN&quot; both reached the live opportunities panel. 20 variation listings caught</td></tr>
+<tr class="s-done"><td class="id">CLS-07</td><td class="what">Let a multi-coin lot be admitted at its own gold</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">The lot size rides on the assignment, not the instrument — writing it to the shared instrument row would have redefined the spot value for every coin filed under the same key</td></tr>
+<tr class="s-rejected"><td class="id">CLS-08</td><td class="what">Screen listings by country, on by default</td><td><span class="pill p-rejected">Rejected</span></td><td class="sz">—</td><td class="blk">&mdash;</td><td class="why"><strong>Cost 1,268 genuine sovereigns in one pass</strong>, 744 of them Australian — Sydney, Melbourne and Perth mint coins are British sovereigns and the scarcest part of the series. Now opt-in, with the cost of narrowing shown beside each country</td></tr></tbody></table></div></section>
+<section class="area"><div class="area-head"><h2>UI</h2><p class="area-sub">the dashboard</p></div><p class="blurb">The dashboard, judged by whether a decision can be made from it.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-someday"><td class="id">UI-10</td><td class="what">A watchlist of coins you are hunting</td><td><span class="pill p-someday">Someday</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">The tool tells you what the market is doing; it does not yet know what you want</td></tr>
+<tr class="s-done"><td class="id">UI-01</td><td class="what">Opportunities are live auctions at or near spot</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">The old definition needed a projected final price, a sufficient fair value and a bid ceiling, inside the last two hours — so <strong>no auction alert ever fired</strong>, while the panel filled with Buy-It-Now lots sitting under a contaminated median. 37 real auctions now qualify out of 217 checked</td></tr>
+<tr class="s-done"><td class="id">UI-02</td><td class="what">Exclude and learn from the opportunities panel</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">So a wrong listing is dismissed where it is noticed, not on another page</td></tr>
+<tr class="s-done"><td class="id">UI-03</td><td class="what">The picture on every page that lists a lot</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Click to enlarge, opening below the row so it never covers the title. 546 rows load 22 thumbnails and one large image</td></tr>
+<tr class="s-done"><td class="id">UI-04</td><td class="what">Tick down the left, then one decision</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">A cull is one pass; a batch accept reads each row&#x27;s own denomination and quantity</td></tr>
+<tr class="s-done"><td class="id">UI-05</td><td class="what">Filter by auction or Buy-It-Now</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">On the review queue and the drill-down. A live lot is judged on how it is offered, a completed one on how it actually sold</td></tr>
+<tr class="s-done"><td class="id">UI-06</td><td class="what">Show what the tracked market is made of</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">And show the hole: the Buy-It-Now outcome bar is hatched and labelled <em>not observed</em>, because a zero sell-through would be a lie</td></tr>
+<tr class="s-done"><td class="id">UI-07</td><td class="what">Reach the listings behind any market number</td><td><span class="pill p-done">Done</span></td><td class="sz">M</td><td class="blk">&mdash;</td><td class="why">2,740 of 3,447 live priced listings had no review-queue row — they classified confidently and wrongly, so this page is the only route to them</td></tr>
+<tr class="s-done"><td class="id">UI-08</td><td class="what">Every column carries its definition</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Several are not what they look like: Asks is fixed-price only, Live counts auctions too, Bids excludes auctions that got none</td></tr>
+<tr class="s-done"><td class="id">UI-09</td><td class="what">Say &quot;spot&quot;, never &quot;melt&quot;</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Melt in the UK is scrap, and scrap pays <strong>under</strong> spot. The tool measures gold content at spot, so the word was wrong</td></tr></tbody></table></div></section>
+<section class="area"><div class="area-head"><h2>OPS</h2><p class="area-sub">repo, deploy, docs</p></div><p class="blurb">Repo, deploy and the traps worth never falling into twice.</p><div class="scroll"><table><thead><tr><th>ID</th><th>Item</th><th>Status</th><th>Size</th><th>Blocked by</th><th>Why / evidence</th></tr></thead><tbody><tr class="s-done"><td class="id">OPS-01</td><td class="what">This board, generated from one source</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>scripts/roadmap.py</code> reads <code>ROADMAP.md</code> and writes <code>ROADMAP.html</code>, so the board and the file cannot drift</td></tr>
+<tr class="s-done"><td class="id">OPS-02</td><td class="what">Every bulk write inside one transaction</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why">Unwrapped, the Pi fsyncs per row: a label click took over two minutes and timed out. In a transaction the full rebuild is 3.9s and a single verdict is 56ms</td></tr>
+<tr class="s-done"><td class="id">OPS-03</td><td class="what">Never rank every snapshot to use one instrument&#x27;s</td><td><span class="pill p-done">Done</span></td><td class="sz">S</td><td class="blk">&mdash;</td><td class="why"><code>activeListings</code> cost 435ms per call, once per coin type — the market page took <strong>19 seconds</strong> and was getting worse with every sweep. Scoped first, it is 1.4s</td></tr></tbody></table></div></section>
 
   <footer>
-    Coin&#8209;Market &middot; state of play in <span class="mono">HANDOVER.md</span> &middot;
-    201 tests &middot; collector, dashboard and deletion endpoint all running on the Pi.
+    Generated from <code>ROADMAP.md</code> by <code>scripts/roadmap.py</code>. The reasoning behind
+    every row lives in <code>HANDOVER.md</code>. IDs are permanent: a dropped item becomes
+    <em>Rejected</em>, never a gap.
   </footer>
-
 </div>
