@@ -81,6 +81,9 @@ td a:hover { text-decoration-color:var(--ink) }
 .legend { display:flex; gap:18px; align-items:center; font-size:13px; color:var(--ink-2); margin-bottom:14px }
 .swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:6px; vertical-align:-1px }
 .alert { border-left:3px solid var(--good); padding:12px 16px; margin-bottom:10px; background:var(--surface); border-radius:0 8px 8px 0 }
+.alert { display:flex; gap:14px; align-items:flex-start }
+.alert-main { min-width:0; flex:1 1 auto }
+.alert-shot { flex:0 0 auto }
 .alert .t { font-weight:560 }
 .badge { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11.5px; border:1px solid var(--border); color:var(--ink-2) }
 .warn { color:var(--critical) }

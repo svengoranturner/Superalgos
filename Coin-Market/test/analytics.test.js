@@ -192,3 +192,36 @@ test('uplift samples with no auction id each count once', () => {
     const bucket = UPLIFT.buildCurve(samples)[UPLIFT.bucketFor(600)]
     assert.strictEqual(bucket.n, 6)
 })
+
+/*  eBay UK charges the buyer a protection fee on top of the item price, and
+    it appears in no API response. A lot recorded as clearing at GBP 829.12
+    in fact cost its winner GBP 852.40 - so a premium computed on the
+    recorded number is a premium nobody paid. */
+test('the buyer protection fee is part of what a coin costs', () => {
+    const BUYER = require('../src/analytics/buyercost.js')
+    const PREMIUM = require('../src/analytics/premium.js')
+
+    /*  The schedule is calibrated on real observed orders. If it ever drifts
+        from them, this is where it shows. */
+    for (const observed of BUYER.OBSERVED) {
+        const computed = BUYER.buyerFee(observed.orderTotal)
+        const error = Math.abs(computed - observed.fee)
+        assert.ok(error <= 0.10,
+            observed.note + ': computed £' + computed + ' against an actual £' + observed.fee)
+    }
+
+    /*  Proportionally heavier on cheap coins, because the fixed component is
+        a bigger share of a small order - so it moves quarter sovereigns more
+        than quintuples, and the two are not comparable without it. */
+    assert.ok(BUYER.buyerFee(50) / 50 > BUYER.buyerFee(2000) / 2000)
+
+    /* totalCost carries it; listedCost is the headline price. */
+    assert.strictEqual(PREMIUM.listedCost(800, 5), 805)
+    assert.ok(PREMIUM.totalCost(800, 5) > 805)
+    assert.strictEqual(PREMIUM.totalCost(800, 5), BUYER.buyerCost(805))
+
+    /* A premium measured with it is higher than one measured without. */
+    const withFee = PREMIUM.premium(PREMIUM.totalCost(800, 0), 0.2354, 3292)
+    const without = PREMIUM.premium(PREMIUM.listedCost(800, 0), 0.2354, 3292)
+    assert.ok(withFee > without)
+})

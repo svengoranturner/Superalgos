@@ -221,7 +221,15 @@ function marketPage (opened, url) {
         : opportunities.map(entry => {
             const a = entry.alert
             const isAuction = a.rule === 'AUCTION_PROJECTED_BELOW_CEILING'
+            const shot = largerImage(a.imageUrl)
             return `<div class="alert">
+        ${a.imageUrl
+            ? `<details class="q-shot alert-shot"${shot ? ' style="--shot:url(&quot;' + escapeHtml(shot) + '&quot;)"' : ''}>
+             <summary title="Click for a larger picture"><img src="${escapeHtml(a.imageUrl)}" alt="" loading="lazy" decoding="async"></summary>
+             ${shot ? '<div class="q-big"></div>' : ''}
+           </details>`
+            : ''}
+        <div class="alert-main">
         <div class="t">${escapeHtml(a.title)}</div>
         <div class="thin">${escapeHtml(entry.name)} ·
           ${isAuction ? 'auction ending in ' + a.minutesLeft + ' min' : 'buy it now / best offer'}</div>
@@ -235,6 +243,7 @@ function marketPage (opened, url) {
           <span class="badge">edge ${pct(a.edge)}</span>
         </div>
         ${a.url ? '<div style="margin-top:4px"><a href="' + escapeHtml(a.url) + '" target="_blank" rel="noopener">open on eBay</a></div>' : ''}
+        </div>
       </div>`
         }).join('')
 

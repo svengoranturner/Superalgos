@@ -79,6 +79,12 @@ exports.newMarketView = function (repository, spotAt, options) {
                     shipping: row.shipping,
                     bidCount: row.bidCount,
                     itemWebUrl: row.itemWebUrl,
+                    /*  The picture, so any page that lists a lot can show
+                        one. The owner's words: the thumbnails are as
+                        instructive as the titles, if not more so - a
+                        gold-coloured souvenir looks like a souvenir long
+                        before its title admits to it. */
+                    imageUrl: row.imageUrl,
                     fineOz: row.fineOz,
                     askPremium: spot === null ? null : PREMIUM.premium(total, row.fineOz, spot.gbpPerOz)
                 }

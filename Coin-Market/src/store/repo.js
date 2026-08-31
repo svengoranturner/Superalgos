@@ -290,6 +290,7 @@ exports.newRepository = function (db, options) {
                 )
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
                        l.end_time AS endTime, l.item_web_url AS itemWebUrl,
+                       l.image_url AS imageUrl, l.legacy_id AS legacyId,
                        i.fine_oz * li.quantity AS fineOz,
                        s.price, s.shipping, s.bid_count AS bidCount
                 FROM listing l
