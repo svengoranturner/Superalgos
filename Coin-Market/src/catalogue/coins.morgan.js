@@ -131,7 +131,21 @@ function poolFor (attrs) {
     const mint = attrs.mint
 
     if (design && year && mint && KEY_DATES.has(design + ':' + year + ':' + mint)) { return 'KEY_DATE' }
-    if (mint === 'CC') { return 'KEY_DATE' }
+    /*
+        Carson City, but only in the years Carson City was open.
+
+        The mint closed in 1893 and every dollar it struck is collected, so
+        the mint alone is enough - but only if the date agrees. Without the
+        check, "2021-CC Morgan .999 Silver Dollar Centenary (Carson City
+        Mint Mark)" filed as a key date: a modern commemorative, struck at
+        .999 rather than .900, sitting in the pool that holds the scarcest
+        coins in the series and dragging its median with it.
+
+        A CC mark with no readable year is not evidence of an 1889-CC. It is
+        evidence that somebody wrote CC.
+    */
+    if (mint === 'CC' && year !== null && year !== undefined &&
+        year >= MINTS.CC.from && year <= MINTS.CC.to) { return 'KEY_DATE' }
     if (attrs.gradeBand && String(attrs.gradeBand).startsWith('SLAB_')) { return 'GRADED' }
     if (attrs.finish === 'PROOF') { return 'PROOF' }
     if (attrs.cull === true) { return 'CULL' }

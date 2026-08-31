@@ -183,6 +183,42 @@ const RULES = [
             the digit-only form missed 28 live multi-coin lots, each of
             which was being priced as a single sovereign. */
         test: /\b(job\s?lot|bulk|collection\s+of|set\s+of|\d+\s?[x×]\s?(?:gold\s+)?(?:full\s+|half\s+)?sovereign|sovereign\s+set|sovereign\s+collection|coins\s+sovereign|sovereign\s+lot|[3-9][-\s]coin|(two|three|four|five|six|seven|eight|nine|ten)[-\s]?coin)\b/i
+    },
+    {
+        code: 'MODERN_TRIBUTE',
+        series: 'US.MORGAN',
+        reason: 'A modern commemorative, not a classic silver dollar',
+        /*  The US Mint restruck the Morgan and Peace designs from 2021, and
+            eBay is full of them: "2021-CC Morgan .999 Silver Dollar
+            Centenary (Carson City Mint Mark)", "2023 Peace Silver Dollar &
+            Morgan Set NGC MS 70". They are a different coin - .999 fine
+            against the classic .900, so 0.858 oz of silver rather than
+            0.7734 - and the CC on a 2021 is a decoration, not a mint.
+
+            Twelve of 381 live listings, and one of them had already filed
+            itself as a KEY_DATE alongside genuine Carson City dollars. The
+            fineness is the giveaway and needs no date list: no classic
+            Morgan or Peace dollar was ever struck at .999. */
+        test: /\b\.?999\b|\bcentenar(y|ies)\b|\bcentennial\b|\b20[2-9]\d\b/i
+    },
+    {
+        code: 'MULTI_DOLLAR_LOT',
+        series: 'US.MORGAN',
+        reason: 'More than one coin in the lot',
+        /*  detectQuantity counts sovereigns - "3 x Sovereign" - and reads 1
+            from "5 Morgan Silver Dollars — Mixed Dates", so 26 live bulk
+            lots were being filed as single coins. The generic half of
+            PROOF_SET_OR_BUNDLE says the same thing for sovereigns; it is
+            repeated here rather than lifted out because screen() returns on
+            first match, and moving a rule earlier in that list is a silent
+            reordering for every series that already depends on it.
+
+            THE PLURAL IS THE SIGNAL, and getting that wrong cost a real
+            coin: a first pass matched a bare number before "Morgan", which
+            excluded "1878-P 7TF Reverse of 78 Morgan Silver Dollar" - a
+            single coin whose variety name happens to contain a number. A
+            lot says DollarS. */
+        test: /\b(job\s?lot|bulk|collection\s+of|set\s+of|mixed\s+dates|sealed\s+bag|\d+\s?[x×]\s|[2-9]\d*\s+(morgan|peace|us|usa|american)?\s*silver\s+dollars\b|[3-9][-\s]coin|(two|three|four|five|six|seven|eight|nine|ten)[-\s]?coin)\b/i
     }
 ]
 

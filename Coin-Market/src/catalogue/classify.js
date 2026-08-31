@@ -184,20 +184,6 @@ function extractDenomination (title) {
 
 /* ------------------------------------------------------------ portrait */
 
-const PORTRAIT_KEYWORDS = [
-    { code: 'VIC_JUBILEE',      test: /\bjubilee\s*head\b|\bjubilee\b/i },
-    { code: 'VIC_OLD',          test: /\b(old|veiled|widow)\s*head\b/i },
-    { code: 'VIC_YOUNG_SHIELD', test: /\b(shield|shield[-\s]?back|shieldback)\b/i },
-    { code: 'VIC_YOUNG_GEORGE', test: /\byoung\s*head\b/i },
-    { code: 'GEORGE_III',       test: /\bgeorge\s*(iii|3rd|3)\b/i },
-    { code: 'GEORGE_IV',        test: /\bgeorge\s*(iv|4th|4)\b/i },
-    { code: 'WILLIAM_IV',       test: /\bwilliam\s*(iv|4th|4)\b/i },
-    { code: 'EDWARD_VII',       test: /\bedward\s*(vii|7th|7)\b/i },
-    { code: 'GEORGE_V',         test: /\bgeorge\s*(v|5th|5)\b(?!i)/i },
-    { code: 'GEORGE_VI',        test: /\bgeorge\s*(vi|6th|6)\b/i },
-    { code: 'CHARLES_III',      test: /\bcharles\s*(iii|3rd|3)\b/i }
-]
-
 /*
     Portrait resolution combines two weak signals into one strong one:
     a monarch keyword narrows the family, and the year picks the portrait
@@ -205,13 +191,17 @@ const PORTRAIT_KEYWORDS = [
     types with materially different prices, and a bare year in 1871-1885
     cannot separate shield from St George.
 */
-function extractPortrait (title, year) {
+function extractPortrait (title, year, packOrId) {
 
-    const byYear = COINS.portraitsForYear(year)
+    /*  Two weak signals into one strong one. The COMBINING is universal -
+        a design keyword narrows the family, the year picks within it - so
+        only the keyword table and the design list come from the series. */
+    const pack = SERIES.resolve(packOrId)
+    const byYear = pack.portraitsForYear(year)
 
-    for (const keyword of PORTRAIT_KEYWORDS) {
+    for (const keyword of pack.portraitKeywords) {
         if (!keyword.test.test(title)) { continue }
-        const portrait = COINS.PORTRAIT_BY_CODE.get(keyword.code)
+        const portrait = pack.portraitByCode.get(keyword.code)
         if (year === null) { return { portrait: keyword.code, confidence: 0.6 } }
         /* Keyword and date agree - the strongest signal available. */
         if (year >= portrait.from && year <= portrait.to) {
@@ -244,26 +234,24 @@ function extractPortrait (title, year) {
     more likely to be an initial or a grade than a mint mark, so single
     letters are accepted only next to the words "mint mark".
 */
-const MINT_KEYWORDS = [
-    { code: 'S',  test: /\bsydney\b/i },
-    { code: 'M',  test: /\bmelbourne\b/i },
-    { code: 'P',  test: /\bperth\b/i },
-    { code: 'C',  test: /\bottawa\b|\bcanada\b/i },
-    { code: 'I',  test: /\bbombay\b|\bmumbai\b/i },
-    { code: 'SA', test: /\bpretoria\b|\bsouth\s*africa\b/i }
-]
-
-function extractMint (title, year, compactMark) {
-    for (const keyword of MINT_KEYWORDS) {
+function extractMint (title, year, compactMark, packOrId) {
+    const pack = SERIES.resolve(packOrId)
+    for (const keyword of pack.mintKeywords) {
         if (keyword.test.test(title)) {
-            const mint = COINS.MINTS[keyword.code]
+            const mint = pack.mints[keyword.code]
             if (year !== null && mint.from !== undefined && (year < mint.from || year > mint.to)) {
                 return { mint: null, confidence: 0 }   /* impossible pairing */
             }
             return { mint: keyword.code, confidence: 1 }
         }
     }
-    const explicit = title.match(/\bmint\s*mark\s*[:\-]?\s*([SMPCI]|SA)\b/i)
+    /*  Built from the series' own marks rather than a fixed character class,
+        so a mint letter one series uses and another does not cannot leak
+        between them. Longest first: an alternation is ordered. */
+    const explicit = title.match(new RegExp(
+        '\\bmint\\s*mark\\s*[:\\-]?\\s*(' +
+        pack.mintMarks.slice().sort((a, b) => b.length - a.length).join('|') +
+        ')\\b', 'i'))
     if (explicit !== null) {
         return { mint: explicit[1].toUpperCase(), confidence: 0.9 }
     }
@@ -271,20 +259,33 @@ function extractMint (title, year, compactMark) {
         than matched again here, so the letter is only ever taken when it is
         actually attached to a plausible year. */
     if (compactMark !== null && compactMark !== undefined) {
-        const mint = COINS.MINTS[compactMark]
+        const mint = pack.mints[compactMark]
         if (mint !== undefined) {
             const impossible = year !== null && mint.from !== undefined &&
                 (year < mint.from || year > mint.to)
             if (!impossible) { return { mint: compactMark, confidence: 0.9 } }
         }
     }
-    if (/\blondon\b|\bno\s*mint\s*mark\b/i.test(title)) { return { mint: 'LON', confidence: 0.9 } }
+    /*  The mint that strikes no mark - London here, Philadelphia for a US
+        series - when the seller names it outright. */
+    if (pack.unmarkedMint.names.test(title)) {
+        return { mint: pack.unmarkedMint.code, confidence: 0.9 }
+    }
     /*
-        Absence of evidence is weak evidence of London, since London is the
-        only mint that strikes no mark - but only for years when branch
-        mints were not operating.
+        Absence of evidence is weak evidence of the unmarked mint, since it
+        is the only one that strikes no mark - but only for years when the
+        branch mints were not operating. Inside that window absence is no
+        evidence at all, and the coin goes to UNATTRIBUTED rather than
+        somewhere plausible.
+
+        Measured on 381 real Morgan listings: 57% state no mint anywhere in
+        the title, so a series that guessed here would be guessing on more
+        than half its corpus.
     */
-    if (year !== null && (year < 1871 || year > 1932)) { return { mint: 'LON', confidence: 0.8 } }
+    const window = pack.branchMintYears
+    if (year !== null && (year < window.from || year > window.to)) {
+        return { mint: pack.unmarkedMint.code, confidence: 0.8 }
+    }
     return { mint: null, confidence: 0 }
 }
 
@@ -437,14 +438,14 @@ exports.classify = function (listing, context) {
     }
 
     const yearResult = extractYear(title, pack)
-    const denomResult = extractDenomination(title)
-    const portraitResult = extractPortrait(title, yearResult.year)
-    const mintResult = extractMint(title, yearResult.year, yearResult.mintmark)
+    const denomResult = pack.denominationFrom(title)
+    const portraitResult = extractPortrait(title, yearResult.year, pack)
+    const mintResult = extractMint(title, yearResult.year, yearResult.mintmark, pack)
     const finishResult = extractFinish(title)
     const gradeResult = extractGrade(title, finishResult.finish)
 
     let attributes = {
-        series: 'GB.SOV',
+        series: pack.id,
         denomination: denomResult.denomination,
         year: yearResult.year,
         portrait: portraitResult.portrait,

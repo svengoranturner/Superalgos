@@ -1,5 +1,7 @@
 'use strict'
 
+const SERIES = require('../catalogue/series/index.js')
+
 /*
     Is this price even possible for the coin it claims to be?
 
@@ -25,23 +27,36 @@ const VERDICTS = {
     IMPOSSIBLE: {
         code: 'IMPOSSIBLE',
         label: 'below spot - not this coin',
-        detail: 'Priced under its own gold content, so it cannot be the coin the title claims.'
+        detail: 'Priced under its own metal content, so it cannot be the coin the title claims.'
     },
     BULLION: {
         code: 'BULLION',
-        label: 'priced like bullion',
-        detail: 'Close to gold content, as a bullion-grade coin should be.'
+        label: 'priced near spot',
+        detail: 'Close to its metal content, as an ordinary example should be.'
     },
     PREMIUM: {
         code: 'PREMIUM',
         label: 'priced like a collector coin',
-        detail: 'Well above gold content - normal for a graded, scarce or proof piece.'
+        detail: 'Well above its metal content - normal for a graded, scarce or proof piece.'
     },
     EXTREME: {
         code: 'EXTREME',
         label: 'far above spot - rarity or error',
-        detail: 'Many times its gold content. Either a genuine rarity or a mis-priced listing.'
+        detail: 'Many times its metal content. Either a genuine rarity or a mis-priced listing.'
     },
+    /*
+        For a key date, a slabbed coin or a proof, the metal is not what sets
+        the price - so there is no ratio high enough to be suspicious, and
+        "priced near spot" would be absurd beside 5,984%. The pool says the
+        question does not apply, and so does the label.
+    */
+    NUMISMATIC: {
+        code: 'NUMISMATIC',
+        label: 'priced on rarity, not metal',
+        detail: 'For this kind of coin the metal content is not what sets the price, ' +
+            'so its ratio to spot says nothing about whether the listing is sound.'
+    },
+
     /*
         The same number, on a live auction, means something completely
         different. Sellers routinely open below the gold value to attract
@@ -65,6 +80,20 @@ exports.VERDICTS = VERDICTS
     charged separately. Only a clear break from the metal price is treated
     as impossible.
 */
+/*
+    Defaults only. The real values come from the coin's own series, because
+    what counts as an odd price is a property of the coin and not of the
+    tool.
+
+    These numbers are gold-shaped: a sovereign is bullion-adjacent, so 25%
+    over its metal is already a premium and three times is extraordinary.
+    Applied to silver they libel every genuine coin - a common Morgan trades
+    at about twice its silver, which reads as PREMIUM, and an 1893-S at sixty
+    times reads "far above spot - rarity or error". That badge appearing on
+    real coins is exactly the failure that made this column ignorable once
+    before, when a quarter-sovereign fallback put a wrong verdict on 1,346
+    rows.
+*/
 const IMPOSSIBLE_BELOW = 0.85
 const PREMIUM_ABOVE = 1.25
 const EXTREME_ABOVE = 3
@@ -76,6 +105,43 @@ const EXTREME_ABOVE = 3
     opportunities panel.
 */
 exports.assess = function (price, fineOz, spotGbpPerOz, context) {
+    /*  context.series names the coin's series; absent, the defaults above
+        apply, which is what every existing caller means. */
+    /*
+        Thresholds come from the coin's series AND its pool.
+
+        Per series, because a sovereign is bullion-adjacent and a silver
+        dollar is not. Per POOL, because within one series the question
+        changes completely: for a common-date coin the metal is most of the
+        price, so a wild ratio really does suggest a misclassification -
+        which is what this column is FOR. For a key date or a slabbed coin
+        the metal is irrelevant to the price, and an 1893-S at sixty times
+        its silver is not an error, it is an 1893-S. Badging those "rarity or
+        error" is how a column stops being read.
+
+        Pass context.key and both are read off it; context.series still works
+        for a caller that has no key.
+    */
+    let pack = context && context.series ? SERIES.get(context.series) : null
+    let pool = context && context.pool ? context.pool : null
+    if (context && typeof context.key === 'string') {
+        const found = SERIES.forKey(context.key)
+        if (found !== null) { pack = found.pack; pool = pool || found.rest[0] }
+    }
+    const base = (pack && pack.plausibility) || {}
+    const byPool = (base.byPool && pool && base.byPool[pool]) || {}
+    const limits = Object.assign({}, base, byPool)
+    /*  isFinite would reject Infinity, which is exactly the value a pool
+        uses to say "no ratio here is suspicious" - and rejecting it silently
+        restored the gold defaults, so key dates went on being badged as
+        errors while the config that was meant to stop it sat there looking
+        correct. */
+    const pick = (value, fallback) =>
+        typeof value === 'number' && !Number.isNaN(value) ? value : fallback
+    const impossibleBelow = pick(limits.impossibleBelow, IMPOSSIBLE_BELOW)
+    const premiumAbove = pick(limits.premiumAbove, PREMIUM_ABOVE)
+    const extremeAbove = pick(limits.extremeAbove, EXTREME_ABOVE)
+
     if (!Number.isFinite(price) || price <= 0) { return null }
     if (!Number.isFinite(fineOz) || fineOz <= 0) { return null }
     if (!Number.isFinite(spotGbpPerOz) || spotGbpPerOz <= 0) { return null }
@@ -86,9 +152,18 @@ exports.assess = function (price, fineOz, spotGbpPerOz, context) {
     const liveAuction = context !== undefined && context !== null && context.liveAuction === true
 
     let verdict = VERDICTS.BULLION
-    if (ratio < IMPOSSIBLE_BELOW) {
+    if (ratio < impossibleBelow) {
         verdict = liveAuction ? VERDICTS.OPENING : VERDICTS.IMPOSSIBLE
-    } else if (ratio >= EXTREME_ABOVE) { verdict = VERDICTS.EXTREME } else if (ratio >= PREMIUM_ABOVE) { verdict = VERDICTS.PREMIUM }
+    } else if (ratio >= extremeAbove) {
+        verdict = VERDICTS.EXTREME
+    } else if (ratio >= premiumAbove) {
+        verdict = VERDICTS.PREMIUM
+    } else if (premiumAbove === Infinity && ratio >= PREMIUM_ABOVE) {
+        /*  The pool has told us the metal does not price this coin. Saying
+            "near spot" at twenty times spot would be worse than saying
+            nothing. */
+        verdict = VERDICTS.NUMISMATIC
+    }
 
     return {
         spotValue,
@@ -108,6 +183,6 @@ exports.assess = function (price, fineOz, spotGbpPerOz, context) {
             caller that only trusts the downward direction has to know the
             price is under the floor without caring which of the two labels
             applies to it. */
-        underSpot: ratio < IMPOSSIBLE_BELOW
+        underSpot: ratio < impossibleBelow
     }
 }

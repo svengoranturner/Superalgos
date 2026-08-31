@@ -49,6 +49,52 @@ module.exports = {
         ['portrait', 'year', 'mint', 'gradeBand']
     ],
 
+    /*
+        The monarchs, as sellers write them. Moved here from classify.js
+        unchanged: the algorithm that combines a keyword with a year is
+        universal, but which keywords exist is entirely a property of this
+        series - no other coin has a Jubilee Head.
+    */
+    portraitKeywords: [
+    { code: 'VIC_JUBILEE',      test: /\bjubilee\s*head\b|\bjubilee\b/i },
+    { code: 'VIC_OLD',          test: /\b(old|veiled|widow)\s*head\b/i },
+    { code: 'VIC_YOUNG_SHIELD', test: /\b(shield|shield[-\s]?back|shieldback)\b/i },
+    { code: 'VIC_YOUNG_GEORGE', test: /\byoung\s*head\b/i },
+    { code: 'GEORGE_III',       test: /\bgeorge\s*(iii|3rd|3)\b/i },
+    { code: 'GEORGE_IV',        test: /\bgeorge\s*(iv|4th|4)\b/i },
+    { code: 'WILLIAM_IV',       test: /\bwilliam\s*(iv|4th|4)\b/i },
+    { code: 'EDWARD_VII',       test: /\bedward\s*(vii|7th|7)\b/i },
+    { code: 'GEORGE_V',         test: /\bgeorge\s*(v|5th|5)\b(?!i)/i },
+    { code: 'GEORGE_VI',        test: /\bgeorge\s*(vi|6th|6)\b/i },
+    { code: 'CHARLES_III',      test: /\bcharles\s*(iii|3rd|3)\b/i }
+    ],
+
+    mintKeywords: [
+    { code: 'S',  test: /\bsydney\b/i },
+    { code: 'M',  test: /\bmelbourne\b/i },
+    { code: 'P',  test: /\bperth\b/i },
+    { code: 'C',  test: /\bottawa\b|\bcanada\b/i },
+    { code: 'I',  test: /\bbombay\b|\bmumbai\b/i },
+    { code: 'SA', test: /\bpretoria\b|\bsouth\s*africa\b/i }
+    ],
+
+    /*  The mint that strikes no mark, and the years in which its branches
+        were running. Inside that window an absent mark is no evidence at
+        all; outside it, it is weak evidence of London. */
+    unmarkedMint: { code: 'LON', names: /\blondon\b|\bno\s*mint\s*mark\b/i },
+    branchMintYears: { from: 1871, to: 1932 },
+
+    /*  Denomination parsing stays in classify.js, where its scar tissue
+        lives: three separate bug fixes about punctuation, one about word
+        order, one about nine ways of writing a multi-weight sovereign. The
+        logic is irreducibly about half, quarter, double and quintuple
+        SOVEREIGNS, so there is nothing in it to generalise - only somewhere
+        for it to be owned. Required lazily because classify.js requires the
+        registry, and a top-level require here would close the loop. */
+    denominationFrom (title) {
+        return require('../classify.js').extractDenomination(title)
+    },
+
     /*  What each ladder field is called on screen. 'Portrait' is a
         sovereign's word; a Morgan dollar would say 'Design'. */
     fieldLabels: { portrait: 'Portrait', year: 'Year', mint: 'Mint', gradeBand: 'Grade' },
@@ -65,8 +111,6 @@ module.exports = {
     yearRange: { from: 1817, to: 2049 },
     mintMarks: ['SA', 'S', 'M', 'P', 'C', 'I', 'A'],
 
-    /*  How this series talks about itself, for buttons and review copy that
-        would otherwise hard-code the word "sovereign". */
     /*
         What counts as an odd price for a sovereign. These are the values
         that were hard-coded in plausibility.js, moved here unchanged: a
@@ -81,6 +125,8 @@ module.exports = {
         extremeAbove: 3
     },
 
+    /*  How this series talks about itself, for buttons and review copy that
+        would otherwise hard-code the word "sovereign". */
     vocabulary: {
         one: 'sovereign',
         notOne: 'Not a sovereign',

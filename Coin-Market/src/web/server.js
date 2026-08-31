@@ -550,7 +550,13 @@ function newPlausibilityCell (spot) {
             row.endTime !== null && row.endTime !== undefined &&
             new Date(row.endTime).getTime() > Date.now()
 
-        const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz, { liveAuction: running })
+        /*  The key carries both the series and the pool, and the thresholds
+            come from those: what counts as an odd price for a bullion
+            sovereign is not what counts for a key-date silver dollar. */
+        const v = PLAUSIBILITY.assess(total, fineOz, spot.gbpPerOz, {
+            liveAuction: running,
+            key: row.instrumentKey || row.bestGuess || null
+        })
         if (v === null) { return '' }
 
         /*  The quarter fallback is a floor, and a floor only works downwards.
