@@ -102,6 +102,12 @@ nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
 /*  A section the page keeps but does not put in your way. <details> because
     it needs no JavaScript and remembers nothing, which is right for a page
     that is rebuilt on every request. */
+/*  The scope choice on a learned rule. Deliberately plain and adjacent to
+    the button, because it changes what the button does. */
+.scope { display:inline-flex; gap:6px; align-items:center; font-size:12.5px;
+  color:var(--ink-2); cursor:pointer; margin-right:4px }
+.scope input { margin:0 }
+.scope:hover { color:var(--ink) }
 details.fold { border-top:1px solid var(--axis); padding:2px 0 }
 details.fold > summary { cursor:pointer; list-style:none; padding:13px 2px; font-size:15px;
   font-weight:560; color:var(--ink-2); display:flex; gap:10px; align-items:baseline }

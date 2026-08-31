@@ -437,5 +437,57 @@ exports.MIGRATIONS = [
            --------------------------------------------------------------- */
         ALTER TABLE listing_instrument ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
         `
+    },
+    {
+        name: '009-scope-decisions-to-a-series',
+        sql: `
+        /* ---------------------------------------------------------------
+           Which coin a human decision was about.
+
+           The verdicts were SOVEREIGN and NOT_SOVEREIGN, which could say
+           "this is a sovereign" and "this is not a sovereign" and nothing
+           else. The moment the tool tracks a second coin that becomes a
+           problem in two directions.
+
+           The harmless direction: there was no way to record "this is a
+           Morgan dollar, not a sovereign" - only "not a sovereign", which
+           throws away the useful half of what you knew.
+
+           The dangerous one: rules are INDUCED from these labels, and an
+           unscoped rule applies to every series. Marking Britannias "not a
+           sovereign" is correct and would have been accepted for good
+           reasons - and would then have silently emptied the Britannia pack
+           the day it landed, months later, with nothing to connect the two.
+
+           So a verdict now says whether the coin is one the tool TRACKS,
+           and a separate column says which series the decision was about.
+           Every existing decision genuinely was about sovereigns, so the
+           rewrite is exact rather than a guess.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing_label ADD COLUMN series TEXT;
+        ALTER TABLE learned_rule  ADD COLUMN series TEXT;
+
+        UPDATE listing_label SET verdict = 'TRACKED',     series = 'GB.SOV' WHERE verdict = 'SOVEREIGN';
+        UPDATE listing_label SET verdict = 'NOT_TRACKED', series = 'GB.SOV' WHERE verdict = 'NOT_SOVEREIGN';
+        UPDATE listing_label SET series = 'GB.SOV' WHERE series IS NULL;
+
+        UPDATE learned_rule SET kind = 'NOT_TRACKED' WHERE kind = 'NOT_SOVEREIGN';
+        UPDATE learned_rule SET series = 'GB.SOV' WHERE series IS NULL;
+
+        /* ---------------------------------------------------------------
+           Uniqueness is per SCOPE, not per phrase.
+
+           (phrase, kind) alone meant a phrase one series had ruled on could
+           be silently re-scoped by another - "france" as not-a-sovereign
+           overwritten by "france" as not-a-dollar, leaving one of the two
+           series quietly unprotected. COALESCE gives a rule that applies to
+           every series a scope of its own rather than a NULL, which SQLite
+           would treat as distinct from every other NULL and so not unique
+           at all.
+           --------------------------------------------------------------- */
+        DROP INDEX IF EXISTS learned_rule_phrase;
+        CREATE UNIQUE INDEX learned_rule_scope
+            ON learned_rule(phrase, kind, COALESCE(series, '*'));
+        `
     }
 ]

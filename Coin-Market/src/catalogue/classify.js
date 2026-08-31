@@ -429,7 +429,10 @@ exports.classify = function (listing, context) {
 
     if (!confirmed) {
         const excluded = EXCLUSIONS.screen(title, aspects, pack) ||
-            (learned === null ? null : learned.exclusionFor(title))
+                        /*  Scoped: a rule learned about sovereigns must not reject a
+                silver dollar, and "britannia" is a good reason to reject one
+                and a catastrophic reason to reject the other. */
+            (learned === null ? null : learned.exclusionFor(title, pack.id))
         if (excluded !== null) {
             return LEARNED.apply(
                 { excluded, attributes: null, confidence: 0, needsReview: false, reasons: [excluded.reason] },
@@ -470,7 +473,7 @@ exports.classify = function (listing, context) {
         seller's own structured Denomination aspect, which is better
         evidence than either of us guessing from a title. */
     if (learned !== null && attributes.confidence.denomination < 1) {
-        const taught = learned.denominationFor(title)
+        const taught = learned.denominationFor(title, pack.id)
         if (taught !== null) {
             attributes.denomination = taught
             attributes.confidence.denomination = 1

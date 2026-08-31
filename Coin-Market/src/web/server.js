@@ -8,6 +8,7 @@ const LEARNED = require('../catalogue/learned.js')
 const CLASSIFY = require('../catalogue/classify.js')
 const RECLASSIFY = require('../catalogue/reclassify.js')
 const PREMIUM = require('../analytics/premium.js')
+const SERIES = require('../catalogue/series/index.js')
 const FRESHNESS = require('../analytics/freshness.js')
 
 const { escapeHtml, pct, gbp } = RENDER
@@ -1342,9 +1343,14 @@ function handlePost (opened, pathname, form) {
             'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
         const before = priced()
 
+        /*  Scoped to the series it was learned from unless explicitly
+            widened. null means every series, and is the only value here that
+            cannot be undone by noticing later - see ruleScopeControl. */
+        const everySeries = form.get('allSeries') === '1'
         repository.saveLearnedRule({
             phrase,
-            kind: LEARNED.VERDICT.NOT_SOVEREIGN,
+            kind: LEARNED.VERDICT.NOT_TRACKED,
+            series: everySeries ? null : (form.get('series') || SERIES.DEFAULT_ID),
             support: Number(form.get('support')) || null,
             agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
         })
@@ -1390,7 +1396,31 @@ function ruleEffect (repository, phrase) {
     }
 }
 
-function proposalCard (p, back, legacyId) {
+/*
+    What this rule will and will not touch.
+
+    A rule is scoped to the series it was learned from unless you say
+    otherwise, and saying otherwise is a checkbox rather than a default
+    because the two readings are a sentence apart and worlds apart in
+    consequence. "Britannia" is a perfectly good reason to reject a
+    SOVEREIGN and a catastrophic reason to reject a BRITANNIA - and once a
+    rule is unscoped there is nothing to tell the two apart. The damage
+    would land months later, when a Britannia pack is added and quietly
+    stays empty.
+*/
+function ruleScopeControl (seriesId) {
+    const pack = SERIES.get(seriesId) || SERIES.defaultPack()
+    return '<input type="hidden" name="series" value="' + escapeHtml(pack.id) + '">' +
+        '<label class="scope" title="Leave this unticked unless the phrase describes something ' +
+        'that is not a coin at all. A rule scoped to one series can be widened later; an ' +
+        'unscoped rule that empties a series you add next year gives you nothing to trace it ' +
+        'back to.">' +
+        '<input type="checkbox" name="allSeries" value="1"> apply to every coin, not just ' +
+        escapeHtml(pack.label) +
+        '</label>'
+}
+
+function proposalCard (p, back, legacyId, seriesId) {
     const risky = p.breaks > 0 || p.conflicts.length > 0
     const consequence = p.breaks === 0
         ? ', <strong>none</strong> of which are currently priced as sovereigns.'
@@ -1409,6 +1439,7 @@ function proposalCard (p, back, legacyId) {
           '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
           '<input type="hidden" name="phrase" value="' + escapeHtml(p.phrase) + '">' +
           '<input type="hidden" name="support" value="' + p.support + '">' +
+          ruleScopeControl(seriesId) +
           '<button class="yes">Accept this rule</button></form>'
 
     const conflictNote = p.conflicts.length > 0
@@ -1464,7 +1495,7 @@ function teachPage (opened, url) {
         'generalise.</p></div>'
 
     const safeHtml = safe.length > 0
-        ? safe.map(p => proposalCard(p, back, legacyId)).join('')
+        ? safe.map(p => proposalCard(p, back, legacyId, label.series)).join('')
         : nothingSafe
 
     const riskyHtml = risky.length === 0 ? '' : '<details>' +
@@ -1541,6 +1572,7 @@ function confirmRulePage (opened, url) {
         '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
         '<input type="hidden" name="phrase" value="' + escapeHtml(phrase) + '">' +
         '<input type="hidden" name="support" value="' + effect.support + '">' +
+        ruleScopeControl(label === undefined ? null : label.series) +
         '<button class="no">Yes, apply it anyway</button>' +
         '<a href="/teach?legacy=' + encodeURIComponent(legacyId) + '&amp;back=' +
         encodeURIComponent(back) + '">Cancel</a></form>')
@@ -1573,15 +1605,28 @@ function rulesPage (opened, url) {
     }).length
 
     const ruleRows = rules.length === 0
-        ? '<p class="thin">No rules yet. They come from the review queue: mark something as not a ' +
-          'sovereign and you are offered the rule that generalises it.</p>'
-        : '<div class="card scroll"><table><thead><tr><th>Rule</th><th>Matches now</th>' +
+        ? '<p class="thin">No rules yet. They come from the review queue: reject a coin and you ' +
+          'are offered the rule that generalises it.</p>'
+        : '<div class="card scroll"><table><thead><tr><th>Rule</th>' +
+          '<th title="Which coin this rule was learned about. A rule scoped to one series ' +
+          'never touches another - which is what stops a good reason to reject a sovereign ' +
+          'from quietly emptying a series you add later.">Applies to</th>' +
+          '<th>Matches now</th>' +
           '<th>When accepted</th><th></th></tr></thead><tbody>' +
           rules.map(rule => {
               const test = LEARNED.phrasePattern(rule.phrase)
               const now = corpus.filter(row => test.test(row.title)).length
+              /*  An unscoped rule is the one worth being able to see. It
+                  applies to coins this tool does not track yet, so it is the
+                  only kind that can do damage nobody connects to a click. */
+              const pack = rule.series ? SERIES.get(rule.series) : null
+              const scope = rule.series === null || rule.series === undefined
+                  ? '<span class="badge critical" title="This rule applies to every coin the ' +
+                    'tool tracks, including ones added later.">every coin</span>'
+                  : escapeHtml(pack ? pack.label : rule.series)
               return `<tr>
     <td>drop titles containing <span class="phrase">${escapeHtml(rule.phrase)}</span></td>
+    <td class="thin">${scope}</td>
     <td class="mono">${now}</td>
     <td class="mono thin">${rule.support === null ? '—' : rule.support}</td>
     <td><form method="post" action="/rule/delete" style="display:inline">

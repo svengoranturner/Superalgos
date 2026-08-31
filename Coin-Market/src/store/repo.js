@@ -1,6 +1,7 @@
 'use strict'
 
 const CRYPTO = require('node:crypto')
+const SERIES = require('../catalogue/series/index.js')
 
 /*
     Data access.
@@ -163,7 +164,6 @@ exports.newRepository = function (db, options) {
         saveClassification (browseId, keys, confidence, method, fineOz, attributes) {
             const now = new Date().toISOString()
             const INSTRUMENTS = require('../catalogue/instruments.js')
-const SERIES = require('../catalogue/series/index.js')
             /*  The instrument records what ONE of these coins is; the
                 assignment records how many of them this lot holds. Writing a
                 three-coin lot straight into instrument.fine_oz would have
@@ -431,15 +431,19 @@ const SERIES = require('../catalogue/series/index.js')
                 : 1
             return bindAll(db.prepare(`
                 INSERT INTO listing_label
-                    (legacy_id, title, verdict, denomination, note, labelled_at, source, quantity)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    (legacy_id, title, verdict, denomination, note, labelled_at, source, quantity, series)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(legacy_id) DO UPDATE SET
                     title = excluded.title, verdict = excluded.verdict,
                     denomination = excluded.denomination, note = excluded.note,
                     labelled_at = excluded.labelled_at, source = excluded.source,
-                    quantity = excluded.quantity
+                    quantity = excluded.quantity, series = excluded.series
             `), [entry.legacyId, entry.title, entry.verdict, entry.denomination,
-                entry.note, now, entry.source || 'human', quantity])
+                entry.note, now, entry.source || 'human', quantity,
+                /*  Which coin the decision was about. Defaults to the series
+                    the tool started with, so a caller that has not been
+                    taught about series records what it always did. */
+                entry.series || SERIES.DEFAULT_ID])
         },
 
         /*  The title a decision should be recorded against. Looked up rather
@@ -499,7 +503,12 @@ const SERIES = require('../catalogue/series/index.js')
         labels () {
             return db.prepare(`
                 SELECT legacy_id AS legacyId, title, verdict, denomination, note,
-                       labelled_at AS labelledAt, source, quantity
+                       labelled_at AS labelledAt, source, quantity,
+                       /*  Which coin the decision was about. Without it the
+                           rule induced from a label cannot be scoped, and the
+                           rejection cannot be read back in that coin's own
+                           words. */
+                       series
                 FROM listing_label ORDER BY labelled_at DESC
             `).all()
         },
@@ -682,7 +691,10 @@ const SERIES = require('../catalogue/series/index.js')
         learnedRules () {
             return db.prepare(`
                 SELECT id, phrase, kind, value, created_at AS createdAt,
-                       from_label AS fromLabel, support, agreement, enabled
+                       from_label AS fromLabel, support, agreement, enabled,
+                       /*  Which coin the rule is about. NULL means every one,
+                           which is the value worth being able to see. */
+                       series
                 FROM learned_rule ORDER BY created_at DESC
             `).all()
         },
@@ -690,14 +702,20 @@ const SERIES = require('../catalogue/series/index.js')
         saveLearnedRule (rule) {
             return bindAll(db.prepare(`
                 INSERT INTO learned_rule
-                    (phrase, kind, value, created_at, from_label, support, agreement, enabled)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 1)
-                ON CONFLICT(phrase, kind) DO UPDATE SET
+                    (phrase, kind, value, created_at, from_label, support, agreement, enabled, series)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+                /*  Matches the expression index: a phrase is unique WITHIN a
+                    scope, so two series can rule on the same words without
+                    one silently re-scoping the other's decision. */
+                ON CONFLICT(phrase, kind, COALESCE(series, '*')) DO UPDATE SET
                     value = excluded.value, support = excluded.support,
                     agreement = excluded.agreement, enabled = 1
             `), [String(rule.phrase).trim().toLowerCase(), rule.kind, rule.value,
                 rule.createdAt || new Date().toISOString(), rule.fromLabel,
-                rule.support, rule.agreement])
+                rule.support, rule.agreement,
+                /*  null means "every series", which the confirmation page
+                    makes an explicit choice rather than a default. */
+                rule.series === null ? null : (rule.series || SERIES.DEFAULT_ID)])
         },
 
         deleteLearnedRule (id) {

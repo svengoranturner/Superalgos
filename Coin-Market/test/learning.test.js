@@ -387,3 +387,98 @@ test('undoing a verdict restores the listing to the statistics', () => {
     assert.strictEqual(db.prepare('SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|u1|0').n, before)
     db.close()
 })
+
+/*
+    The trap CLS-11 exists to close.
+
+    Rules are induced from human labels, and an unscoped rule applies to
+    every series. "Britannia" is a perfectly good reason to reject a
+    SOVEREIGN - it is a different coin - and a catastrophic reason to reject
+    a BRITANNIA. Accepted for good reasons today, the damage lands months
+    later when a Britannia pack is added and quietly stays empty, with
+    nothing to connect the two events.
+*/
+test('a rule learned about one coin does not reject another', () => {
+    const LEARNED = require('../src/catalogue/learned.js')
+    const compiled = LEARNED.compile([
+        { phrase: 'britannia', kind: LEARNED.VERDICT.NOT_TRACKED, series: 'GB.SOV', enabled: 1 }
+    ])
+
+    const title = '2024 1oz Silver Britannia BU'
+    assert.ok(compiled.exclusionFor(title, 'GB.SOV') !== null,
+        'a britannia is still not a sovereign')
+    assert.strictEqual(compiled.exclusionFor(title, 'GB.BRIT'), null,
+        'and it is emphatically still a britannia')
+    assert.strictEqual(compiled.exclusionFor(title, 'US.MORGAN'), null)
+})
+
+test('a rule can be widened to every coin, but only on purpose', () => {
+    const LEARNED = require('../src/catalogue/learned.js')
+    /*  series null is the explicit "every series" - what the checkbox on the
+        confirmation page sets, and the only value that reaches a coin the
+        tool does not track yet. */
+    const universal = LEARNED.compile([
+        { phrase: 'fishing reel', kind: LEARNED.VERDICT.NOT_TRACKED, series: null, enabled: 1 }
+    ])
+    for (const series of ['GB.SOV', 'US.MORGAN', 'GB.BRIT', undefined]) {
+        assert.ok(universal.exclusionFor('Hardy fishing reel', series) !== null,
+            'a fishing reel is not a coin, whatever series you are looking for')
+    }
+})
+
+test('the old verdict spellings still mean what they meant', () => {
+    const LEARNED = require('../src/catalogue/learned.js')
+    /*  ~57 call sites and any form a browser still has open. These are
+        aliases for the same value, not separate verdicts. */
+    assert.strictEqual(LEARNED.VERDICT.SOVEREIGN, LEARNED.VERDICT.TRACKED)
+    assert.strictEqual(LEARNED.VERDICT.NOT_SOVEREIGN, LEARNED.VERDICT.NOT_TRACKED)
+    /*  server.js validates a posted verdict with VERDICT[value], so the new
+        spellings have to be keys as well as values. */
+    assert.strictEqual(LEARNED.VERDICT[LEARNED.VERDICT.TRACKED], 'TRACKED')
+    assert.strictEqual(LEARNED.VERDICT[LEARNED.VERDICT.NOT_TRACKED], 'NOT_TRACKED')
+})
+
+test('a decision records which coin it was about, and says so when it bites', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const { newRepository } = require('../src/store/repo.js')
+    const LEARNED = require('../src/catalogue/learned.js')
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+
+    repository.label({ legacyId: 'a1', title: '1912 Sovereign', verdict: LEARNED.VERDICT.NOT_TRACKED })
+    repository.label({
+        legacyId: 'b2', title: '1889 CC Morgan Dollar',
+        verdict: LEARNED.VERDICT.NOT_TRACKED, series: 'US.MORGAN'
+    })
+    const stored = repository.labels()
+    assert.strictEqual(stored.find(l => l.legacyId === 'a1').series, 'GB.SOV',
+        'a caller that says nothing means the series the tool started with')
+    assert.strictEqual(stored.find(l => l.legacyId === 'b2').series, 'US.MORGAN')
+
+    /*  And the rejection reads back in that series' own words, because the
+        review queue is where you find out WHICH coin you rejected it as. */
+    const sov = LEARNED.apply({ attributes: null }, { verdict: LEARNED.VERDICT.NOT_TRACKED, series: 'GB.SOV' })
+    const dollar = LEARNED.apply({ attributes: null }, { verdict: LEARNED.VERDICT.NOT_TRACKED, series: 'US.MORGAN' })
+    assert.match(sov.excluded.reason, /not a sovereign/)
+    assert.match(dollar.excluded.reason, /not a silver dollar/)
+    db.close()
+})
+
+/*  Two series must be able to rule on the same words. Under the old
+    (phrase, kind) uniqueness the second would silently re-scope the first,
+    leaving one of them unprotected and nothing on screen to say so. */
+test('two series can hold the same phrase without overwriting each other', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const { newRepository } = require('../src/store/repo.js')
+    const LEARNED = require('../src/catalogue/learned.js')
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+
+    for (const series of ['GB.SOV', 'US.MORGAN']) {
+        repository.saveLearnedRule({ phrase: 'france', kind: LEARNED.VERDICT.NOT_TRACKED, series })
+    }
+    const rules = repository.learnedRules().filter(r => r.phrase === 'france')
+    assert.strictEqual(rules.length, 2, 'both scopes survived')
+    assert.deepStrictEqual(rules.map(r => r.series).sort(), ['GB.SOV', 'US.MORGAN'])
+    db.close()
+})

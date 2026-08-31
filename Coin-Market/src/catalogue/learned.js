@@ -27,10 +27,28 @@
     a model can be trained on them later without collecting them again.
 */
 
+/*
+    What a human decided, and about which coin.
+
+    The verdict says whether this is a coin the tool TRACKS; the series says
+    which family the decision was about. Together they can express the thing
+    the old pair could not: "this is a Britannia, not a sovereign" is
+    TRACKED for GB.BRIT, where before it could only be recorded as
+    NOT_SOVEREIGN - true, but throwing away the half that mattered, and
+    inducing a rule that would empty the Britannia pack the day it landed.
+
+    SOVEREIGN and NOT_SOVEREIGN survive as aliases so that the ~57 call
+    sites, and any form a browser still has open, keep working. They are
+    values, not separate verdicts: VERDICT.SOVEREIGN IS VERDICT.TRACKED.
+*/
 const VERDICT = {
-    SOVEREIGN: 'SOVEREIGN',
-    NOT_SOVEREIGN: 'NOT_SOVEREIGN',
-    UNSURE: 'UNSURE'
+    TRACKED: 'TRACKED',
+    NOT_TRACKED: 'NOT_TRACKED',
+    UNSURE: 'UNSURE',
+
+    /* Deprecated spellings of the two above. */
+    SOVEREIGN: 'TRACKED',
+    NOT_SOVEREIGN: 'NOT_TRACKED'
 }
 
 exports.VERDICT = VERDICT
@@ -68,11 +86,27 @@ exports.compile = function (rules) {
         .filter(rule => rule.enabled === undefined || rule.enabled)
         .map(rule => ({ rule, test: phrasePattern(rule.phrase) }))
 
+    /*
+        A rule applies to the series it was learned from, and to no other.
+
+        This is the whole point of the migration. "Britannia" is a perfectly
+        good reason to reject a sovereign and a catastrophic reason to reject
+        a Britannia, and the two are indistinguishable once the scope is
+        gone. A rule with no series is deliberately universal - the
+        confirmation page makes that an explicit choice rather than a
+        default, because it is the one that cannot be undone by accident.
+    */
+    const inScope = (rule, seriesId) =>
+        rule.series === null || rule.series === undefined ||
+        seriesId === null || seriesId === undefined ||
+        rule.series === seriesId
+
     return {
-        /* The first matching NOT_SOVEREIGN rule, or null. */
-        exclusionFor (title) {
+        /* The first matching NOT_TRACKED rule for this series, or null. */
+        exclusionFor (title, seriesId) {
             for (const entry of compiled) {
-                if (entry.rule.kind !== VERDICT.NOT_SOVEREIGN) { continue }
+                if (entry.rule.kind !== VERDICT.NOT_TRACKED) { continue }
+                if (!inScope(entry.rule, seriesId)) { continue }
                 if (entry.test.test(title)) {
                     return {
                         code: 'LEARNED',
@@ -85,9 +119,10 @@ exports.compile = function (rules) {
             return null
         },
 
-        denominationFor (title) {
+        denominationFor (title, seriesId) {
             for (const entry of compiled) {
                 if (entry.rule.kind !== 'DENOMINATION') { continue }
+                if (!inScope(entry.rule, seriesId)) { continue }
                 if (entry.test.test(title)) { return entry.rule.value }
             }
             return null
@@ -256,7 +291,17 @@ exports.apply = function (classification, label) {
 
     if (label.verdict === VERDICT.NOT_SOVEREIGN) {
         return {
-            excluded: { code: 'HUMAN', reason: 'You marked this as not a sovereign' },
+            /*  In the words of the series it was judged against: "not a
+                sovereign" for one, "not a silver dollar" for another. A
+                generic phrase would be correct and useless - the reason
+                shows on the review queue, where knowing WHICH coin you
+                rejected it as is the whole content. Required lazily; the
+                registry's packs reach back into this module. */
+            excluded: {
+                code: 'HUMAN',
+                reason: 'You marked this as ' + require('./series/index.js')
+                    .resolve(label.series || undefined).vocabulary.notOne.toLowerCase()
+            },
             attributes: null,
             confidence: 1,
             needsReview: false,
@@ -267,7 +312,7 @@ exports.apply = function (classification, label) {
 
     if (label.verdict === VERDICT.SOVEREIGN) {
         const attributes = classification.attributes === null
-            ? { series: 'GB.SOV', denomination: null, year: null, portrait: null, mint: null,
+            ? { series: label.series || 'GB.SOV', denomination: null, year: null, portrait: null, mint: null,
                 finish: 'BULLION', gradeBand: 'RAW_UNSPECIFIED', gradeDetail: null,
                 confidence: { year: 0, denomination: 0, portrait: 0, mint: 0, finish: 0, grade: 0 } }
             : classification.attributes
