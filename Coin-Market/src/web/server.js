@@ -242,6 +242,62 @@ function marketPage (opened, url) {
         { value: 'spot', label: 'Cheapest against spot' }
     ], sort, sortParams)
 
+    /*
+        Buy-It-Now lots with a Best Offer button, asking close enough to
+        where the coin actually clears that an offer might be taken.
+
+        Kept apart from the auctions above on purpose: one is a thing to bid
+        on and the other a thing to haggle over, and they need different
+        nerve. The auction panel needs no clearing history; this one cannot
+        exist without it, so it stays thin until the sales accumulate.
+    */
+    const offerEntries = []
+    for (const entry of markets) {
+        for (const alert of ALERT_RULES.evaluate(entry.market, curve, {})) {
+            if (alert.rule !== 'BEST_OFFER_IN_REACH') { continue }
+            offerEntries.push({
+                alert,
+                level: entry.row.level,
+                name: INSTRUMENTS.displayName(entry.row.key),
+                liquidity: entry.market.liquidity
+            })
+        }
+    }
+    const offers = ALERT_RULES.dedupeByListing(offerEntries).slice(0, 20)
+
+    const offerHtml = offers.length === 0
+        ? '<p class="thin">Nothing to offer on right now. A lot only appears here when its coin ' +
+          'type has enough completed sales to say where it clears &mdash; ' +
+          markets.filter(e => e.market.fairValue.sufficient).length + ' of ' + markets.length +
+          ' tracked types do today &mdash; and the ask is no more than a quarter above it.</p>'
+        : '<div class="card"><div class="queue">' + offers.map(entry => {
+            const a = entry.alert
+            const days = entry.liquidity.medianDaysToSale
+            const meta = ['<span class="badge">' + escapeHtml(entry.name) + '</span>',
+                'asking ' + gbp(a.currentTotal) + ' all-in',
+                pct(a.gap) + ' over your ceiling of ' + gbp(a.bidCeiling)]
+            /*  How long this type sits before it sells. A lot that has been
+                on the shelf for months is a seller who will listen. */
+            if (Number.isFinite(days)) {
+                meta.push('this type takes ' + days.toFixed(0) + ' days to sell')
+            }
+            if (entry.liquidity.sellThroughRate !== null) {
+                meta.push(pct(entry.liquidity.sellThroughRate, 0) + ' of them sell at all')
+            }
+            return '<div class="q"><span class="pick-spacer"></span>' +
+                shot(a.imageUrl, escapeHtml(entry.name)) +
+                '<div class="q-main"><div class="q-title">' +
+                '<a href="' + escapeHtml(a.url) + '" target="_blank" rel="noopener">' +
+                escapeHtml(a.title) + '</a></div>' +
+                '<div class="q-meta">' + meta.join('<span aria-hidden="true">·</span>') + '</div></div>' +
+                '<div class="q-side"><div class="q-price"><span class="mono">' +
+                gbp(a.suggestedOffer) + '</span>' +
+                '<span class="badge good" title="Your bid ceiling less postage, with eBay' +
+                String.fromCharCode(39) + 's buyer protection fee taken out - so this is the number to ' +
+                'type into the offer box, not what it will cost you.">offer this, ' +
+                pct(a.discount) + ' under the ask</span></div></div></div>'
+        }).join('') + '</div></div>'
+
     const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
     const opportunityHtml = shown.length === 0
         ? '<p class="thin">No live auction is currently at or near the spot value of its gold. ' +
@@ -298,6 +354,13 @@ finishes is how fair value gets measured.
 ${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
 ${opportunitySort}
 ${opportunityHtml}
+
+<h2>Buy-It-Now, open to an offer (${offers.length})</h2>
+<p class="thin">Lots with a Best Offer button, asking no more than a quarter above where their coin
+type actually clears. The Best Offer button says a seller will listen, not that the price is
+keener &mdash; measured here, these lots ask a shade MORE than rigid Buy-It-Nows &mdash; so the
+suggested figure comes from your own ceiling rather than from their asking price.</p>
+${offerHtml}
 
 <h2>What the tracked market is made of</h2>
 <div class="card">
@@ -756,8 +819,27 @@ function callControls (row) {
         '<button class="no" name="reject" value="' + id + '">Not a sov</button>'
 }
 
+/*  A <details> rather than a hover, because hovering opened the preview
+    while the pointer was merely on its way somewhere and it covered the
+    title underneath. Click to open, click to close, and it stays put while
+    you read it. No JavaScript: <summary> is focusable and toggles on Enter
+    or Space, so it is keyboard-workable too.
+
+    Shared, because UI-03 asks for the same picture on every page that lists
+    a lot and a second copy of this would drift from the first. */
+function shot (imageUrl, caption) {
+    const big = largerImage(imageUrl)
+    const thumb = imageUrl
+        ? '<img src="' + escapeHtml(imageUrl) + '" alt="" loading="lazy" decoding="async">'
+        : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'
+    if (!big) { return '<div class="q-shot">' + thumb + '</div>' }
+    return '<details class="q-shot" style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)">' +
+        '<summary title="Click for a larger picture">' + thumb + '</summary>' +
+        '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' +
+        '</details>'
+}
+
 function queueRow (row, verdictCell) {
-    const big = largerImage(row.imageUrl)
     /*  A completed sale is quoted at what it fetched, not at whatever it was
         asking the last time we looked. The asking price of a lot that has
         already sold is history; the hammer price is the measurement. */
@@ -840,21 +922,7 @@ function queueRow (row, verdictCell) {
 
     return `<div class="q">
   ${pick}
-  ${(() => {
-      /*  A <details> rather than a hover, because hovering opened the
-          preview while the pointer was merely on its way somewhere and it
-          covered the title underneath. Click to open, click to close, and it
-          stays put while you read it. No JavaScript: <summary> is focusable
-          and toggles on Enter or Space, so it is keyboard-workable too. */
-      const thumb = row.imageUrl
-          ? '<img src="' + escapeHtml(row.imageUrl) + '" alt="" loading="lazy" decoding="async">'
-          : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'
-      if (!big) { return '<div class="q-shot">' + thumb + '</div>' }
-      return '<details class="q-shot" style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)">' +
-          '<summary title="Click for a larger picture">' + thumb + '</summary>' +
-          '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' +
-          '</details>'
-  })()}
+  ${shot(row.imageUrl, caption)}
   <div class="q-main">
     <div class="q-title">${row.itemWebUrl
         ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(row.title) + '</a>'

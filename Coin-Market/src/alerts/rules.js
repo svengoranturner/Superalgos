@@ -19,7 +19,8 @@ const BUYER = require('../analytics/buyercost.js')
 
 exports.evaluate = function (view, curve, options) {
 
-    const config = Object.assign({ minEdge: 0.03, endingWithinMinutes: 120 }, options || {})
+    const config = Object.assign(
+        { minEdge: 0.03, endingWithinMinutes: 120, maxOfferGap: 0.25 }, options || {})
     const alerts = []
 
     if (!view.fairValue.sufficient || view.bidCeiling === null || view.spot === null) {
@@ -75,10 +76,53 @@ exports.evaluate = function (view, curve, options) {
 
         /* Fixed price / Best Offer: no uplift to model, so compare directly. */
         const edge = (ceiling - total) / ceiling
-        if (edge < config.minEdge) { continue }
+        if (edge >= config.minEdge) {
+            alerts.push({
+                rule: 'BIN_BELOW_CLEARING',
+                browseId: listing.browseId,
+                title: listing.title,
+                url: listing.itemWebUrl,
+                imageUrl: listing.imageUrl,
+                legacyId: listing.legacyId,
+                currentTotal: total,
+                bidCeiling: ceiling,
+                edge,
+                askPremium: listing.askPremium,
+                suggestedOffer: BUYER.priceForCost(ceiling) - (listing.shipping || 0)
+            })
+            continue
+        }
+
+        /*
+            Best Offer, within reach.
+
+            BIN_BELOW_CLEARING asks whether the ask is already under the
+            ceiling. For a negotiable lot that is the wrong question: the
+            whole point of the Best Offer button is that the ask sits ABOVE
+            what you would pay, and you offer less. Measured over the live
+            corpus, a Best Offer lot asks a median 33.0pp over clearing
+            against 31.8pp for a rigid one - the button signals willingness
+            to haggle, not a keener price, so a rule that waits for the ask
+            to fall below the ceiling will simply never fire on one.
+
+            The cap matters as much as the rule. An offer a quarter under the
+            ask is already optimistic; beyond that the alert is noise, and
+            noise in this panel is what UI-01 was written to undo.
+        */
+        if (!String(listing.buyingOptions).includes('BEST_OFFER')) { continue }
+
+        const gap = (total - ceiling) / ceiling
+        if (gap > config.maxOfferGap) { continue }
+
+        const suggestedOffer = BUYER.priceForCost(ceiling) - (listing.shipping || 0)
+        /*  If the ceiling is at or above what they are already asking, this
+            is not a negotiation - either it cleared the edge test above, or
+            the margin is too thin to be worth an offer. Suggesting a number
+            above the ask would be nonsense in either case. */
+        if (!(suggestedOffer > 0) || suggestedOffer >= listing.price) { continue }
 
         alerts.push({
-            rule: 'BIN_BELOW_CLEARING',
+            rule: 'BEST_OFFER_IN_REACH',
             browseId: listing.browseId,
             title: listing.title,
             url: listing.itemWebUrl,
@@ -86,13 +130,27 @@ exports.evaluate = function (view, curve, options) {
             legacyId: listing.legacyId,
             currentTotal: total,
             bidCeiling: ceiling,
-            edge,
+            gap,
+            askPrice: listing.price,
             askPremium: listing.askPremium,
-            suggestedOffer: BUYER.priceForCost(ceiling) - (listing.shipping || 0)
+            suggestedOffer,
+            discount: 1 - (suggestedOffer / listing.price),
+            daysToSale: listing.medianDaysToSale === undefined ? null : listing.medianDaysToSale
         })
     }
 
-    return alerts.sort((a, b) => b.edge - a.edge)
+    return alerts.sort(byPromise)
+}
+
+/*  A lot already below clearing beats one you have to negotiate for, so the
+    edge alerts rank first; within the offers, the smallest gap is the
+    likeliest to be accepted. An offer alert has no edge, so comparing on it
+    directly yields NaN and leaves the order to chance. */
+function byPromise (a, b) {
+    const ae = Number.isFinite(a.edge) ? a.edge : -Infinity
+    const be = Number.isFinite(b.edge) ? b.edge : -Infinity
+    if (ae !== be) { return be - ae }
+    return (a.gap === undefined ? 0 : a.gap) - (b.gap === undefined ? 0 : b.gap)
 }
 
 exports.format = function (alert, instrumentName) {
@@ -107,6 +165,17 @@ exports.format = function (alert, instrumentName) {
                 ' (' + gbp(alert.projectedRange[0]) + '-' + gbp(alert.projectedRange[1]) + ')',
             'Your ceiling ' + gbp(alert.bidCeiling) + ' -> edge ' + pct(alert.edge),
             'Max bid ' + gbp(alert.maxBid) + '  [curve from ' + alert.basedOn + ' samples]',
+            alert.url
+        ].join('\n')
+    }
+
+    if (alert.rule === 'BEST_OFFER_IN_REACH') {
+        return [
+            instrumentName + ' - Best Offer within reach',
+            alert.title,
+            'Asking ' + gbp(alert.currentTotal) + ' all-in, ' + pct(alert.gap) +
+                ' over your ceiling of ' + gbp(alert.bidCeiling),
+            'Offer ' + gbp(alert.suggestedOffer) + ' - ' + pct(alert.discount) + ' under the ask',
             alert.url
         ].join('\n')
     }
@@ -133,5 +202,5 @@ exports.dedupeByListing = function (entries) {
         const existing = best.get(entry.alert.browseId)
         if (existing === undefined || entry.level > existing.level) { best.set(entry.alert.browseId, entry) }
     }
-    return Array.from(best.values()).sort((a, b) => b.alert.edge - a.alert.edge)
+    return Array.from(best.values()).sort((a, b) => byPromise(a.alert, b.alert))
 }
