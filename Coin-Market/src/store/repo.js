@@ -565,11 +565,41 @@ exports.newRepository = function (db, options) {
         titleCorpus () {
             return db.prepare(`
                 SELECT l.legacy_id AS legacyId, MIN(l.title) AS title,
-                       MAX(CASE WHEN li.browse_id IS NOT NULL AND q.browse_id IS NULL
-                                THEN 1 ELSE 0 END) AS priced
+                       /*  Which pack claimed the title, so a rule preview can
+                           be scoped the way the rule itself will be. NULL is
+                           not "unknown": it means no pack recognised it, and
+                           such a listing is queued before classification runs
+                           - so no learned rule can ever reach it.
+
+                           MIN over the group because a legacy_id can hold
+                           rows that disagree (16 of 23,740 do, from a relist
+                           re-recognised after a rule changed). Deterministic
+                           beats arbitrary; the alternative is a preview whose
+                           count moves between two page loads. */
+                       MIN(l.series) AS series,
+                       /*  Priced means IN AN INSTRUMENT, and nothing more.
+                           It used to also require the listing be absent from
+                           the open review queue, which made this the only
+                           place in the tool where a queued listing counted
+                           as unpriced - reviewQueue's own priced column is
+                           a bare EXISTS against listing_instrument, and so
+                           is the count behind "N listings stopped counting"
+                           on the rules page. Being queued does not remove a
+                           listing from the market statistics; it only means
+                           somebody should look at it.
+
+                           The disagreement was 253 coins, 8.5% of the priced
+                           population, and it ran the dangerous way: breaks
+                           is computed from this flag, so a phrase whose only
+                           priced matches were queued reported breaks=0 and
+                           was offered with a one-click Accept - while
+                           actually dropping coins from the statistics. That
+                           is the exact outcome the confirmation page exists
+                           to prevent. Found by accepting a Hattons rule and
+                           watching the preview say 11 and the result say 12. */
+                       MAX(CASE WHEN li.browse_id IS NOT NULL THEN 1 ELSE 0 END) AS priced
                 FROM listing l
                 LEFT JOIN listing_instrument li ON li.browse_id = l.browse_id
-                LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
                 WHERE l.legacy_id IS NOT NULL
                 GROUP BY l.legacy_id
             `).all()

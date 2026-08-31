@@ -34,7 +34,7 @@ exports.start = function (opened, options) {
         const fail = (err) => {
             response.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
             response.end(RENDER.page('Error', '<h1>Something went wrong</h1><pre>' +
-                escapeHtml(err.stack || err.message) + '</pre>'))
+                escapeHtml(err.stack || err.message) + '</pre>', url.pathname))
         }
 
         if (request.method === 'POST') {
@@ -155,7 +155,7 @@ function marketPage (opened, url) {
         return RENDER.page('Coin Market',
             '<h1>Coin Market</h1><p class="sub">Nothing tracked yet.</p>' +
             '<div class="card"><p>Run <code>node bin/cli.js demo</code> to see the tool working on a ' +
-            'synthetic market, or configure eBay credentials and run a sweep.</p></div>')
+            'synthetic market, or configure eBay credentials and run a sweep.</p></div>', url.pathname)
     }
 
     /* Headline: the cost of paying the asking price, in money. */
@@ -604,7 +604,7 @@ ${salesHtml}
   </div>
 </details>`
 
-    return RENDER.page('Coin Market', body)
+    return RENDER.page('Coin Market', body, url.pathname)
 }
 
 /*
@@ -960,7 +960,7 @@ dropped, mark it genuine &mdash; that overrides the rule that dropped it, which 
 mode worth watching for: a bad rule quietly eating half the market.</p>
 ${list(excluded, 'Nothing excluded.', 150)}
 ${truncated ? '<p class="thin warn">The queue is longer than this page reads &mdash; only the first ' + QUEUE_LIMIT + ' rows were fetched, so the counts above are floors rather than totals.</p>' : ''}
-`)
+`, url.pathname)
 }
 
 /* ---------------------------------------------------------- countries */
@@ -1278,7 +1278,7 @@ function listingsPage (opened, url) {
     const key = url.searchParams.get('key')
     if (key === null || key === '') {
         return RENDER.page('Listings - Coin Market',
-            '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>')
+            '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>', url.pathname)
     }
 
     const sale = ['auction', 'bin'].includes(url.searchParams.get('sale'))
@@ -1391,7 +1391,7 @@ nothing at all as a clearing price.</p>
 ${list(unsold)}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
-`)
+`, url.pathname)
 }
 
 /* ------------------------------------------------ recording a decision */
@@ -1572,25 +1572,47 @@ function handlePost (opened, pathname, form) {
 /* ------------------------------------------------- generalising a call */
 
 /*
-    What one phrase would actually do, recomputed from the corpus.
+    What one phrase would do, counted the way the rule will actually be applied.
 
-    Used both to rank proposals and to spell out the consequences on the
-    confirmation page - the same numbers in both places, so what you are
-    shown before clicking and what you are asked to confirm cannot drift.
+    Scoped, because the rule is. `learned.compile` tests a rule only against
+    the pack that claimed the listing, so a GB.SOV rule can no more touch a
+    Morgan than it can touch a postage stamp - and a preview that counted
+    Morgans would report damage that cannot happen. Measured on the live
+    store, "harrington & byrne" matches 8 titles of which 2 are Morgans: the
+    unscoped count called it 3 breaks where a sovereign rule breaks 2.
+
+    A NULL series is NOT "might be either". `series` is set from
+    SERIES.recognise BEFORE classification runs (discover.js:150-157), so
+    NULL means no pack claimed the title and it went to the review queue
+    without ever meeting a learned rule. 85% of the store is in that state
+    and none of it is priced. Those listings are unreachable by any rule,
+    which is worth counting and saying out loud rather than folding into a
+    number: "proof" matches 1,401 titles and 581 of them cannot be touched,
+    so a preview reporting 1,401 promises a clear-out it will not deliver.
 */
-function ruleEffect (repository, phrase) {
+function ruleEffect (repository, phrase, seriesId) {
+    const pack = SERIES.get(seriesId) || SERIES.defaultPack()
     const test = LEARNED.phrasePattern(phrase)
-    const matches = repository.titleCorpus().filter(row => test.test(row.title))
-    const breaks = matches.filter(row => row.priced)
+
+    const matched = repository.titleCorpus().filter(row => test.test(row.title))
+    const inScope = matched.filter(row => row.series === pack.id)
+    const breaks = inScope.filter(row => row.priced)
+
     const conflicts = repository.labels()
-        .filter(l => l.verdict === LEARNED.VERDICT.SOVEREIGN && test.test(l.title))
+        .filter(l => l.verdict === LEARNED.VERDICT.SOVEREIGN && test.test(l.title) &&
+            (l.series || SERIES.DEFAULT_ID) === pack.id)
+
     return {
         phrase,
-        support: matches.length,
+        series: pack.id,
+        support: inScope.length,
         breaks: breaks.length,
         breakSamples: breaks.slice(0, 30).map(b => b.title),
-        samples: matches.slice(0, 6).map(m => m.title),
-        conflicts: conflicts.map(c => c.title)
+        samples: inScope.slice(0, 6).map(m => m.title),
+        conflicts: conflicts.map(c => c.title),
+        /*  Matches this rule will not reach: other packs' coins, and titles
+            no pack claimed. Shown, not silently dropped. */
+        unreachable: matched.length - inScope.length
     }
 }
 
@@ -1619,19 +1641,28 @@ function ruleScopeControl (seriesId) {
 }
 
 function proposalCard (p, back, legacyId, seriesId) {
+    const pack = SERIES.get(seriesId) || SERIES.defaultPack()
     const risky = p.breaks > 0 || p.conflicts.length > 0
     const consequence = p.breaks === 0
-        ? ', <strong>none</strong> of which are currently priced as sovereigns.'
+        ? ', <strong>none</strong> of which are currently priced as ' +
+          escapeHtml(pack.label.toLowerCase()) + '.'
         : ', and would stop pricing <strong class="warn">' + p.breaks +
           '</strong> that count towards the market statistics today.'
 
     /*  A rule that breaks nothing can be taken in one click. A rule that
         would remove real coins from the statistics gets a confirmation page
         naming every one of them - the difference between those two cases is
-        the whole reason `breaks` is measured. */
+        the whole reason `breaks` is measured.
+
+        The series rides on the LINK, not on a lookup at the other end. The
+        confirmation page is also reachable from /rules with a hand-typed
+        phrase, which has no label to derive a series from - so ?series= is
+        the one thing both callers can supply. Dropping it here is how a rule
+        proposed from a Morgan title got written against sovereigns. */
     const action = risky
         ? '<a class="confirm" href="/rule-confirm?phrase=' + encodeURIComponent(p.phrase) +
           '&amp;legacy=' + encodeURIComponent(legacyId) + '&amp;back=' + encodeURIComponent(back) +
+          '&amp;series=' + encodeURIComponent(pack.id) +
           '">Review what this would remove&hellip;</a>'
         : '<form method="post" action="/rule" style="margin-top:10px">' +
           '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
@@ -1665,7 +1696,7 @@ function teachPage (opened, url) {
     if (label === undefined) {
         return RENDER.page('Teach - Coin Market',
             '<h1>Nothing to generalise</h1><p class="sub">That decision is no longer stored. ' +
-            '<a href="/review">Back to the review queue</a>.</p>')
+            '<a href="/review">Back to the review queue</a>.</p>', url.pathname)
     }
 
     const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
@@ -1702,12 +1733,13 @@ function teachPage (opened, url) {
         ' coins from the statistics</summary>' +
         '<p class="thin">These need checking rather than clicking. Each one opens a page ' +
         'listing exactly what it would stop pricing.</p>' +
-        risky.map(p => proposalCard(p, back, legacyId)).join('') +
+        risky.map(p => proposalCard(p, back, legacyId, label.series)).join('') +
         '</details>'
 
     return RENDER.page('Teach - Coin Market',
         '<h1>Should that apply to others?</h1>' +
-        '<p class="sub">You marked <em>' + escapeHtml(label.title) + '</em> as not a sovereign. ' +
+        '<p class="sub">You marked <em>' + escapeHtml(label.title) + '</em> as not ' +
+        escapeHtml((SERIES.get(label.series) || SERIES.defaultPack()).label.toLowerCase()) + '. ' +
         'Here is what that decision could generalise to.</p>' +
         '<div class="card"><p class="thin" style="margin:0">Accepting a rule does not delete ' +
         'anything. Every listing it drops still shows in the review queue with the rule named as ' +
@@ -1716,7 +1748,7 @@ function teachPage (opened, url) {
         'still stands.</p></div>' +
         safeHtml + riskyHtml +
         '<p style="margin-top:18px"><a href="' + escapeHtml(back) +
-        '">No rule &mdash; just this listing</a></p>')
+        '">No rule &mdash; just this listing</a></p>', url.pathname)
 }
 
 /*
@@ -1726,17 +1758,29 @@ function teachPage (opened, url) {
     click past; "would stop pricing 1911 Gold Sovereign George V London" is
     not.
 */
+/*
+    What a rule would do, before you commit to it.
+
+    Reached two ways now: from a proposal the inducer offered, and from a
+    phrase typed by hand on /rules. That second caller is why the series
+    arrives as a QUERY PARAMETER rather than being looked up from the label -
+    a typed phrase has no label at all, and re-deriving it would have left
+    the same hole one function along.
+*/
 function confirmRulePage (opened, url) {
     const { repository } = opened
     const phrase = url.searchParams.get('phrase')
     const back = safeBack(url.searchParams.get('back'))
     const legacyId = url.searchParams.get('legacy') || ''
+    const seriesId = url.searchParams.get('series') || null
 
     if (phrase === null || phrase === '') {
-        return RENDER.page('Confirm - Coin Market', '<h1>No rule given</h1>')
+        return RENDER.page('Confirm - Coin Market', '<h1>No rule given</h1>', url.pathname)
     }
 
-    const effect = ruleEffect(repository, phrase)
+    const effect = ruleEffect(repository, phrase, seriesId)
+    const pack = SERIES.get(seriesId) || SERIES.defaultPack()
+    const harmless = effect.breaks === 0 && effect.conflicts.length === 0
 
     const conflictBlock = effect.conflicts.length === 0 ? ''
         : '<h2>You called these genuine</h2><div class="card"><ul>' +
@@ -1747,36 +1791,144 @@ function confirmRulePage (opened, url) {
         ? '<li><em>and ' + (effect.breaks - effect.breakSamples.length) + ' more</em></li>'
         : ''
 
+    /*
+        Three cases, not one.
+
+        This page used to shout "would remove coins that are being priced"
+        unconditionally, which was fine when every visitor arrived from a
+        proposal the inducer had already judged risky. A typed phrase can
+        match nothing at all - "hattons" is exactly the kind of phrase the
+        inducer never offers - and a page that cries damage when there is
+        none is a page you learn to click past, which destroys the warning
+        in the case that matters.
+    */
+    let heading, summary, breakBlock, button
+    if (effect.support === 0) {
+        heading = 'Nothing matches this yet'
+        summary = 'No listing in the store contains <span class="phrase">' +
+            escapeHtml(phrase) + '</span> right now. Saving it is still worth doing if you ' +
+            'expect it later &mdash; the rule is applied to everything the collector finds ' +
+            'from here on, so it blocks the next drop rather than this one.'
+        breakBlock = ''
+        button = '<button class="yes">Add this rule</button>'
+    } else if (harmless) {
+        heading = 'This rule catches ' + effect.support + ', and breaks nothing'
+        summary = 'Dropping everything containing <span class="phrase">' + escapeHtml(phrase) +
+            '</span> matches ' + effect.support + ' listing' + (effect.support === 1 ? '' : 's') +
+            ', and <strong>none</strong> of them is currently priced.'
+        breakBlock = effect.samples.length === 0 ? ''
+            : '<h2>What it catches</h2><div class="card"><ul class="thin">' +
+              effect.samples.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + '</ul></div>'
+        button = '<button class="yes">Add this rule</button>'
+    } else {
+        heading = 'This rule would remove coins that are being priced'
+        summary = 'Dropping everything containing <span class="phrase">' + escapeHtml(phrase) +
+            '</span> matches ' + effect.support + ' tracked listing' +
+            (effect.support === 1 ? '' : 's') + '.'
+        breakBlock = '<h2>Priced today, would stop (' + effect.breaks + ')</h2>' +
+            '<div class="card"><ul class="thin">' +
+            effect.breakSamples.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + more +
+            '</ul></div>'
+        button = '<button class="no">Yes, apply it anyway</button>'
+    }
+
+    const damage = harmless || effect.support === 0 ? ''
+        : '<div class="card"><p style="margin:0"><strong class="warn">' + effect.breaks +
+          '</strong> of them count towards the market statistics right now and would stop.' +
+          (effect.conflicts.length > 0
+              ? ' <strong class="warn">' + effect.conflicts.length +
+                '</strong> of them you have already called genuine.'
+              : '') +
+          '</p><p class="thin" style="margin:8px 0 0">This is reversible &mdash; removing the ' +
+          'rule from <a href="/rules">what you\'ve taught it</a> puts every one of them back. ' +
+          'But it is worth reading the list first.</p></div>'
+
+    /*  What the rule cannot do. A phrase almost always matches titles
+        outside the series it is being saved against - other packs' coins,
+        and the large unclaimed pile - and a rule reaches none of them. Left
+        unsaid, the counts on this page read as a promise the rule will not
+        keep, and the tool looks broken a week later when the same titles are
+        still in the queue. */
+    const outOfScope = effect.unreachable === 0 ? ''
+        : '<p class="thin">' + effect.unreachable + ' other listing' +
+          (effect.unreachable === 1 ? '' : 's') + ' also contain' +
+          (effect.unreachable === 1 ? 's' : '') + ' this phrase but ' +
+          (effect.unreachable === 1 ? 'is' : 'are') + ' not ' +
+          escapeHtml(pack.label.toLowerCase()) + ', so this rule leaves ' +
+          (effect.unreachable === 1 ? 'it' : 'them') + ' alone. Tick the box below to ' +
+          'widen it to every coin.</p>'
+
+    /*  Back to wherever you came from. Cancelling to /teach?legacy= with no
+        legacy id lands on "Nothing to generalise", which is a dead end for
+        anyone who typed the phrase themselves. */
+    const cancel = legacyId === ''
+        ? '<a href="' + escapeHtml(back) + '">Cancel</a>'
+        : '<a href="/teach?legacy=' + encodeURIComponent(legacyId) + '&amp;back=' +
+          encodeURIComponent(back) + '">Cancel</a>'
+
     return RENDER.page('Confirm - Coin Market',
-        '<h1>This rule would remove coins that are being priced</h1>' +
-        '<p class="sub">Dropping everything containing <span class="phrase">' +
-        escapeHtml(phrase) + '</span> matches ' + effect.support + ' tracked listing' +
-        (effect.support === 1 ? '' : 's') + '.</p>' +
-        '<div class="card"><p style="margin:0"><strong class="warn">' + effect.breaks +
-        '</strong> of them count towards the market statistics right now and would stop.' +
-        (effect.conflicts.length > 0
-            ? ' <strong class="warn">' + effect.conflicts.length +
-              '</strong> of them you have already called genuine.'
-            : '') +
-        '</p><p class="thin" style="margin:8px 0 0">This is reversible &mdash; removing the rule ' +
-        'from <a href="/rules">what you\'ve taught it</a> puts every one of them back. But it is ' +
-        'worth reading the list first.</p></div>' +
-        conflictBlock +
-        '<h2>Priced today, would stop (' + effect.breaks + ')</h2>' +
-        '<div class="card"><ul class="thin">' +
-        effect.breakSamples.map(t => '<li>' + escapeHtml(t) + '</li>').join('') + more +
-        '</ul></div>' +
+        '<h1>' + heading + '</h1>' +
+        '<p class="sub">' + summary + ' Scoped to <strong>' + escapeHtml(pack.label) +
+        '</strong> unless you widen it below.</p>' +
+        outOfScope + damage + conflictBlock + breakBlock +
         '<form method="post" action="/rule" style="display:flex; gap:10px; align-items:center">' +
         '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
         '<input type="hidden" name="phrase" value="' + escapeHtml(phrase) + '">' +
         '<input type="hidden" name="support" value="' + effect.support + '">' +
-        ruleScopeControl(label === undefined ? null : label.series) +
-        '<button class="no">Yes, apply it anyway</button>' +
-        '<a href="/teach?legacy=' + encodeURIComponent(legacyId) + '&amp;back=' +
-        encodeURIComponent(back) + '">Cancel</a></form>')
+        ruleScopeControl(seriesId) +
+        button + cancel + '</form>', url.pathname)
 }
 
 /* ----------------------------------------------------- what it learned */
+
+/*
+    Block a phrase the inducer never offered you.
+
+    Every rule until now came from rejecting a listing, which means the tool
+    only ever proposed phrases it had already seen go wrong. A dealer whose
+    listings are individually plausible - correct metal, correct weight, an
+    honest description of an overpriced modern proof - never produces a
+    rejection, so its name is never a candidate. The owner knows the name
+    anyway. This is the way to say it.
+
+    A GET, not a POST, and it lands on the confirmation page rather than
+    saving. With no client-side JavaScript in this tool, "show me what this
+    would do before I commit" IS a round trip, and /rule-confirm already is
+    one. It also means a typed phrase and an induced one converge on the same
+    preview and the same commit button, instead of a second path that has to
+    be kept honest separately.
+
+    On /rules rather than /teach because /teach needs a legacy id from a
+    listing you just judged, which is exactly what someone blocking a dealer
+    by name does not have.
+*/
+function blocklistForm () {
+    const options = SERIES.all().map(p =>
+        '<option value="' + escapeHtml(p.id) + '"' +
+        (p.id === SERIES.DEFAULT_ID ? ' selected' : '') + '>' +
+        escapeHtml(p.label) + '</option>').join('')
+
+    return '<h2>Block a phrase yourself</h2>' +
+        '<div class="card">' +
+        '<form method="get" action="/rule-confirm" style="display:flex; gap:10px; ' +
+        'align-items:center; flex-wrap:wrap">' +
+        '<input type="hidden" name="back" value="/rules">' +
+        '<input type="text" name="phrase" required placeholder="hattons" ' +
+        'style="flex:1 1 220px" ' +
+        'title="Matched against the listing TITLE, case-insensitively, as whole words. ' +
+        'It is not a seller filter: eBay usernames are stored as a one-way hash and the ' +
+        'raw name is never kept, so this catches a dealer only when they put their name ' +
+        'in the title.">' +
+        '<select name="series" title="A rule applies to the coin you scope it to and no ' +
+        'other. You can widen it to every coin on the next page.">' + options + '</select>' +
+        '<button class="yes">See what this would do&hellip;</button>' +
+        '</form>' +
+        '<p class="thin" style="margin:10px 0 0">Nothing is saved yet &mdash; the next page ' +
+        'names every listing the rule would stop pricing, and you can back out there. ' +
+        'Matching is on the <strong>title text</strong>, so a dealer is caught only when ' +
+        'their name is in it.</p>' +
+        '</div>'
+}
 
 function rulesPage (opened, url) {
     const { repository } = opened
@@ -1813,7 +1965,14 @@ function rulesPage (opened, url) {
           '<th>When accepted</th><th></th></tr></thead><tbody>' +
           rules.map(rule => {
               const test = LEARNED.phrasePattern(rule.phrase)
-              const now = corpus.filter(row => test.test(row.title)).length
+              /*  Counted the way the rule is applied. A scoped rule reaches
+                  only the pack that claimed the listing, so a series-blind
+                  count here would credit a sovereign rule with Morgans it
+                  cannot touch - and this column is what the owner reads to
+                  decide whether a rule is working. */
+              const now = corpus.filter(row => test.test(row.title) &&
+                  (rule.series === null || rule.series === undefined ||
+                   row.series === rule.series)).length
               /*  An unscoped rule is the one worth being able to see. It
                   applies to coins this tool does not track yet, so it is the
                   only kind that can do damage nobody connects to a click. */
@@ -1826,7 +1985,7 @@ function rulesPage (opened, url) {
     <td>drop titles containing <span class="phrase">${escapeHtml(rule.phrase)}</span></td>
     <td class="thin">${scope}</td>
     <td class="mono">${now}</td>
-    <td class="mono thin">${rule.support === null ? '—' : rule.support}</td>
+    <td class="mono thin">${rule.createdAt ? escapeHtml(String(rule.createdAt).slice(0, 10)) : '—'}</td>
     <td><form method="post" action="/rule/delete" style="display:inline">
       <input type="hidden" name="id" value="${rule.id}">
       <button class="plain">remove</button></form></td>
@@ -1880,6 +2039,8 @@ reversible and nothing here is a black box — each rule is the phrase you accep
 <h2>Rules</h2>
 ${ruleRows}
 
+${blocklistForm()}
+
 <h2>Your decisions (${labels.length})</h2>
 ${labels.length === 0
     ? '<p class="thin">Nothing judged yet.</p>'
@@ -1900,5 +2061,5 @@ ${labels.length === 0
   The labels are the durable part: if a model is ever worth training, it trains on these
   without you having to judge anything twice.</p>
 </div>
-`)
+`, url.pathname)
 }

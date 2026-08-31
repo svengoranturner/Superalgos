@@ -8,6 +8,7 @@ const { newRepository } = require('../src/store/repo.js')
 const SPOT = require('../src/spot/spot.js')
 const MARKET = require('../src/analytics/market.js')
 const SERVER = require('../src/web/server.js')
+const SERIES = require('../src/catalogue/series/index.js')
 
 /*
     Does every page actually render?
@@ -336,5 +337,292 @@ test('choosing a sale type keeps the coin, and choosing a coin keeps the sale ty
     /*  The way back after a verdict, too. */
     assert.match(auctions.body, /name="back" value="\/review\?coin=US\.MORGAN&amp;sale=auction"/,
         'the return path lost a filter')
+    opened.db.close()
+})
+
+/*
+    A store built for the rule pages, kept separate from twoSeriesStore()
+    on purpose: two tests there count rendered rows, and adding dealer
+    titles to the shared fixture would fail those instead of these.
+
+    The shape that matters is a REJECTED Morgan whose title shares a phrase
+    with priced coins of both series. That is the only arrangement in which
+    a dropped series argument is visible: the rule is proposed from a Morgan,
+    so it must be offered against Morgans, and there are sovereigns nearby
+    for a series-blind version to wrongly count.
+*/
+function dealerStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 49.7, null, 'test')
+
+    const add = (legacyId, title, series, key, fineOz, price) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title,
+            buyingOptions: 'FIXED_PRICE', endTime: null
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 4, observedAt: now })
+        repository.setListingSeries(id, series)
+        /*  key === null models the large unclaimed pile: stored, never
+            priced, and unreachable by any rule. */
+        if (key !== null) {
+            repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', fineOz, {})
+        }
+        return id
+    }
+
+    /*  Priced coins carrying the dealer's name, in BOTH series. */
+    add('sov1', 'Bunce & Co 2020 Gold Sovereign Proof', 'GB.SOV', 'GB.SOV.BULLION.FULL', 0.2354, 900)
+    add('sov2', 'Bunce & Co 2021 Gold Sovereign Proof', 'GB.SOV', 'GB.SOV.BULLION.FULL', 0.2354, 910)
+    add('dol1', 'Bunce & Co 1921 Morgan Silver Dollar', 'US.MORGAN', 'US.MORGAN.COMMON.DOLLAR', 0.7734, 70)
+    /*  Same phrase, no pack claimed it: no rule can reach this one. */
+    add('junk1', 'Bunce & Co commemorative medal', null, null, 0, 30)
+
+    /*  The rejected Morgan the rule gets proposed from. */
+    const rejected = add('dol2', 'Bunce & Co Morgan Silver Dollar Replica Copy',
+        'US.MORGAN', null, 0, 40)
+    repository.queueForReview(rejected, 'looks like a replica', null, 0.2)
+    repository.label({
+        legacyId: 'dol2',
+        title: 'Bunce & Co Morgan Silver Dollar Replica Copy',
+        verdict: 'NOT_TRACKED',
+        series: 'US.MORGAN'
+    })
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the rule pages render at all', async () => {
+    const opened = dealerStore()
+    const pages = await fetchAll(opened, [
+        '/teach?legacy=dol2&back=%2Freview',
+        '/rule-confirm?phrase=bunce&series=US.MORGAN&back=%2Freview',
+        /*  Reached from /rules with no proposal behind it, which is the
+            hand-typed blocklist path. */
+        '/rule-confirm?phrase=bunce&back=%2Frules'
+    ])
+
+    for (const [path, page] of Object.entries(pages)) {
+        assert.strictEqual(page.status, 200, path + ' returned ' + page.status)
+        assert.ok(!/TypeError|ReferenceError|is not defined|is not a function/.test(page.body),
+            path + ' rendered an error: ' +
+            (page.body.match(/(TypeError|ReferenceError)[^<]*/) || [''])[0])
+    }
+    opened.db.close()
+})
+
+test('a rule proposed from a Morgan is offered against Morgans', async () => {
+    const opened = dealerStore()
+    const teachPath = '/teach?legacy=dol2&back=%2Freview'
+    const teach = (await fetchAll(opened, [teachPath]))[teachPath].body
+
+    /*  Every route off this page must carry the series. A safe proposal
+        posts it as a hidden field; a risky one hands it to /rule-confirm on
+        the query string. Whichever bucket the inducer puts a phrase in, the
+        page must never offer US.MORGAN work scoped to GB.SOV. */
+    assert.ok(/US\.MORGAN/.test(teach), 'the teach page never mentions the series')
+    assert.ok(!/value="GB\.SOV"/.test(teach),
+        'a Morgan proposal offers to write a GB.SOV rule')
+    assert.ok(!/series=GB\.SOV/.test(teach),
+        'a Morgan proposal links to /rule-confirm scoped to GB.SOV')
+
+    /*  And the confirmation page must keep it, since that is where the
+        risky ones are actually committed. */
+    const confirmPath = '/rule-confirm?phrase=bunce&series=US.MORGAN&back=%2Freview'
+    const body = (await fetchAll(opened, [confirmPath]))[confirmPath].body
+    assert.ok(/name="series" value="US\.MORGAN"/.test(body),
+        'the commit form would write the rule against the wrong series')
+    opened.db.close()
+})
+
+test('a rule counts only the coins it can actually reach', async () => {
+    const opened = dealerStore()
+    const paths = [
+        '/rule-confirm?phrase=bunce&series=GB.SOV&back=%2Frules',
+        '/rule-confirm?phrase=bunce&series=US.MORGAN&back=%2Frules'
+    ]
+    const pages = await fetchAll(opened, paths)
+
+    /*  "bunce" is on 5 titles: 2 priced sovereigns, 1 priced Morgan, 1
+        rejected Morgan and 1 nothing claimed. compile() tests a rule only
+        against the pack that owns the listing, so the sovereign rule breaks
+        2 and the Morgan rule breaks 1 - never 3. */
+    const sov = pages[paths[0]].body
+    assert.ok(/Priced today, would stop \(2\)/.test(sov),
+        'the sovereign rule does not report exactly 2 breaks: ' +
+        (sov.match(/Priced today, would stop \(\d+\)/) || ['none'])[0])
+
+    const morgan = pages[paths[1]].body
+    assert.ok(/Priced today, would stop \(1\)/.test(morgan),
+        'the Morgan rule does not report exactly 1 break: ' +
+        (morgan.match(/Priced today, would stop \(\d+\)/) || ['none'])[0])
+
+    /*  And it must say what it cannot touch, rather than quietly counting
+        those titles or quietly dropping them. */
+    assert.ok(/not british gold sovereigns, so this rule leaves them alone/.test(sov),
+        'the sovereign rule does not disclose the matches it cannot reach')
+    opened.db.close()
+})
+
+test('the nav underlines the page you are on, and only that one', async () => {
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened,
+        ['/', '/review', '/rules', '/listings?key=GB.SOV.BULLION.FULL'])
+
+    const lit = body => (body.match(/<nav>[\s\S]*?<\/nav>/) || [''])[0]
+        .split('<a ').filter(a => /class="on"/.test(a))
+        .map(a => (a.match(/href="([^"]*)"/) || [])[1])
+
+    assert.deepStrictEqual(lit(pages['/'].body), ['/'])
+    assert.deepStrictEqual(lit(pages['/review'].body), ['/review'])
+    assert.deepStrictEqual(lit(pages['/rules'].body), ['/rules'])
+    /*  A drill-down lights nothing: it belongs to no single tab, and it
+        carries its own heading and a way back. */
+    assert.deepStrictEqual(lit(pages['/listings?key=GB.SOV.BULLION.FULL'].body), [])
+
+    /*  One <nav>, because report/build.js strips it with a non-greedy regex
+        and a second would survive into a shared report. */
+    for (const page of Object.values(pages)) {
+        assert.strictEqual((page.body.match(/<nav>/g) || []).length, 1)
+    }
+    opened.db.close()
+})
+
+async function post (opened, path, fields) {
+    const server = SERVER.start(opened, { port: 0, host: '127.0.0.1', quiet: true })
+    await new Promise(resolve => server.once('listening', resolve))
+    const port = server.address().port
+    try {
+        const response = await fetch('http://127.0.0.1:' + port + path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams(fields).toString(),
+            redirect: 'manual'
+        })
+        return { status: response.status, location: response.headers.get('location') }
+    } finally {
+        server.close()
+    }
+}
+
+test('a dealer can be blocked by name, and unblocked again', async () => {
+    const opened = dealerStore()
+    const priced = () => opened.db.prepare(
+        'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
+
+    assert.strictEqual(priced(), 3, 'fixture should start with 3 priced coins')
+
+    /*  Typed in mixed case, the way a person types a dealer's name. */
+    const added = await post(opened, '/rule', {
+        phrase: 'Bunce & Co', series: 'GB.SOV', support: '2', back: '/rules'
+    })
+    assert.strictEqual(added.status, 303)
+
+    /*  Scoped to sovereigns, so the Morgan keeps its price. */
+    assert.strictEqual(priced(), 1, 'the sovereigns did not stop being priced')
+
+    const rules = opened.repository.learnedRules()
+    assert.strictEqual(rules.length, 1)
+    /*  saveLearnedRule normalises case, and the rest of the tool relies on
+        it: the "Rule added" banner looks the phrase up lowercased, and the
+        unique index is on the raw column, so a stored "Bunce & Co" would
+        sit beside "bunce & co" as a second rule doing the same job. Only a
+        typed phrase can arrive in mixed case - the inducer lowercases the
+        title before it generates candidates - so this guards the case that
+        the blocklist form newly makes reachable. */
+    assert.strictEqual(rules[0].phrase, 'bunce & co',
+        'the phrase was stored in the case it was typed')
+    assert.strictEqual(rules[0].series, 'GB.SOV')
+
+    /*  The landing page must find the rule it just wrote, or there is no
+        confirmation and no undo button. */
+    const landed = await fetchAll(opened, [added.location])
+    assert.ok(/Rule added/.test(landed[added.location].body),
+        'the rules page does not confirm the rule it just saved')
+
+    /*  And removing it puts every one of them back. That round trip is the
+        whole safety claim the form makes. */
+    const removed = await post(opened, '/rule/delete', { id: String(rules[0].id) })
+    assert.strictEqual(removed.status, 303)
+    assert.strictEqual(priced(), 3, 'removing the rule did not restore the coins')
+
+    opened.db.close()
+})
+
+test('the rules table dates a rule instead of counting it', async () => {
+    const opened = dealerStore()
+    opened.repository.saveLearnedRule({
+        phrase: 'bunce & co',
+        kind: 'NOT_TRACKED',
+        series: 'GB.SOV',
+        /*  A support that is not a plausible date, so the two cannot be
+            confused if the column regresses. */
+        support: 4321
+    })
+    const page = (await fetchAll(opened, ['/rules']))['/rules'].body
+    const row = (page.match(/<tr>\s*<td>drop titles containing[\s\S]*?<\/tr>/) || [''])[0]
+
+    assert.ok(!/>4321</.test(row), 'the "when accepted" column is showing the support count')
+    assert.ok(/>\d{4}-\d{2}-\d{2}</.test(row), 'the "when accepted" column shows no date')
+
+    /*  Matches now must be scoped like the rule: 2 sovereigns, not the 4
+        titles in the store carrying the phrase. */
+    assert.ok(/<td class="mono">2<\/td>/.test(row),
+        '"matches now" is counting coins the rule cannot reach: ' + row)
+    opened.db.close()
+})
+
+test('the blocklist form offers every series and saves nothing by itself', async () => {
+    const opened = dealerStore()
+    const page = (await fetchAll(opened, ['/rules']))['/rules'].body
+
+    const form = (page.match(/<form method="get" action="\/rule-confirm"[\s\S]*?<\/form>/) || [''])[0]
+    assert.ok(form.length > 0, 'there is no blocklist form on the rules page')
+    assert.ok(/name="phrase"/.test(form) && /required/.test(form))
+    for (const pack of SERIES.all()) {
+        assert.ok(form.includes('value="' + pack.id + '"'),
+            pack.id + ' cannot be chosen in the blocklist form')
+    }
+    /*  A GET to a preview, never a write. */
+    assert.ok(!/method="post"/i.test(form))
+    assert.strictEqual(opened.repository.learnedRules().length, 0)
+    opened.db.close()
+})
+
+test('a queued listing still counts as priced, so the preview cannot understate', async () => {
+    const opened = dealerStore()
+
+    /*  sov1 is in an instrument AND in the review queue - the state 253
+        coins in the live store are in. The preview must count it, because
+        accepting the rule will drop it and the rules page will say so. */
+    opened.repository.queueForReview('v1|sov1|0', 'worth a look', 'GB.SOV.BULLION.FULL', 0.5)
+
+    const row = opened.repository.titleCorpus().find(r => r.legacyId === 'sov1')
+    assert.strictEqual(row.priced, 1,
+        'a queued listing reads as unpriced, so a rule that drops it looks harmless')
+
+    /*  And end to end: the page must promise the same number the click
+        delivers. Understating here is worse than overstating - it is the
+        difference between a warning and a one-click button. */
+    const path = '/rule-confirm?phrase=bunce&series=GB.SOV&back=%2Frules'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const promised = Number((body.match(/Priced today, would stop \((\d+)\)/) || [])[1])
+
+    const before = opened.db.prepare(
+        'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
+    await post(opened, '/rule', { phrase: 'bunce & co', series: 'GB.SOV', support: '2' })
+    const after = opened.db.prepare(
+        'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
+
+    assert.strictEqual(promised, before - after,
+        'the confirmation page promised ' + promised + ' but the click dropped ' +
+        (before - after))
     opened.db.close()
 })

@@ -256,12 +256,40 @@ a.confirm:hover { background:color-mix(in srgb, var(--critical) 10%, transparent
   padding:1px 6px; border-radius:4px }
 `
 
-exports.page = function (title, body) {
+/*
+    The three places worth going, and which one you are on.
+
+    `class="on"` used to be baked onto the Market link, so Market stayed
+    underlined on every page in the tool. It needs the current path, and only
+    the path: the title is not a usable key, because /listings passes a
+    per-instrument display name and two different call sites both pass
+    'Coin Market'.
+
+    Matched EXACTLY. On /listings, /teach and /rule-confirm nothing is lit,
+    which is the honest answer - a sub-page-to-parent map would have to decide
+    where /rule-confirm belongs now that it is reachable from both /teach and
+    /rules, and a table that must be right about that goes stale silently.
+    Those pages each carry their own heading and a way back.
+
+    Must stay ONE <nav> element: report/build.js strips it with a non-greedy
+    regex, and a second one would survive into a shared report.
+*/
+const NAV = [
+    ['/', 'Market'],
+    ['/review', 'Needs review'],
+    ['/rules', "What you've taught it"]
+]
+
+exports.page = function (title, body, pathname) {
+    const nav = NAV.map(([href, label]) =>
+        '<a href="' + href + '"' + (href === pathname ? ' class="on"' : '') + '>' +
+        escapeHtml(label) + '</a>').join('')
+
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
 <body><div class="wrap">
-<nav><a href="/" class="on">Market</a><a href="/review">Needs review</a><a href="/rules">What you've taught it</a></nav>
+<nav>${nav}</nav>
 ${body}
 </div></body></html>`
 }
