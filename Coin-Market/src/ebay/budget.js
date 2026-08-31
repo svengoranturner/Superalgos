@@ -18,7 +18,14 @@ const PRIORITY = { discover: 1, resolve: 2, endingSoon: 3, snapshot: 4, hydrate:
 
 exports.newBudget = function (db, options) {
 
-    const config = Object.assign({ dailyLimit: 5000, reserve: 250 }, options || {})
+    /*  dailyLimit is the BROWSE allowance - spent() excludes Trading
+        deliberately, so the two never compete. tradingDailyLimit is the
+        separate ceiling for it; eBay has never told this repo what the
+        real Trading grant is (smoke.js keeps only the Browse entry from
+        getRateLimits), so this is a conservative default rather than a
+        measured one. */
+    const config = Object.assign(
+        { dailyLimit: 5000, reserve: 250, tradingDailyLimit: 5000 }, options || {})
 
     const today = () => new Date().toISOString().slice(0, 10)
 
@@ -27,11 +34,34 @@ exports.newBudget = function (db, options) {
         'ON CONFLICT(day, api) DO UPDATE SET calls = calls + 1'
     )
     const spentToday = db.prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM call_budget WHERE day = ? AND api != ?')
+    const spentOnApi = db.prepare('SELECT COALESCE(SUM(calls), 0) AS n FROM call_budget WHERE day = ? AND api = ?')
 
     return {
         record (api) { upsert.run(today(), api) },
 
         spent () { return spentToday.get(today(), 'trading').n },
+
+        /*
+            Trading has its own allowance and its own ceiling.
+
+            It is excluded from spent() above so that outcome resolution
+            cannot eat the Browse budget that discovery runs on - but nothing
+            was capping it either. Every Trading call site only ever
+            record()ed, so a job that resolved one listing per vanished
+            Buy-It-Now would have been free to spend without limit. That was
+            fine while the only caller resolved a handful of ended auctions a
+            day; it is not fine for anything that scales with the size of the
+            corpus.
+        */
+        spentOn (api) { return spentOnApi.get(today(), api).n },
+
+        allowsTrading (cost) {
+            return (config.tradingDailyLimit - this.spentOn('trading') - (cost || 1)) >= 0
+        },
+
+        tradingRemaining () {
+            return Math.max(0, config.tradingDailyLimit - this.spentOn('trading'))
+        },
 
         remaining () { return Math.max(0, config.dailyLimit - this.spent()) },
 

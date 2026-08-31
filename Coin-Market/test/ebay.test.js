@@ -159,3 +159,41 @@ test('the search asks eBay only for the countries you buy from', () => {
     assert.ok(!/itemLocationCountry/.test(DISCOVER.newDiscoverer({}, {}, {})
         .buildQueries(coins)[0].query.filter))
 })
+
+/*  Trading is excluded from the Browse budget so the two never compete - but
+    nothing was capping it either. Every Trading call site only record()ed, so
+    a job resolving one listing per vanished Buy-It-Now could have spent the
+    whole day's allowance unchecked. */
+test('trading calls are capped, not merely counted', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const BUDGET = require('../src/ebay/budget.js')
+    const db = newDatabase(':memory:')
+    const budget = BUDGET.newBudget(db, { dailyLimit: 5000, tradingDailyLimit: 3 })
+
+    assert.strictEqual(budget.allowsTrading(1), true)
+    for (let i = 0; i < 3; i++) { budget.record('trading') }
+
+    assert.strictEqual(budget.spentOn('trading'), 3)
+    assert.strictEqual(budget.tradingRemaining(), 0)
+    assert.strictEqual(budget.allowsTrading(1), false, 'the ceiling must actually stop it')
+
+    /*  And it must not have touched the Browse allowance on the way. */
+    assert.strictEqual(budget.spent(), 0)
+    assert.strictEqual(budget.remaining(), 5000)
+    db.close()
+})
+
+/*  eBay sends the listing's creation date on every summary and it was being
+    discarded, which left start_time NULL on all 5,516 stored rows and
+    silently disabled medianDaysToSale. */
+test('the listing start date is kept', () => {
+    const BROWSE = require('../src/ebay/browse.js')
+    const row = BROWSE.normaliseSummary({
+        itemId: 'v1|1|0', title: 'Gold Sovereign 1912',
+        itemCreationDate: '2026-08-01T09:00:00.000Z',
+        buyingOptions: ['FIXED_PRICE']
+    })
+    assert.strictEqual(row.startTime, '2026-08-01T09:00:00.000Z')
+    assert.strictEqual(
+        BROWSE.normaliseSummary({ itemId: 'v1|2|0', title: 'x', buyingOptions: [] }).startTime, null)
+})

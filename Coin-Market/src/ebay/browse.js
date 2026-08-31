@@ -173,6 +173,12 @@ exports.normaliseSummary = function (summary) {
             summary at no extra cost; without it a lot in Cyprus is
             indistinguishable from one in Birmingham. */
         itemCountry: summary.itemLocation ? (summary.itemLocation.country || null) : null,
+        /*  When the listing went up. eBay sends it on every summary and it
+            was being thrown away, so start_time was NULL on all 5,516 rows -
+            which silently disabled medianDaysToSale, the one metric that
+            answers "how long does a Buy-It-Now sit before it sells". Costs
+            nothing: the field is already in the response. */
+        startTime: summary.itemCreationDate || null,
         conditionLabel: summary.condition || null,
         buyingOptions: (summary.buyingOptions || []).join(','),
         price: money(summary.price),

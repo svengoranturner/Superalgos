@@ -45,7 +45,17 @@ exports.newTradingClient = function (auth, credentials, options) {
             body: envelope
         })
 
-        if (config.budget !== null) { config.budget.record('trading') }
+        if (config.budget !== null) {
+            /*  Checked, not merely counted. This was record-only, so nothing
+                stood between a looping caller and the whole day's Trading
+                allowance. */
+            if (typeof config.budget.allowsTrading === 'function' && !config.budget.allowsTrading(1)) {
+                const err = new Error('Trading daily call budget exhausted')
+                err.code = 'BUDGET_EXHAUSTED'
+                throw err
+            }
+            config.budget.record('trading')
+        }
 
         const text = await response.text()
         const parsed = XML.parse(text)
