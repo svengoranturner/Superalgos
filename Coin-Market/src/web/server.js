@@ -177,75 +177,66 @@ function marketPage (opened, url) {
                   '</tr>'
           }).join('') + '</tbody></table></div>'
 
-    /* Live opportunities, one per lot at its most specific instrument. */
-    const candidates = []
-    for (const entry of markets) {
-        for (const alert of ALERT_RULES.evaluate(entry.market, curve, { minEdge: 0.02 })) {
-            candidates.push({ alert, name: INSTRUMENTS.displayName(entry.row.key), level: entry.row.level })
-        }
-    }
     /*
-        A lot priced below its own gold content cannot be the coin it claims,
-        so the "edge" against it is arithmetic on a category error - and it
-        is precisely the listing that floats to the top of an
-        edge-ranked list, because the bigger the mismatch the better the
-        bargain looks. A book about sovereigns at GBP 107 showed an 87% edge.
+        Live opportunities: auctions on coins we can identify, priced at or
+        near the spot value of their own gold.
 
-        Dropped from the panel rather than merely marked, because this list
-        exists to be acted on. They stay visible on the review page with the
-        same verdict attached, so a wrong call here is findable.
+        The previous definition wanted a projected final price, a sufficient
+        fair value and a bid ceiling, and only looked inside the last two
+        hours - between them those conditions meant no auction alert had ever
+        fired in the tool's life, while the panel filled with Buy-It-Now lots
+        whose only claim was sitting under a contaminated median. Every one
+        the owner checked turned out not to be an opportunity.
+
+        An auction opening at or under spot is worth seeing whether or not
+        you bid: it can be bought at fair value, and watching where it
+        finishes is how fair value gets measured in the first place. It needs
+        no clearing history, which is the point - the tool has 26 sales, and
+        a definition that needs a history is a definition that does nothing
+        for months.
     */
-    const PLAUSIBILITY = require('../analytics/plausibility.js')
-    const plausible = ALERT_RULES.dedupeByListing(candidates).filter(entry => {
-        const market = markets.find(m => INSTRUMENTS.displayName(m.row.key) === entry.name)
-        if (market === undefined || market.market.spot === null || market.market.fineOz === null) { return true }
-        /*  For a live auction the current bid is a lower bound on the
-            outcome, so it cannot falsify the coin - such a lot is labelled,
-            not suppressed.
+    const NEAR_SPOT = 1.05
+    const spotForOpportunities = opened.spotAt(new Date().toISOString())
+    const PREMIUM = require('../analytics/premium.js')
 
-            Testing the projected final price instead was backwards twice
-            over: the closing uplift makes the floor STRICTER rather than
-            kinder, and a point estimate off a seventeen-sample median has no
-            business deciding whether a coin is genuine. The spot floor
-            belongs on a number somebody has actually offered. */
-        const assessed = PLAUSIBILITY.assess(
-            entry.alert.currentTotal, market.market.fineOz, market.market.spot.gbpPerOz,
-            { liveAuction: entry.alert.rule === 'AUCTION_PROJECTED_BELOW_CEILING' })
-        return assessed === null || !assessed.impossible
-    })
-    const suppressed = ALERT_RULES.dedupeByListing(candidates).length - plausible.length
-    const opportunities = plausible.slice(0, 12)
+    let opportunities = []
+    let considered = 0
+    if (spotForOpportunities !== null) {
+        opportunities = repository.liveAuctions(500)
+            .map(row => {
+                const total = PREMIUM.totalCost(row.price, row.shipping)
+                const gold = row.fineOz * spotForOpportunities.gbpPerOz
+                return Object.assign({}, row, { total, gold, ratio: gold > 0 ? total / gold : null })
+            })
+            .filter(row => Number.isFinite(row.ratio))
+        considered = opportunities.length
+        opportunities = opportunities
+            .filter(row => row.ratio <= NEAR_SPOT)
+            /*  A coin you have already judged not to be a sovereign is not an
+                opportunity, whatever its price. */
+            .filter(row => row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
+            .sort((a, b) => a.ratio - b.ratio)
+    }
 
-    const opportunityHtml = opportunities.length === 0
-        ? '<p class="thin">No live lot is currently below your bid ceiling.</p>'
-        : opportunities.map(entry => {
-            const a = entry.alert
-            const isAuction = a.rule === 'AUCTION_PROJECTED_BELOW_CEILING'
-            const shot = largerImage(a.imageUrl)
-            return `<div class="alert">
-        ${a.imageUrl
-            ? `<details class="q-shot alert-shot"${shot ? ' style="--shot:url(&quot;' + escapeHtml(shot) + '&quot;)"' : ''}>
-             <summary title="Click for a larger picture"><img src="${escapeHtml(a.imageUrl)}" alt="" loading="lazy" decoding="async"></summary>
-             ${shot ? '<div class="q-big"></div>' : ''}
-           </details>`
-            : ''}
-        <div class="alert-main">
-        <div class="t">${escapeHtml(a.title)}</div>
-        <div class="thin">${escapeHtml(entry.name)} ·
-          ${isAuction ? 'auction ending in ' + a.minutesLeft + ' min' : 'buy it now / best offer'}</div>
-        <div style="margin-top:6px">
-          Now <span class="mono">${gbp(a.currentTotal)}</span>
-          ${isAuction ? '· projected <span class="mono">' + gbp(a.projectedFinal) + '</span> ' +
-            '<span class="thin">(' + gbp(a.projectedRange[0]) + '–' + gbp(a.projectedRange[1]) +
-            ', from ' + a.basedOn + ' samples)</span>' : ''}
-          · ${isAuction ? 'max bid' : 'suggested offer'}
-          <span class="mono"><strong>${gbp(isAuction ? a.maxBid : a.suggestedOffer)}</strong></span>
-          <span class="badge">edge ${pct(a.edge)}</span>
-        </div>
-        ${a.url ? '<div style="margin-top:4px"><a href="' + escapeHtml(a.url) + '" target="_blank" rel="noopener">open on eBay</a></div>' : ''}
-        </div>
-      </div>`
-        }).join('')
+    const shown = opportunities.slice(0, 40)
+    for (const row of shown) { row.back = '/' }
+
+    const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
+    const opportunityHtml = shown.length === 0
+        ? '<p class="thin">No live auction is currently at or near the spot value of its gold. ' +
+          considered + ' were checked.</p>'
+        : '<form method="post" action="/apply">' +
+          '<input type="hidden" name="back" value="/">' +
+          '<div class="bulkbar">' +
+          '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
+          'Not a sovereign &mdash; selected</button>' +
+          '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
+          'Genuine &mdash; selected</button>' +
+          '<span class="thin">Tick anything that is not what it says it is; it leaves this ' +
+          'panel and every statistic at once.</span></div>' +
+          '<div class="card"><div class="queue">' +
+          shown.map(row => queueRow(row, opportunityVerdict(row))).join('') +
+          '</div></div></form>'
 
     const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
     const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
@@ -279,10 +270,11 @@ ${countryPicker(repository)}
 <h2>Where each coin type clears, against what sellers ask</h2>
 <div class="card">${RENDER.premiumChart(chartRows)}</div>
 
-<h2>Live opportunities</h2>
-${suppressed > 0 ? '<p class="thin">' + suppressed + ' lot' + (suppressed === 1 ? '' : 's') +
-  ' hidden: priced below their own gold content, so they cannot be the coin the title claims. ' +
-  'They are on the <a href="/review">review page</a> with the reason.</p>' : ''}
+<h2>Live auctions at or near spot (${shown.length})</h2>
+<p class="thin">Auctions on coins the tool can identify, whose current bid is within 5% of the
+spot value of the gold in them &mdash; cheapest against their own gold first. Worth watching even
+if you do not bid: where one of these finishes is how fair value gets measured.
+${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
 ${opportunityHtml}
 
 <h2>What the tracked market is made of</h2>
@@ -770,6 +762,16 @@ function queueRow (row, verdictCell) {
     }
     if (sold && row.endedAt) {
         meta.push('sold ' + escapeHtml(String(row.endedAt).slice(0, 10)))
+    }
+    /*  How long is left to act. On the opportunities panel this is the
+        difference between a lot you can think about and one you cannot. */
+    if (!sold && row.endTime) {
+        const minutes = Math.round((new Date(row.endTime).getTime() - Date.now()) / 60000)
+        if (Number.isFinite(minutes) && minutes > 0) {
+            meta.push(minutes < 60 ? '<strong class="warn">ends in ' + minutes + ' min</strong>'
+                : (minutes < 60 * 36 ? 'ends in ' + Math.round(minutes / 60) + 'h'
+                    : 'ends in ' + Math.round(minutes / 1440) + 'd'))
+        }
     }
     /*  eBay never publishes what an accepted Best Offer went for, so these
         are shown and excluded rather than counted at the list price - which
