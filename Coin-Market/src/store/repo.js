@@ -836,34 +836,66 @@ exports.newRepository = function (db, options) {
             sell-through would be a lie; it is unobserved, and the chart says
             so.
         */
-        marketComposition () {
-            const one = (sql, ...args) => db.prepare(sql).get(...args).n
+        /*
+            What the tracked market is made of, for one series or for all.
+
+            Store-wide stops meaning anything once there are two: sovereigns
+            are 94% Buy-It-Now, and a market with a different format mix
+            averaged into that describes neither of them.
+
+            Scoped by key prefix rather than a column, because instrument
+            rows carry no series and two of them do not justify a migration.
+            The trailing dot is what makes it safe - 'US.MORGAN.%' cannot
+            match a future 'US.MORGAN_PROOF.x'. The prefix is bound as a
+            parameter, never spliced, so a series id can never be SQL.
+        */
+        marketComposition (seriesId) {
+            const scoped = seriesId !== undefined && seriesId !== null && seriesId !== ''
+            const prefix = scoped ? String(seriesId) + '.%' : null
+
+            /*  The scope is expressed against whichever table the query is
+                counting, so both spellings are needed. */
+            const inSeries = (alias) => scoped
+                ? ' AND EXISTS (SELECT 1 FROM listing_instrument li WHERE li.browse_id = ' +
+                  alias + '.browse_id AND li.key LIKE ?)'
+                : ''
+            /*  Scope parameters go LAST, because the ? for the prefix is
+                appended after whatever the query already binds. */
+            const one = (sql, ...args) =>
+                db.prepare(sql).get(...(scoped ? args.concat([prefix]) : args)).n
 
             const liveClause = `
                 NOT EXISTS (SELECT 1 FROM listing_outcome o WHERE o.browse_id = l.browse_id)
                 AND (l.end_time IS NULL OR l.end_time > ?)`
 
             const now = new Date().toISOString()
+            const dayAgo = new Date(Date.now() - DAY_MS).toISOString()
             return {
                 liveAuction: one(
                     'SELECT COUNT(*) n FROM listing l WHERE ' + liveClause +
-                    " AND l.buying_options LIKE '%AUCTION%'", now),
+                    " AND l.buying_options LIKE '%AUCTION%'" + inSeries('l'), now),
                 liveBin: one(
                     'SELECT COUNT(*) n FROM listing l WHERE ' + liveClause +
-                    " AND l.buying_options NOT LIKE '%AUCTION%'", now),
-                auctionSold: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type = 'AUCTION' AND sold = 1"),
-                auctionUnsold: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type = 'AUCTION' AND sold = 0"),
-                binEnded: one("SELECT COUNT(*) n FROM listing_outcome WHERE sale_type <> 'AUCTION'"),
+                    " AND l.buying_options NOT LIKE '%AUCTION%'" + inSeries('l'), now),
+                auctionSold: one(
+                    "SELECT COUNT(*) n FROM listing_outcome o WHERE o.sale_type = 'AUCTION'" +
+                    ' AND o.sold = 1' + inSeries('o')),
+                auctionUnsold: one(
+                    "SELECT COUNT(*) n FROM listing_outcome o WHERE o.sale_type = 'AUCTION'" +
+                    ' AND o.sold = 0' + inSeries('o')),
+                binEnded: one(
+                    "SELECT COUNT(*) n FROM listing_outcome o WHERE o.sale_type <> 'AUCTION'" +
+                    inSeries('o')),
                 /*  BIN lots that have gone quiet: last seen more than a day
                     ago and never resolved. Each one has either sold or been
                     withdrawn and we cannot currently tell which. */
                 binVanished: one(
                     'SELECT COUNT(*) n FROM listing l WHERE l.end_time IS NULL' +
                     " AND l.buying_options NOT LIKE '%AUCTION%' AND l.last_seen < ?" +
-                    ' AND NOT EXISTS (SELECT 1 FROM listing_outcome o WHERE o.browse_id = l.browse_id)',
-                    new Date(Date.now() - DAY_MS).toISOString()),
-                newToday: one('SELECT COUNT(*) n FROM listing WHERE first_seen > ?',
-                    new Date(Date.now() - DAY_MS).toISOString())
+                    ' AND NOT EXISTS (SELECT 1 FROM listing_outcome o WHERE o.browse_id = l.browse_id)' +
+                    inSeries('l'), dayAgo),
+                newToday: one(
+                    'SELECT COUNT(*) n FROM listing l WHERE l.first_seen > ?' + inSeries('l'), dayAgo)
             }
         },
 

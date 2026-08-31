@@ -13,6 +13,11 @@ const FRESHNESS = require('../analytics/freshness.js')
 
 const { escapeHtml, pct, gbp } = RENDER
 
+/*  The headline metrics quote ONE coin type, so they have to say which
+    metal that coin is measured against - "gold, £/oz" above a silver dollar
+    would be quietly wrong in the most-read number on the page. */
+const METAL_NAMES = { XAU: 'gold', XAG: 'silver', XPT: 'platinum', XPD: 'palladium' }
+
 /*
     The local dashboard. Binds to loopback by default - it holds your
     buying intentions and there is no reason for it to be reachable from
@@ -91,13 +96,54 @@ function marketPage (opened, url) {
     const { repository, view } = opened
     const minSample = Number(url.searchParams.get('min')) || 3
 
-    const instruments = repository.instruments(0, 3)
-        .filter(row => row.listingCount >= minSample)
-        .slice(0, 40)
+    /*
+        Grouped by series, and capped WITHIN each one.
+
+        The cap used to be global: instruments ordered by listing count and
+        sliced to 40. With one coin that is a display choice; with two it is
+        a silent eviction. 5,600 sovereign listings against a new series'
+        first few hundred means every row of the newcomer falls off the
+        bottom, and the page shows nothing at all for a coin it is tracking
+        correctly. Not clutter - invisibility, and indistinguishable from the
+        pack being broken.
+
+        The series comes from the key rather than a column, because there are
+        two of them and a few dozen rows: an index would be answering a
+        question nobody is asking yet.
+    */
+    const PER_SERIES = 25
+    const grouped = new Map()
+    for (const row of repository.instruments(0, 3)) {
+        if (row.listingCount < minSample) { continue }
+        const found = SERIES.forKey(row.key)
+        const id = found === null ? '?' : found.pack.id
+        if (!grouped.has(id)) { grouped.set(id, { pack: found && found.pack, rows: [] }) }
+        grouped.get(id).rows.push(row)
+    }
 
     const curve = view.upliftCurve()
-    const markets = instruments.map(row => ({ row, market: view.forInstrument(row.key) }))
-        .filter(entry => entry.market.fairValue.sufficient || entry.market.liquidity.askSampleSize > 0)
+
+    /*  One block per series, each with its own cap and its own count of what
+        the cap left out - a number that has to be visible, or a capped page
+        and a complete one look identical. */
+    const seriesBlocks = []
+    for (const [id, group] of grouped) {
+        const shownRows = group.rows.slice(0, PER_SERIES)
+        const entries = shownRows.map(row => ({ row, market: view.forInstrument(row.key) }))
+            .filter(e => e.market.fairValue.sufficient || e.market.liquidity.askSampleSize > 0)
+        if (entries.length === 0) { continue }
+        seriesBlocks.push({
+            id,
+            label: group.pack ? group.pack.label : id,
+            metal: group.pack ? group.pack.metal : 'XAU',
+            entries,
+            hidden: group.rows.length - shownRows.length
+        })
+    }
+    /*  Biggest series first, but every series present. */
+    seriesBlocks.sort((a, b) => b.entries.length - a.entries.length)
+
+    const markets = seriesBlocks.flatMap(b => b.entries)
 
     if (markets.length === 0) {
         return RENDER.page('Coin Market',
@@ -107,9 +153,13 @@ function marketPage (opened, url) {
     }
 
     /* Headline: the cost of paying the asking price, in money. */
-    const headline = markets.find(e => e.market.fairValue.sufficient &&
+    const headlineEntry = markets.find(e => e.market.fairValue.sufficient &&
         e.market.liquidity.askClearingSpread !== null) || markets[0]
-    const hm = headline.market
+    const headline = {
+        entry: headlineEntry,
+        metal: SERIES.metalForKey(headlineEntry.row.key)
+    }
+    const hm = headlineEntry.market
     const overpay = (hm.liquidity.askClearingSpread !== null && hm.spot !== null && hm.fineOz !== null)
         ? hm.liquidity.askClearingSpread * hm.fineOz * hm.spot.gbpPerOz
         : null
@@ -126,7 +176,7 @@ function marketPage (opened, url) {
             n: e.market.fairValue.n
         }))
 
-    const tableRows = markets.map(e => {
+    const instrumentRows = (entries) => entries.map(e => {
         const m = e.market
         const f = m.fairValue
         const l = m.liquidity
@@ -154,7 +204,13 @@ function marketPage (opened, url) {
         a derived number is easier to trust when the thing it came from is
         visible above it.
     */
-    const composition = repository.marketComposition()
+    /*  Per series: a format mix averaged across two markets describes
+        neither. Computed after the blocks, so it covers exactly the series
+        the page is showing. */
+    const compositions = () => seriesBlocks.map(block => ({
+        block,
+        composition: repository.marketComposition(seriesBlocks.length > 1 ? block.id : null)
+    }))
     const sales = repository.recentSales(15)
     const salesHtml = sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
@@ -380,6 +436,57 @@ function marketPage (opened, url) {
     const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
     const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
 
+    /*  One table per series. A single table ordered by listing count would
+        bury a new coin under an established one, which is the same eviction
+        the cap used to cause - just further down the page instead of off it. */
+    const TABLE_HEAD = `<thead><tr>
+      <th>Coin type</th>
+      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
+      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
+      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
+      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
+      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
+      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
+      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
+      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
+      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
+    </tr></thead>`
+    const compositionBlocks = compositions().map(({ block, composition }) => {
+        const live = composition.liveBin + composition.liveAuction
+        const completed = composition.auctionSold + composition.auctionUnsold
+        return '<div class="card">' +
+            (seriesBlocks.length > 1
+                ? '<h3 style="margin:0 0 10px">' + escapeHtml(block.label) + '</h3>' : '') +
+            RENDER.compositionChart(composition) +
+            '<p class="thin" style="margin:14px 0 0">' +
+            '<strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing ' +
+            "is Good-'Til-Cancelled and carries no end time, so it never becomes eligible for " +
+            'outcome resolution &mdash; every one of the ' + completed + ' completed lots here ' +
+            'is an auction. So the clearing prices describe the auction market, the asking ' +
+            'prices are ' + (live > 0 ? Math.round(100 * composition.liveBin / live) : 0) + '% ' +
+            'Buy-It-Now, and the spread between them compares two markets rather than two ends ' +
+            'of one.' +
+            (composition.binVanished > 0
+                ? ' <strong>' + composition.binVanished + '</strong> Buy-It-Now listings have ' +
+                  'gone quiet without being resolved; each has either sold or been withdrawn ' +
+                  'and we cannot yet tell which.'
+                : '') +
+            '</p></div>'
+    }).join('')
+
+    const instrumentTables = seriesBlocks.map(block =>
+        (seriesBlocks.length > 1
+            ? '<h3 style="margin:18px 0 8px">' + escapeHtml(block.label) + '</h3>'
+            : '') +
+        '<div class="card scroll"><table>' + TABLE_HEAD +
+        '<tbody>' + instrumentRows(block.entries) + '</tbody></table></div>' +
+        (block.hidden > 0
+            ? '<p class="thin" style="margin:-10px 0 14px">' + block.hidden +
+              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series are not ' +
+              'shown here. <a href="/review">The review queue</a> reaches every one of them.</p>'
+            : '')
+    ).join('')
+
     const body = `
 <h1>Coin Market</h1>
 <p class="sub">What sovereigns actually sell for, measured against their gold content.</p>
@@ -402,7 +509,7 @@ ${countryPicker(repository)}
   </div>
   <div>
     <div class="n">${hm.spot === null ? '—' : gbp(hm.spot.gbpPerOz)}</div>
-    <div class="l">gold, £/oz, from your metals.dev feed</div>
+    <div class="l">${METAL_NAMES[headline.metal] || headline.metal}, £/oz, from your metals.dev feed</div>
   </div>
 </div>
 
@@ -447,43 +554,14 @@ ${salesHtml}
 </details>
 
 <details class="fold">
-  <summary>Every tracked coin type <span class="why">${markets.length} of them, with what to bid</span></summary>
-  <div class="card scroll">
-  <table>
-    <thead><tr>
-      <th>Coin type</th>
-      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
-      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
-      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
-      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
-      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
-      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
-      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
-      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
-      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
-    </tr></thead>
-    <tbody>${tableRows}</tbody>
-  </table>
-  </div>
+  <summary>Every tracked coin type <span class="why">${markets.length} across ${seriesBlocks.length} series, with what to bid</span></summary>
+  ${instrumentTables}
 </details>
 
 <details class="fold">
   <summary>What the tracked market is made of
     <span class="why">and the hole in it</span></summary>
-  <div class="card">
-    ${RENDER.compositionChart(composition)}
-    <p class="thin" style="margin:14px 0 0">
-      <strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing is
-      Good-'Til-Cancelled and carries no end time, so it never becomes eligible for outcome
-      resolution &mdash; every one of the ${composition.auctionSold + composition.auctionUnsold}
-      completed lots here is an auction. So the clearing prices describe the auction market, the
-      asking prices are ${Math.round(100 * composition.liveBin / (composition.liveBin + composition.liveAuction))}%
-      Buy-It-Now, and the spread between them compares two markets rather than two ends of one.
-      ${composition.binVanished > 0
-          ? '<strong>' + composition.binVanished + '</strong> Buy-It-Now listings have gone quiet ' +
-            'without being resolved; each has either sold or been withdrawn and we cannot yet tell which.'
-          : ''}</p>
-  </div>
+  ${compositionBlocks}
 </details>
 
 <details class="fold">
