@@ -1097,6 +1097,65 @@ its legacy id would say which. That is one call per vanished listing against a
 is a new collector job with a real call cost, and it has not been built.
 `marketComposition().binVanished` already counts the candidates.
 
+## Costing Buy-It-Now outcome resolution - and why it is not built
+
+**The premise was wrong, and it was mine.** Resolving BIN outcomes would NOT
+give the tool Buy-It-Now clearing prices, because the tool deliberately
+refuses them: `market.js:92` filters `o.saleType === 'AUCTION'` and
+`liquidity.js:32` does the same, with a comment saying why - "A Buy-It-Now
+sale tells you what one buyer would pay on demand, not where the market
+clears." A perfectly uncensored BIN sale at a known price would contribute
+nothing to fair value as the code stands. What the job would actually deliver
+is **BIN sell-through**, which is real but narrower than it first sounds.
+
+**Cost: trivially affordable, once gated.** `dailyCallLimit: 5000` is the
+*Browse* allowance - `budget.js:29` computes spend with `api != 'trading'`, so
+Trading never competes with discovery. Trading usage is currently ~68/day.
+
+Measured departure rates, over complete sweeps only:
+
+| trigger | calls/day | precision |
+|---|---|---|
+| absent from one sweep | ~2,030 | 25% |
+| absent from four sweeps | ~445 | 72% |
+| four sweeps + classified + no same-seller twin | **~79-160** | - |
+
+The naive trigger is a trap: most BIN "departures" are eBay rotating which of
+a dealer's identical variation listings it surfaces. 73.6% of departed
+listings share a title with another listing, and every one of those twins is
+the same seller.
+
+**Treat those figures as provisional.** They rest on 13 hours of one Sunday
+with 19 collector restarts. Two independent passes disagreed by an order of
+magnitude on the blip rate - 78.8% against 11.5% - and the difference was
+entirely whether restart-truncated sweeps were counted as market behaviour.
+Re-measure over a clean week before spending on this.
+
+**Recommendation: do not build it yet.** The free fixes below may answer the
+BIN question well enough on their own.
+
+## Two things that fell out of costing it
+
+**`itemCreationDate` was being discarded.** eBay sends it on every search
+summary; `browse.js` never mapped it, so `start_time` was NULL on all 5,516
+rows - which silently disabled `medianDaysToSale`, the one metric that answers
+"how long does a Buy-It-Now sit before it sells". That is arguably the most
+useful BIN number available and it needs no extra API calls at all. Now
+captured, and backfilled on the conflict path too: without that, only newly
+discovered listings would ever have got one and the metric would have stayed
+broken for months.
+
+**Nothing capped Trading spend.** It is excluded from the Browse budget on
+purpose, but `browse.js:37` held the *only* `allows()` call in the codebase -
+every Trading call site merely `record()`ed after the fact. Harmless while the
+sole caller resolved a handful of ended auctions a day; not harmless for
+anything that scales with the corpus. There is a separate `tradingDailyLimit`
+now, checked before the call.
+
+eBay has never told this repo what the real Trading grant is: `smoke.js`
+filters `getRateLimits` down to the Browse entry and discards the rest. One
+call would settle it.
+
 ## Decisions not to undo
 
 Each of these looks like an oversight until you know why. The reasoning is in the
