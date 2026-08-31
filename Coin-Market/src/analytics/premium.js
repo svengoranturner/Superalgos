@@ -17,20 +17,20 @@ const BUYER = require('./buyercost.js')
     with high postage is the oldest trick on the platform.
 */
 
-exports.meltValue = function (fineOz, spotGbpPerOz) {
+exports.goldValueAtSpot = function (fineOz, spotGbpPerOz) {
     return fineOz * spotGbpPerOz
 }
 
 /*
-    Returns premium as a fraction: 0.05 means 5% over melt. Negative means
+    Returns premium as a fraction: 0.05 means 5% over spot. Negative means
     the coin sold below its gold content, which does happen on unloved
     ungraded lots and is a strong buy signal.
 */
 exports.premium = function (totalCostGbp, fineOz, spotGbpPerOz) {
     if (!Number.isFinite(totalCostGbp) || !Number.isFinite(fineOz) || !Number.isFinite(spotGbpPerOz)) { return null }
     if (fineOz <= 0 || spotGbpPerOz <= 0) { return null }
-    const melt = exports.meltValue(fineOz, spotGbpPerOz)
-    return (totalCostGbp / melt) - 1
+    const spotValue = exports.goldValueAtSpot(fineOz, spotGbpPerOz)
+    return (totalCostGbp / spotValue) - 1
 }
 
 /*
@@ -68,5 +68,5 @@ exports.listedCost = function (price, shipping) {
 /* The inverse: what a coin is worth at a given premium. Used to turn a
    target premium into a bid ceiling. */
 exports.priceAtPremium = function (premium, fineOz, spotGbpPerOz) {
-    return exports.meltValue(fineOz, spotGbpPerOz) * (1 + premium)
+    return exports.goldValueAtSpot(fineOz, spotGbpPerOz) * (1 + premium)
 }

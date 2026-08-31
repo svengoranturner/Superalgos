@@ -41,7 +41,7 @@ exports.keyAt = function (attributes, level) {
         auction, while proofs, slabbed pieces, branch mints and pre-1871
         coins are listed buy-it-now at collector prices. Pooling them made
         the headline compare auction clearing against numismatic asks - a
-        median ask of 62.8% over melt where bullion runs nearer 13% - which
+        median ask of 62.8% over spot where bullion runs nearer 13% - which
         reads as an enormous opportunity that does not exist.
 
         COINS.isBullionPool already drew this line and nothing used it. The
@@ -85,9 +85,9 @@ exports.keysFor = function (attributes) {
 
     Deliberately not multiplied by any lot quantity: this value is written to
     the shared instrument row, so a three-coin lot passing 3x through here
-    would redefine the melt for every other listing filed under the same key.
+    would redefine the spot value for every other listing filed under the same key.
     The lot size lives on listing_instrument.quantity instead, and the
-    queries multiply the two when they read a listing's melt.
+    queries multiply the two when they read a listing's spot.
 */
 exports.fineOzFor = function (attributes) {
     const denomination = COINS.DENOMINATIONS[attributes.denomination]

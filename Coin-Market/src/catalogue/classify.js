@@ -98,7 +98,7 @@ function extractDenomination (title) {
         missing from it. Both fell through to FULL and were priced against a
         full sovereign's 7.99g of gold, which is how a genuine 1980 half
         sovereign proof came to be suppressed from the opportunities panel
-        as "below melt - not this coin". */
+        as "below spot - not this coin". */
     /*  The word after, not before. "Royal Mint 2013 Gold Proof Sovereign
         Half with Original Box" is a genuine half sovereign that was priced
         against a full sovereign's 7.99g of gold and duly appeared in the
@@ -118,7 +118,7 @@ function extractDenomination (title) {
         "£5 GOLD SOVEREIGN" (the symbol), bare "5 Sovereign" and "2 SOV.".
         All of them fell through to the FULL catch-all, so 87 live lots were
         priced against a half or a fifth of the gold they actually contain -
-        and a £9,654 five-sovereign piece duly read 1146% over melt.
+        and a £9,654 five-sovereign piece duly read 1146% over spot.
 
         The negative lookbehind is not decoration: "Type 2 Sovereign" is a
         portrait variety of an ordinary full sovereign, not a double. */

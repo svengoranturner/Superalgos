@@ -231,7 +231,7 @@ test('display names still resolve portrait, mint and grade past the pool segment
 
 /*  Not knowing is not evidence of ordinariness. An unparsed year or mint used
     to fall through into the bullion pool, where a Tudor sovereign at GBP
-    20,000 dragged the median ask to 41% over melt. */
+    20,000 dragged the median ask to 41% over spot. */
 test('an unparsed year or mint keeps a coin out of the bullion pool', () => {
     const base = { finish: 'BULLION', gradeBand: 'RAW_UNSPECIFIED', year: 1974, mint: 'LON' }
     assert.strictEqual(COINS.isBullionPool(base), true, 'a known London 1974 is bullion')
@@ -410,7 +410,7 @@ test('a hyphenated or spaced quarter is still a quarter', () => {
     the match, because the gap class was only word characters, spaces,
     hyphens and dots. A genuine 1980 half sovereign proof was priced against
     a full sovereign's gold and duly suppressed from the opportunities panel
-    as "below melt - not this coin". */
+    as "below spot - not this coin". */
 test('punctuation between the denomination and the word does not lose it', () => {
     for (const [title, expected] of [
         ['1980 Gold Proof 1/2 (Half) Sovereign - Box & COA', 'HALF'],
@@ -430,7 +430,7 @@ test('punctuation between the denomination and the word does not lose it', () =>
     to the FULL catch-all, because the multiplier had to sit immediately
     before the word. 87 live lots were priced against a half or a fifth of
     the gold they actually contain, and a GBP 9,654 five-sovereign piece
-    duly read 1146% over melt. */
+    duly read 1146% over spot. */
 test('a five-pound or two-pound sovereign is not a full sovereign', () => {
     for (const [title, expected] of [
         ['1989 Great Britain Gold 5 Sovereign NGC PF70 Ultra Cameo', 'QUINTUPLE'],
@@ -450,7 +450,7 @@ test('a five-pound or two-pound sovereign is not a full sovereign', () => {
 })
 
 /*  "Type 2" is a portrait variety of an ordinary full sovereign. Without the
-    lookbehind the multi-weight rule eats it and doubles its melt. */
+    lookbehind the multi-weight rule eats it and doubles its spot. */
 test('a portrait variety number is not a multiplier', () => {
     assert.strictEqual(classify({ title: 'Victoria 1893 Type 2 Sovereign Old Head' }).attributes.denomination, 'FULL')
     assert.strictEqual(classify({ title: '1974 Gold Sovereign Elizabeth II' }).attributes.denomination, 'FULL')
@@ -537,7 +537,7 @@ test('a plain sovereign is still full, and a double still double', () => {
 
 /*  Sellers use the typographic fractions, and the plausibility verdict is
     what surfaced this: a genuine 2012 quarter sovereign was flagged "below
-    melt" because the unicode quarter fell through to FULL and was measured
+    spot" because the unicode quarter fell through to FULL and was measured
     against a full sovereign's gold content. */
 test('typographic fractions are read as denominations', () => {
     assert.strictEqual(classify({ title: '2012 ¼ Sovereign Elizabeth II Diamond Jubilee BU' }).attributes.denomination, 'QUARTER')

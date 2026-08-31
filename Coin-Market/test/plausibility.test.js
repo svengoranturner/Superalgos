@@ -47,12 +47,12 @@ test('a rarity reads as extreme rather than being called a bargain', () => {
 
 /*  A real coin can sit a shade under spot on a fast day, or where shipping
     is charged separately. Only a clear break from the metal price counts. */
-test('a coin just under melt is not called impossible', () => {
+test('a coin just under spot is not called impossible', () => {
     assert.strictEqual(assess(MELT * 0.95).impossible, false)
     assert.strictEqual(assess(MELT * 0.5).impossible, true)
 })
 
-/*  The melt scales with the denomination, so a quarter priced like a quarter
+/*  The spot scales with the denomination, so a quarter priced like a quarter
     is fine - it is only "impossible" when measured against the wrong coin.
     This is what made the mis-keyed quarters look like 75% discounts. */
 test('a quarter priced like a quarter is plausible against a quarter', () => {
@@ -72,43 +72,43 @@ test('missing inputs yield no verdict rather than a wrong one', () => {
     Sellers routinely open below the gold value to attract bids - the owner
     says so - and calling that "not this coin" is a false alarm that teaches
     you to ignore the column. */
-test('a live auction under melt is not called a fake', () => {
-    const meltish = { fineOz: 0.2354, spot: 3292 }   /* melt about GBP 775 */
+test('a live auction under spot is not called a fake', () => {
+    const spotish = { fineOz: 0.2354, spot: 3292 }   /* spot about GBP 775 */
 
-    const binned = PLAUSIBILITY.assess(300, meltish.fineOz, meltish.spot)
+    const binned = PLAUSIBILITY.assess(300, spotish.fineOz, spotish.spot)
     assert.strictEqual(binned.verdict, 'IMPOSSIBLE')
     assert.strictEqual(binned.impossible, true)
 
-    const auction = PLAUSIBILITY.assess(300, meltish.fineOz, meltish.spot, { liveAuction: true })
-    assert.strictEqual(auction.verdict, 'AUCTION_UNDER_MELT')
+    const auction = PLAUSIBILITY.assess(300, spotish.fineOz, spotish.spot, { liveAuction: true })
+    assert.strictEqual(auction.verdict, 'AUCTION_UNDER_SPOT')
     assert.strictEqual(auction.impossible, false, 'must never be dropped from the panel')
     assert.match(auction.detail, /attract bids/)
 
-    /* Above melt, the auction flag changes nothing. */
+    /* Above spotValue, the auction flag changes nothing. */
     for (const price of [800, 1200, 4000]) {
         assert.deepStrictEqual(
-            PLAUSIBILITY.assess(price, meltish.fineOz, meltish.spot).verdict,
-            PLAUSIBILITY.assess(price, meltish.fineOz, meltish.spot, { liveAuction: true }).verdict)
+            PLAUSIBILITY.assess(price, spotish.fineOz, spotish.spot).verdict,
+            PLAUSIBILITY.assess(price, spotish.fineOz, spotish.spot, { liveAuction: true }).verdict)
     }
 })
 
 /*  A floor only works downwards, and callers that only trust that direction
     need to know the price is under it without caring which label applies.
-    Keying that guard on `impossible` alone left 44 live under-melt auctions
+    Keying that guard on `impossible` alone left 44 live under-spot auctions
     rendering as a bare "denomination unknown". */
-test('under-melt is reported separately from impossible', () => {
+test('under-spot is reported separately from impossible', () => {
     const fineOz = 0.2354
     const spot = 3292
 
     const bin = PLAUSIBILITY.assess(300, fineOz, spot)
     assert.strictEqual(bin.impossible, true)
-    assert.strictEqual(bin.underMelt, true)
+    assert.strictEqual(bin.underSpot, true)
 
     const auction = PLAUSIBILITY.assess(300, fineOz, spot, { liveAuction: true })
     assert.strictEqual(auction.impossible, false, 'a live auction is not a fake')
-    assert.strictEqual(auction.underMelt, true, 'but it is still under the metal price')
+    assert.strictEqual(auction.underSpot, true, 'but it is still under the metal price')
 
     for (const price of [800, 1200, 4000]) {
-        assert.strictEqual(PLAUSIBILITY.assess(price, fineOz, spot).underMelt, false)
+        assert.strictEqual(PLAUSIBILITY.assess(price, fineOz, spot).underSpot, false)
     }
 })

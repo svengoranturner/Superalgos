@@ -157,7 +157,7 @@ function marketPage (opened, url) {
     const salesHtml = sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
         : '<div class="card scroll"><table><thead><tr><th>Sold</th><th>Coin type</th>' +
-          '<th>Price</th><th>Bids</th><th>Premium over melt</th></tr></thead><tbody>' +
+          '<th>Price</th><th>Bids</th><th>Premium over spot</th></tr></thead><tbody>' +
           sales.map(sale => {
               const paid = sale.finalPrice + (sale.finalShipping || 0)
               const premium = spotNow === null || !Number.isFinite(sale.fineOz) || sale.fineOz <= 0
@@ -206,7 +206,7 @@ function marketPage (opened, url) {
             Testing the projected final price instead was backwards twice
             over: the closing uplift makes the floor STRICTER rather than
             kinder, and a point estimate off a seventeen-sample median has no
-            business deciding whether a coin is genuine. The melt floor
+            business deciding whether a coin is genuine. The spot floor
             belongs on a number somebody has actually offered. */
         const assessed = PLAUSIBILITY.assess(
             entry.alert.currentTotal, market.market.fineOz, market.market.spot.gbpPerOz,
@@ -263,7 +263,7 @@ ${countryPicker(repository)}
   </div>
   <div>
     <div class="n">${pct(hm.fairValue.p50)}</div>
-    <div class="l">auctions clear at this premium over melt
+    <div class="l">auctions clear at this premium over spot
       ${hm.fairValue.sufficient ? '(n=' + hm.fairValue.n + (hm.fairValue.band && hm.fairValue.band.wide ? ', thin sample' : '') + ')' : ''}</div>
   </div>
   <div>
@@ -356,7 +356,7 @@ ${salesHtml}
     the word. Shared by the review queue and the drill-down.
 
     Where the classifier managed a best guess, its denomination gives the
-    right melt to measure against. Where it did not, the quarter is used -
+    right spot to measure against. Where it did not, the quarter is used -
     the smallest sovereign struck - so the verdict is the conservative one.
 */
 function newPlausibilityCell (spot) {
@@ -394,21 +394,21 @@ function newPlausibilityCell (spot) {
             Anything under a quarter's gold cannot be any sovereign, whatever
             the title says - that direction is sound. Upwards it is nonsense:
             an ordinary full sovereign measured against a quarter reads 400%
-            and gets labelled "far above melt - rarity or error", which put
+            and gets labelled "far above spot - rarity or error", which put
             that badge on 1,346 rows and made the column worth ignoring.
 
             So when the denomination is a guess, only the impossible verdict
             is reported. Saying nothing is better than saying something
             confident and wrong. */
-        if (assumed && !v.underMelt) {
+        if (assumed && !v.underSpot) {
             return '<span class="thin">denomination unknown</span>'
         }
-        const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_MELT' ? '' : 'good')
+        const tone = v.impossible ? 'critical' : (v.verdict === 'AUCTION_UNDER_SPOT' ? '' : 'good')
         return '<span class="badge ' + tone + '" title="' +
             escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
                 (assumed ? ', the smallest sovereign, because the denomination is unknown.' : '.')) +
             '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
-            Math.round(v.percentOfMelt) + '% of melt</span>'
+            Math.round(v.percentOfSpot) + '% of spot</span>'
     }
 }
 

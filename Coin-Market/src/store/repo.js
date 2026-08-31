@@ -166,7 +166,7 @@ exports.newRepository = function (db, options) {
             /*  The instrument records what ONE of these coins is; the
                 assignment records how many of them this lot holds. Writing a
                 three-coin lot straight into instrument.fine_oz would have
-                changed the melt for every single coin filed under the same
+                changed the spot value for every single coin filed under the same
                 key. */
             const quantity = Number.isFinite(attributes && attributes.quantity) && attributes.quantity > 1
                 ? Math.floor(attributes.quantity)
@@ -681,6 +681,76 @@ exports.newRepository = function (db, options) {
                 ORDER BY o.ended_at DESC
                 LIMIT ?
             `).all(limit || 20)
+        },
+
+        /*
+            Live auctions on coins we can identify, cheapest against their own
+            gold first.
+
+            This is what an opportunity actually is. The old definition
+            required a projected final price, a sufficient fair value and a
+            bid ceiling, and only looked at lots inside their last two hours -
+            between them those conditions meant no auction alert had EVER
+            fired, while the panel filled with Buy-It-Now lots whose only
+            claim was sitting under a contaminated median.
+
+            An auction opening at or under the spot value of its gold is worth
+            seeing whether or not you bid: it can be bought at fair value, and
+            watching where it finishes is how fair value gets measured in the
+            first place. No uplift curve required, no clearing history
+            required - just the coin, the gold in it, and the price today.
+
+            Level 0 only, so each lot appears once rather than at every level
+            of its key.
+        */
+        liveAuctions (limit) {
+            return db.prepare(`
+                WITH scope AS (
+                    SELECT li.browse_id, li.key, li.quantity, i.fine_oz
+                    FROM listing_instrument li
+                    JOIN instrument i ON i.key = li.key AND i.level = 0
+                ),
+                latest AS (
+                    SELECT browse_id, price, shipping, bid_count FROM (
+                        SELECT s.browse_id, s.price, s.shipping, s.bid_count,
+                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
+                                                  ORDER BY s.observed_at DESC) AS rn
+                        FROM listing_snapshot s
+                        JOIN scope ON scope.browse_id = s.browse_id
+                    ) WHERE rn = 1
+                )
+                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
+                       l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
+                       l.category_path AS categoryPath, l.condition_label AS conditionLabel,
+                       l.buying_options AS buyingOptions, l.item_country AS itemCountry,
+                       l.seller_feedback_pct AS sellerFeedbackPct,
+                       l.seller_feedback_cnt AS sellerFeedbackCnt,
+                       l.end_time AS endTime, l.first_seen AS firstSeen,
+                       scope.key AS instrumentKey, scope.quantity AS lotQuantity,
+                       scope.fine_oz * scope.quantity AS fineOz,
+                       s.price, s.shipping, s.bid_count AS bidCount,
+                       lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.quantity AS labelledQuantity,
+                       q.reason, 1 AS priced, 1 AS live
+                FROM scope
+                JOIN listing l ON l.browse_id = scope.browse_id
+                LEFT JOIN latest s ON s.browse_id = l.browse_id
+                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
+                LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
+                LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
+                WHERE l.buying_options LIKE '%AUCTION%'
+                  AND o.browse_id IS NULL
+                  AND l.end_time IS NOT NULL
+                  AND l.end_time > ?
+                  AND l.last_seen > ?
+                  AND s.price IS NOT NULL
+                ORDER BY l.end_time ASC
+                LIMIT ?
+            `).all(
+                new Date().toISOString(),
+                new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
+                limit || 400
+            )
         },
 
         /*

@@ -64,7 +64,7 @@ exports.build = function (opened, outputPath) {
   <div><div class="n">${overpay === null ? '—' : RENDER.gbp(overpay)}</div>
     <div class="l">what the asking price costs you per coin, over where auctions clear</div></div>
   <div><div class="n">${RENDER.pct(headline.fairValue.p50)}</div>
-    <div class="l">auctions clear at this premium over melt</div></div>
+    <div class="l">auctions clear at this premium over spot</div></div>
   <div><div class="n">${RENDER.pct(headline.liquidity.medianAskPremium)}</div>
     <div class="l">buy-it-now sellers ask this</div></div>
 </div>

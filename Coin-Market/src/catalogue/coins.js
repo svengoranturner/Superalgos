@@ -104,7 +104,7 @@ const GRADE_BANDS = [
     it has to be the pool we are SURE about. An unknown year or mint used to
     fall through to bullion, which inverted that: on the live store 621 of
     1,134 supposedly-bullion asks had no mint parsed and 287 no year, and
-    they dragged the median ask to 41% over melt where bullion runs nearer
+    they dragged the median ask to 41% over spot where bullion runs nearer
     10-15%. A Tudor Edward VI sovereign whose "1551-1553" never parsed as a
     year sat in the bullion pool at GBP 20,000.
 
@@ -122,7 +122,7 @@ const GRADE_BANDS = [
     One "collector" bucket put a GBP 10,000 1832 William IV beside an
     ordinary branch-mint Victorian and a modern Royal Mint proof, and then
     reported a median asking premium over all three. That number described
-    none of them: the level-0 collector ask read 71% over melt while its
+    none of them: the level-0 collector ask read 71% over spot while its
     sales cleared at 8.6%, and the 62-point "spread" between them was mostly
     the gap between two different populations rather than between asking and
     clearing.
@@ -168,7 +168,7 @@ function isBullionPool (attrs) {
         reasoning that a low-grade slab still trades near bullion. Once bare
         Sheldon numbers were parsed that stopped holding: the band filled
         with Victoria 1874 London shield sovereigns asking GBP 13,000, a
-        median of 1,624% over melt. Someone who has paid to have a coin
+        median of 1,624% over spot. Someone who has paid to have a coin
         graded is not selling it as metal. */
     if (attrs.gradeBand && attrs.gradeBand.startsWith('SLAB_')) { return false }
     if (attrs.year === null || attrs.year === undefined) { return false }

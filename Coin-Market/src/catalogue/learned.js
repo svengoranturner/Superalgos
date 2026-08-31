@@ -280,7 +280,7 @@ exports.apply = function (classification, label) {
         /*  How many coins are in the lot.
 
             Left alone, this is 1 and nothing changes. Set, it says the lot
-            is that many of the same coin, and the melt it is measured
+            is that many of the same coin, and the spot value it is measured
             against becomes that many coins' worth - which is the only way a
             genuine three-sovereign lot can be priced without pretending it
             is one sovereign at three times the price.
@@ -292,8 +292,8 @@ exports.apply = function (classification, label) {
         }
 
         /*  Confirmed genuine, but a denomination is still required before it
-            can be priced - melt against the wrong coin is how a real
-            sovereign came to read "below melt". Confirming does not mean
+            can be priced - spot against the wrong coin is how a real
+            sovereign came to read "below spot". Confirming does not mean
             guessing the rest. */
         const priceable = attributes.denomination !== null
         return {

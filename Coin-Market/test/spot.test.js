@@ -36,7 +36,7 @@ test('grams are converted to troy ounces, because everything downstream prices p
     const rows = source.readSince('2026-08-01T00:00:00.000Z')
 
     assert.strictEqual(rows.length, 2)
-    /* 108.1434 GBP/g x 31.1034768 g/oz - a sovereign's melt value depends on
+    /* 108.1434 GBP/g x 31.1034768 g/oz - a sovereign's spot value of its gold depends on
        getting this exactly right, so assert the number, not the ballpark. */
     assert.ok(Math.abs(rows[1].gbpPerOz - 108.1434 * 31.1034768) < 1e-9)
     assert.strictEqual(rows[1].observedAt, '2026-08-27T14:00:35.691Z')

@@ -100,7 +100,7 @@ test('bid ceiling sits below the median when buying under the market', () => {
 
     assert.ok(ceiling.targetPremium < fair.p50)
     assert.ok(ceiling.maxBid < ceiling.allInValue)
-    assert.ok(ceiling.allInValue > ceiling.meltValue)
+    assert.ok(ceiling.allInValue > ceiling.goldValueAtSpot)
 })
 
 test('the ask-clearing spread measures seller optimism', () => {

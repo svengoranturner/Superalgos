@@ -115,7 +115,7 @@ exports.bidCeiling = function (fairValueResult, options) {
         targetPremium,
         allInValue,
         maxBid: allInValue - postage,        /* what to actually type into eBay */
-        meltValue: PREMIUM.meltValue(fineOz, spotGbpPerOz)
+        goldValueAtSpot: PREMIUM.goldValueAtSpot(fineOz, spotGbpPerOz)
     }
 }
 

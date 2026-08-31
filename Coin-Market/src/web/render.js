@@ -233,7 +233,7 @@ ${body}
 
     A range plot rather than bars - the interesting quantity is the GAP
     between two points on one shared axis, plus the spread of clearing
-    prices around it. One axis (premium over melt); never two.
+    prices around it. One axis (premium over spot); never two.
 */
 /*
     What the tracked market is made of: live against ended, auction against

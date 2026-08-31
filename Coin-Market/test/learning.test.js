@@ -47,9 +47,9 @@ test('confirming a coin rescues it from an exclusion rule', () => {
     assert.strictEqual(rescued.needsReview, false)
 })
 
-/*  Confirming it is genuine does not say which coin it is, and melt against
+/*  Confirming it is genuine does not say which coin it is, and spot against
     the wrong denomination is how a real sovereign came to read "below
-    melt". It stays in the queue until that question is answered too. */
+    spot". It stays in the queue until that question is answered too. */
 test('a confirmed coin with no denomination is still not priceable', () => {
     const rescued = classify({ title: '22ct gold coin from a house clearance' }, {
         label: { verdict: LEARNED.VERDICT.SOVEREIGN }
@@ -79,7 +79,7 @@ test('confirming a coin keeps what the parser already worked out', () => {
     is not a single-coin sale. That is a default, not a law - somebody can see
     it is three of the same coin, and then it prices against three coins worth
     of gold. */
-test('a lot can be admitted at the right melt by saying how many coins it holds', () => {
+test('a lot can be admitted at the right spot by saying how many coins it holds', () => {
     const title = '3 x Gold Sovereign 1912 George V'
     assert.strictEqual(classify({ title }).excluded.code, 'PROOF_SET_OR_BUNDLE')
 
@@ -90,12 +90,12 @@ test('a lot can be admitted at the right melt by saying how many coins it holds'
     assert.strictEqual(three.attributes.quantity, 3)
 
     /*  fineOzFor stays per-coin on purpose - it is written to the shared
-        instrument row, and tripling it there would redefine the melt for
+        instrument row, and tripling it there would redefine the spot value for
         every other sovereign filed under the same key. */
     assert.strictEqual(INSTRUMENTS.fineOzFor(three.attributes), COINS.DENOMINATIONS.FULL.fineOz)
 })
 
-/*  The lot size rides on the assignment, and the melt a listing is measured
+/*  The lot size rides on the assignment, and the spot value a listing is measured
     against is the coin times the lot. */
 test('a labelled lot is measured against its own gold, not a single coin', () => {
     const { db, repository } = fixture()

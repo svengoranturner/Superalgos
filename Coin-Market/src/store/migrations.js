@@ -414,7 +414,7 @@ exports.MIGRATIONS = [
            single-coin sale - bulk discounts, mixed dates, a different buyer
            pool. But that is a default, not a law, and somebody looking at
            the listing can see that it is three of the same coin. Saying so
-           admits it at the right melt: the lot is priced against its own
+           admits it at the right spot value: the lot is priced against its own
            gold content, which is quantity times one coin's.
            --------------------------------------------------------------- */
         ALTER TABLE listing_label ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
@@ -428,12 +428,12 @@ exports.MIGRATIONS = [
 
            It has to live here and not on the instrument row, because fine_oz
            the instrument is the gold in ONE coin and is shared by every
-           listing filed under that key - writing a three-coin lot's melt
-           there would change the melt for all of them.
+           listing filed under that key - writing a three-coin lot's spot value
+           there would change the spot value for all of them.
 
            So the instrument keeps saying what a sovereign is, and each
            assignment says how many of them this lot contains. Every query
-           that reads a listing's melt multiplies the two.
+           that reads a listing's spot multiplies the two.
            --------------------------------------------------------------- */
         ALTER TABLE listing_instrument ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
         `
