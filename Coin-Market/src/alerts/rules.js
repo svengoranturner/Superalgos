@@ -2,6 +2,7 @@
 
 const UPLIFT = require('../analytics/uplift.js')
 const PREMIUM = require('../analytics/premium.js')
+const BUYER = require('../analytics/buyercost.js')
 
 /*
     Alert rules.
@@ -64,7 +65,7 @@ exports.evaluate = function (view, curve, options) {
                 projectedFinal: projection.expected,
                 projectedRange: [projection.optimistic, projection.pessimistic],
                 bidCeiling: ceiling,
-                maxBid: ceiling - (listing.shipping || 0),
+                maxBid: BUYER.priceForCost(ceiling) - (listing.shipping || 0),
                 edge,
                 minutesLeft: Math.round(secondsToEnd / 60),
                 basedOn: projection.basedOn
@@ -87,7 +88,7 @@ exports.evaluate = function (view, curve, options) {
             bidCeiling: ceiling,
             edge,
             askPremium: listing.askPremium,
-            suggestedOffer: ceiling - (listing.shipping || 0)
+            suggestedOffer: BUYER.priceForCost(ceiling) - (listing.shipping || 0)
         })
     }
 

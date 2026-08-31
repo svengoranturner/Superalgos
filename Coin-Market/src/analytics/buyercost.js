@@ -69,6 +69,61 @@ exports.buyerCost = function (orderTotal, schedule) {
 }
 
 /*
+    The inverse: the most you can let an order total reach without the
+    all-in cost exceeding a target.
+
+    This exists because a fair value in this tool is fee-inclusive - every
+    premium is fitted from PREMIUM.totalCost(), which runs buyerCost() - so
+    a bid ceiling derived from it is an all-in figure. The number you type
+    into eBay is not: eBay takes the fee on top of what you bid. Subtracting
+    only the postage, as the tool did until now, left the fee in the bid and
+    made every ceiling and every suggested offer 2-4% too high.
+
+    Defined as the LARGEST whole-penny order total whose buyerCost does not
+    exceed the target, so the promise is one-directional and the safe way
+    round: acting on this number cannot cost more than the ceiling it came
+    from. That matters more than being within a penny of it.
+
+    Solved in closed form band by band - the schedule is piecewise linear -
+    then nudged, because buyerFee rounds to the penny and a rounded function
+    has no exact algebraic inverse.
+*/
+exports.priceForCost = function (target, schedule) {
+    if (!Number.isFinite(target) || target <= 0) { return target }
+    const rules = schedule || DEFAULT_SCHEDULE
+
+    let feeAtFloor = rules.fixed
+    let floor = 0
+    let candidate = null
+
+    for (const tier of rules.tiers) {
+        const feeAtCeiling = feeAtFloor + (tier.upTo - floor) * tier.rate
+        /*  What the buyer pays if the order total sits exactly at the top of
+            this band. Beyond that the next band's rate applies. */
+        if (target <= tier.upTo + feeAtCeiling) {
+            /*  target = x + feeAtFloor + (x - floor) * rate  =>  solve for x */
+            candidate = (target - feeAtFloor + floor * tier.rate) / (1 + tier.rate)
+            break
+        }
+        feeAtFloor = feeAtCeiling
+        floor = tier.upTo
+    }
+
+    /*  The last tier is unbounded, so this only fires on a malformed
+        schedule. Refusing is better than returning the target unchanged,
+        which would read as a ceiling with no fee in it at all. */
+    if (candidate === null) { return null }
+
+    let pence = Math.round(candidate * 100)
+    /*  At most a penny or two either way: step down while the rounded fee
+        pushes us over, then up while there is room to spare. */
+    while (pence > 0 && exports.buyerCost(pence / 100, rules) > target) { pence -= 1 }
+    while (exports.buyerCost((pence + 1) / 100, rules) <= target) { pence += 1 }
+
+    return pence / 100
+}
+
+/*
     Observed orders, for calibration. Each is a real eBay UK purchase where
     the fee was visible on the order.
 

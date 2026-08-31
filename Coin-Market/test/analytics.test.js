@@ -225,3 +225,42 @@ test('the buyer protection fee is part of what a coin costs', () => {
     const without = PREMIUM.premium(PREMIUM.listedCost(800, 0), 0.2354, 3292)
     assert.ok(withFee > without)
 })
+
+/*  The fee cuts both ways, and the tool only ever applied it in one
+    direction. Fair value is fitted from totalCost, so a bid ceiling derived
+    from it is an ALL-IN figure - but eBay adds the fee on top of what you
+    bid, so bidding the ceiling less postage overshot it by the entire fee.
+    Every max bid and every suggested offer the tool ever printed was 2.4%
+    high on a GBP 2,000 lot and 5.6% high on a GBP 50 one. */
+test('a bid ceiling is quoted without the fee eBay will add to it', () => {
+    const BUYER = require('../src/analytics/buyercost.js')
+    const FAIRVALUE = require('../src/analytics/fairvalue.js')
+
+    /*  The round trip is exact, including either side of the GBP 300 tier
+        boundary where the rate steps from 4% to 2%. */
+    for (const price of [10, 49.99, 287.73, 287.74, 299.99, 300, 300.01, 312.75, 829.12, 5000]) {
+        assert.strictEqual(BUYER.priceForCost(BUYER.buyerCost(price)), price,
+            'round trip at £' + price)
+    }
+
+    /*  The promise is one-directional: acting on this number can never cost
+        more than the ceiling it came from. Being a penny under is fine;
+        being a penny over defeats the point of a ceiling. */
+    for (let pence = 100; pence <= 400000; pence += 313) {
+        const target = pence / 100
+        assert.ok(BUYER.buyerCost(BUYER.priceForCost(target)) <= target,
+            'ceiling honoured at £' + target)
+    }
+
+    /*  The regression itself, through the function that produces the number
+        shown on the market page. A quarter sovereign at a 40% premium: bid
+        maxBid, pay the fee, and the total must still fit inside allInValue. */
+    const fair = { sufficient: true, p25: 0.30, p50: 0.40, p75: 0.55 }
+    const ceiling = FAIRVALUE.bidCeiling(fair, {
+        fineOz: 0.2354, spotGbpPerOz: 3292, shipping: 4.50, targetQuantile: 0.5
+    })
+    assert.ok(BUYER.buyerCost(ceiling.maxBid + 4.50) <= ceiling.allInValue,
+        'maxBid £' + ceiling.maxBid + ' plus postage and fee must fit in £' + ceiling.allInValue)
+    /*  And it is genuinely lower than the old arithmetic, not a no-op. */
+    assert.ok(ceiling.maxBid < ceiling.allInValue - 4.50)
+})

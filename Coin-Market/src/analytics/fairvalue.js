@@ -2,6 +2,7 @@
 
 const STATS = require('./stats.js')
 const PREMIUM = require('./premium.js')
+const BUYER = require('./buyercost.js')
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -114,7 +115,17 @@ exports.bidCeiling = function (fairValueResult, options) {
     return {
         targetPremium,
         allInValue,
-        maxBid: allInValue - postage,        /* what to actually type into eBay */
+        /*
+            What to actually type into eBay.
+
+            allInValue is fee-inclusive - it comes from priceAtPremium() on a
+            premium fitted from PREMIUM.totalCost(), which charges the buyer
+            protection fee. eBay adds that fee ON TOP of the bid, so a bid
+            equal to allInValue less postage overshoots the ceiling by the
+            whole fee: 2.4% on a GBP 2,000 lot, 5.6% on a GBP 50 one.
+            priceForCost() takes it back out.
+        */
+        maxBid: BUYER.priceForCost(allInValue) - postage,
         goldValueAtSpot: PREMIUM.goldValueAtSpot(fineOz, spotGbpPerOz)
     }
 }

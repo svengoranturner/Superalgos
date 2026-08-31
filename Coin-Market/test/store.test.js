@@ -230,6 +230,43 @@ function askFixture () {
     return { db, repo }
 }
 
+/*  The opportunities panel is ordered by how long you have left to act, so
+    the query underneath it has to deliver that order rather than leave it to
+    a re-sort that could quietly go missing. It also decides what counts as
+    an opportunity at all - a lot already ended, already resolved, or never an
+    auction is not one. */
+test('live auctions come back ending soonest first, and only live auctions', () => {
+    const { db, repository } = fixture()
+    const now = Date.now()
+    const at = (ms) => new Date(now + ms).toISOString()
+
+    const rows = [
+        ['v1|thu|0', 'thu', 'Gold Sovereign 1966', 'AUCTION', at(3 * DAY_MS)],
+        ['v1|soon|0', 'soon', 'Gold Sovereign 1912', 'AUCTION', at(20 * 60 * 1000)],
+        ['v1|tomorrow|0', 'tomorrow', 'Gold Sovereign 1900', 'AUCTION', at(DAY_MS)],
+        ['v1|ended|0', 'ended', 'Gold Sovereign 1887', 'AUCTION', at(-DAY_MS)],
+        ['v1|bin|0', 'bin', 'Gold Sovereign 1974', 'FIXED_PRICE', at(5 * DAY_MS)],
+        ['v1|done|0', 'done', 'Gold Sovereign 1925', 'AUCTION', at(2 * DAY_MS)]
+    ]
+    for (const [browseId, legacyId, title, buyingOptions, endTime] of rows) {
+        repository.saveListing({ browseId, legacyId, title, buyingOptions, endTime })
+        repository.saveSnapshot(browseId, { price: 600, shipping: 0, observedAt: at(0) })
+        repository.saveClassification(browseId,
+            [{ key: 'GB.SOV.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+    /*  Already resolved: its outcome is known, so it is history, not a lot
+        you can still bid on. */
+    repository.saveOutcome('v1|done|0', {
+        endTime: at(2 * DAY_MS), sold: true, finalPrice: 640, shipping: 0,
+        bidCount: 4, saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+    })
+
+    const live = repository.liveAuctions(50)
+    assert.deepStrictEqual(live.map(r => r.legacyId), ['soon', 'tomorrow', 'thu'],
+        'ending soonest first, with ended, resolved and Buy-It-Now lots left out')
+    db.close()
+})
+
 test('a Good-Til-Cancelled listing with no end time counts as an active ask', () => {
     const { db, repo } = askFixture()
     const ids = repo.activeListings('GB.SOV.FULL').map(r => r.browseId)

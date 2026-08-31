@@ -196,6 +196,7 @@ function marketPage (opened, url) {
         for months.
     */
     const NEAR_SPOT = 1.05
+    const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
     const spotForOpportunities = opened.spotAt(new Date().toISOString())
     const PREMIUM = require('../analytics/premium.js')
 
@@ -215,11 +216,31 @@ function marketPage (opened, url) {
             /*  A coin you have already judged not to be a sovereign is not an
                 opportunity, whatever its price. */
             .filter(row => row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
-            .sort((a, b) => a.ratio - b.ratio)
+
+        /*
+            Ending soonest by default. The % of spot badge already tells you
+            what a lot is worth; the ordering should tell you how long you
+            have to act on it - a lot closing in twenty minutes is a decision
+            now, and one closing on Thursday is not, whatever their prices.
+
+            End times are ISO 8601 UTC and sort correctly as text, so no date
+            parsing is needed. liveAuctions requires a non-null end_time.
+        */
+        opportunities.sort(sort === 'spot'
+            ? (a, b) => a.ratio - b.ratio
+            : (a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     }
 
     const shown = opportunities.slice(0, 40)
     for (const row of shown) { row.back = '/' }
+
+    /*  Keep any min= the owner arrived with, so switching the ordering does
+        not silently widen the sample underneath them. */
+    const sortParams = url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {}
+    const opportunitySort = shown.length === 0 ? '' : tabs('/', 'sort', [
+        { value: 'ending', label: 'Ending soonest', isDefault: true },
+        { value: 'spot', label: 'Cheapest against spot' }
+    ], sort, sortParams)
 
     const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
     const opportunityHtml = shown.length === 0
@@ -272,9 +293,10 @@ ${countryPicker(repository)}
 
 <h2>Live auctions at or near spot (${shown.length})</h2>
 <p class="thin">Auctions on coins the tool can identify, whose current bid is within 5% of the
-spot value of the gold in them &mdash; cheapest against their own gold first. Worth watching even
-if you do not bid: where one of these finishes is how fair value gets measured.
+spot value of the gold in them. Worth watching even if you do not bid: where one of these
+finishes is how fair value gets measured.
 ${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
+${opportunitySort}
 ${opportunityHtml}
 
 <h2>What the tracked market is made of</h2>
@@ -314,7 +336,7 @@ ${salesHtml}
     <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
     <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
     <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
-    <th title="The most you should pay all-in for one, from the clearing distribution at your target quantile. Blank when there are too few sales to say.">Bid up to</th>
+    <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
   </tr></thead>
   <tbody>${tableRows}</tbody>
 </table>
@@ -409,21 +431,32 @@ function newPlausibilityCell (spot) {
     drill-down so the control looks and behaves the same in both, and so
     neither can drift into filtering on a different column from the other.
 */
-function saleTabs (basePath, current, params) {
+/*  One tab strip, used by every filter and sort control on the site. The
+    default option carries no query parameter, so a plain URL is always the
+    default view rather than a redirect to a decorated one. */
+function tabs (basePath, param, options, current, params) {
     return '<div class="tabs">' +
-        ['all', 'auction', 'bin'].map(option => {
-            const label = option === 'all' ? 'Everything'
-                : (option === 'auction' ? 'Auctions only' : 'Buy-It-Now only')
+        options.map(option => {
             const query = Object.assign({}, params || {})
-            if (option !== 'all') { query.sale = option }
+            if (!option.isDefault) { query[param] = option.value }
+            else { delete query[param] }
             const search = Object.keys(query)
                 .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(query[k]))
                 .join('&')
             const href = basePath + (search === '' ? '' : '?' + search)
-            return option === current
-                ? '<span class="tab on">' + label + '</span>'
-                : '<a class="tab" href="' + escapeHtml(href) + '">' + label + '</a>'
+            return option.value === current
+                ? '<span class="tab on">' + escapeHtml(option.label) + '</span>'
+                : '<a class="tab" href="' + escapeHtml(href) + '">' +
+                  escapeHtml(option.label) + '</a>'
         }).join('') + '</div>'
+}
+
+function saleTabs (basePath, current, params) {
+    return tabs(basePath, 'sale', [
+        { value: 'all', label: 'Everything', isDefault: true },
+        { value: 'auction', label: 'Auctions only' },
+        { value: 'bin', label: 'Buy-It-Now only' }
+    ], current, params)
 }
 
 /*  A live listing is judged on how it is offered, a completed one on how it
