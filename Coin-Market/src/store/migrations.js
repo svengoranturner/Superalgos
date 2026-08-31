@@ -489,5 +489,30 @@ exports.MIGRATIONS = [
         CREATE UNIQUE INDEX learned_rule_scope
             ON learned_rule(phrase, kind, COALESCE(series, '*'));
         `
+    },
+    {
+        name: '010-which-coin-is-this',
+        sql: `
+        /* ---------------------------------------------------------------
+           Which series a listing belongs to.
+
+           NULLABLE, WITH NO DEFAULT, and that is the whole point of the
+           column. Backfilling 'GB.SOV' onto every existing row would assert
+           that the fishing reels, the Royal Doulton cup and the empty
+           presentation boxes are sovereigns. They are not; they are listings
+           no series recognises, and that is a fact worth being able to see.
+
+           NULL means "not attributed yet". Classification fills it in from
+           whichever pack recognised the title, and anything nothing claims
+           stays NULL and reaches the review queue - which is exactly where
+           a coin the tool cannot place belongs.
+
+           Indexed because the review queue filters on it: with two series
+           being worked through, a queue that mixes them is a queue nobody
+           can work through in one pass.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN series TEXT;
+        CREATE INDEX idx_listing_series ON listing(series);
+        `
     }
 ]

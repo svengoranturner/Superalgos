@@ -220,7 +220,7 @@ function marketPage (opened, url) {
     const sales = repository.recentSales(15)
     const salesHtml = sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
-        : '<div class="card scroll"><table><thead><tr><th>Sold</th><th>Coin type</th>' +
+        : '<div class="card scroll"><table><thead><tr><th></th><th>Sold</th><th>Coin type</th>' +
           '<th>Price</th><th>Bids</th><th>Premium over spot</th></tr></thead><tbody>' +
           sales.map(sale => {
               /*
@@ -244,6 +244,13 @@ function marketPage (opened, url) {
                   ? null
                   : PREMIUM.premium(paid, sale.fineOz, spotThen.gbpPerOz)
               return '<tr>' +
+                  /*  The picture, on the one table that lacked it. These are
+                      the most important rows in the tool - every clearing
+                      figure is built from them and nothing else - and the
+                      owner's own point stands here more than anywhere: the
+                      thumbnails are as instructive as the titles. A coin you
+                      can see is a comparable you can trust. */
+                  '<td class="shot-cell">' + shot(sale.imageUrl, escapeHtml(sale.title || '')) + '</td>' +
                   '<td class="thin">' + escapeHtml(String(sale.endedAt || '').slice(0, 10)) + '</td>' +
                   '<td>' + (sale.itemWebUrl
                       ? '<a href="' + escapeHtml(sale.itemWebUrl) + '" target="_blank" rel="noopener">' +
@@ -753,7 +760,40 @@ function reviewPage (opened, url) {
         class of error as a listing silently dropped from the statistics -
         you cannot act on what you are not told is missing. */
     const QUEUE_LIMIT = 6000
-    const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1)
+
+    /*
+        One coin at a time.
+
+        A queue that alternates sovereigns and silver dollars cannot be
+        worked through in one pass: every row makes you change what you are
+        looking for, and the judgements are different judgements - a
+        mintmark means one thing on one and another on the other.
+
+        So the queue is always narrowed to a single series, and never
+        silently: the tabs carry every series' count, so choosing one can
+        never hide how much is waiting under another. The default is
+        whichever has the most, because that is the pile worth starting on.
+    */
+    const seriesCounts = opened.repository.reviewCountsBySeries()
+    const requested = url === undefined ? null : url.searchParams.get('coin')
+    const chosen = seriesCounts.some(c => c.series === requested)
+        ? requested
+        : (seriesCounts.length > 0 ? seriesCounts[0].series : null)
+
+    const seriesTabs = seriesCounts.length < 2 ? '' : tabs('/review', 'coin',
+        seriesCounts.map(c => {
+            const pack = c.series === '?' ? null : SERIES.get(c.series)
+            return {
+                value: c.series,
+                label: (pack ? pack.label : 'Not recognised') + ' (' + c.n + ')',
+                /*  No default tab: a bare /review shows the biggest pile,
+                    and the tab for it is the one marked current, so the URL
+                    and the page always agree about what you are looking at. */
+                isDefault: false
+            }
+        }), chosen, {})
+
+    const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1, chosen)
     const truncated = fetched.length > QUEUE_LIMIT
     const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
     const verdictCell = newPlausibilityCell(opened.spotAt(new Date().toISOString()))
@@ -817,14 +857,17 @@ function reviewPage (opened, url) {
 <h1>Needs review</h1>
 <p class="sub">Listings the classifier would not price without a human decision. Every statistic
 in this tool is computed over what survives this filter, so it is shown rather than hidden.</p>
+${seriesTabs}
 ${applied}
 
 <div class="card">
   <p class="thin" style="margin:0">Click a photo to see it large. Mark one and it is settled for
   good &mdash; the decision is stored against the coin, survives a relist, outranks every rule in
-  the classifier, and the collector applies it to listings it finds tomorrow. Say
-  <em>not a sovereign</em> and you are then offered a rule that generalises it, with the count of
-  what it would catch and what it would break.
+  the classifier, and the collector applies it to listings it finds tomorrow. Reject one and you
+  are then offered a rule that generalises it, with the count of what it would catch and what it
+  would break &mdash; scoped to this coin, so a good reason to reject a sovereign can never empty
+  another series.${seriesTabs === '' ? '' : ' One coin at a time: the tabs above carry the size of ' +
+  'every queue, so working through one never hides another.'}
   ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
 </div>
 

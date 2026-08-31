@@ -360,10 +360,26 @@ exports.newRepository = function (db, options) {
             `).all(minLevel === undefined ? 0 : minLevel, maxLevel === undefined ? 4 : maxLevel)
         },
 
-        reviewQueue (limit) {
+        /*  How many are waiting, per coin. Shown on the tabs so choosing
+            one series to work through never hides the size of another. */
+        reviewCountsBySeries () {
+            return db.prepare(`
+                SELECT COALESCE(l.series, '?') AS series, COUNT(*) AS n
+                FROM review_queue r
+                JOIN listing l ON l.browse_id = r.browse_id
+                WHERE r.resolved_at IS NULL
+                GROUP BY COALESCE(l.series, '?')
+                ORDER BY n DESC
+            `).all()
+        },
+
+        /*  seriesId narrows the queue to one coin. '?' means the listings no
+            series recognised, which are their own kind of work: not a coin
+            filed wrongly, but a coin the tool cannot place at all. */
+        reviewQueue (limit, seriesId) {
             return db.prepare(`
                 SELECT r.browse_id AS browseId, r.reason, r.best_guess AS bestGuess,
-                       r.confidence, l.title, l.item_web_url AS itemWebUrl,
+                       r.confidence, l.title, l.item_web_url AS itemWebUrl, l.series,
                        /*  The stable identity of the coin, which is what a
                            human decision is recorded against - browse_id
                            changes when a seller relists and a verdict
@@ -409,12 +425,15 @@ exports.newRepository = function (db, options) {
                     JOIN review_queue rq ON rq.browse_id = s.browse_id AND rq.resolved_at IS NULL
                 ) s ON s.browse_id = r.browse_id AND s.rn = 1
                 WHERE r.resolved_at IS NULL
+                  AND (?2 IS NULL
+                       OR (?2 = '?' AND l.series IS NULL)
+                       OR l.series = ?2)
                 /*  Impact before recency. A listing still counted in the
                     market statistics is the only kind that can be making a
                     number wrong, and newest-first buried those among 1,536
                     already-dropped rows shown for auditability. */
-                ORDER BY priced DESC, r.queued_at DESC LIMIT ?
-            `).all(limit || 50)
+                ORDER BY priced DESC, r.queued_at DESC LIMIT ?1
+            `).all(limit || 50, seriesId === undefined ? null : seriesId)
         },
 
         /* ------------------------------------------------- human labels */
@@ -477,6 +496,14 @@ exports.newRepository = function (db, options) {
             against the last sweep, an outage freezes the anchor and nothing
             becomes stale that was not already.
         */
+        /*  Which series claimed this listing. NULL means nothing did, which
+            is a fact worth storing rather than a gap to fill in - it is how
+            the review queue finds the coins the tool cannot place. */
+        setListingSeries (browseId, seriesId) {
+            return db.prepare('UPDATE listing SET series = ? WHERE browse_id = ?')
+                .run(seriesId === undefined ? null : seriesId, browseId)
+        },
+
         lastSweepAt () {
             const row = db.prepare(
                 'SELECT MAX(last_seen) AS at FROM listing WHERE end_time IS NULL'

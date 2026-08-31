@@ -104,6 +104,12 @@ nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
     that is rebuilt on every request. */
 /*  The scope choice on a learned rule. Deliberately plain and adjacent to
     the button, because it changes what the button does. */
+/*  A thumbnail inside a table cell. The queue's own .q-shot is sized for a
+    flex row; in a table it needs a width of its own or the column stretches
+    to whatever eBay sent. */
+.shot-cell { width:52px; padding-right:0 }
+.shot-cell .q-shot { width:44px; height:44px }
+.shot-cell .q-shot img { width:44px; height:44px; object-fit:cover; border-radius:6px }
 .scope { display:inline-flex; gap:6px; align-items:center; font-size:12.5px;
   color:var(--ink-2); cursor:pointer; margin-right:4px }
 .scope input { margin:0 }

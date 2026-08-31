@@ -4,6 +4,7 @@ const CLASSIFY = require('./classify.js').classify
 const EXCLUSIONS = require('./exclusions.js')
 const INSTRUMENTS = require('./instruments.js')
 const LEARNED = require('./learned.js')
+const SERIES = require('./series/index.js')
 
 /*
     Re-runs classification over stored listings.
@@ -48,7 +49,25 @@ function classifyOne (listing, label, learned, repository, counts, allowedCountr
         }
     }
 
-    const result = CLASSIFY({ title: listing.title }, { label, learned })
+    /*
+        Which coin is this?
+
+        Asked of the packs, exactly as discovery asks - and with no hint at
+        all, because a stored listing has no memory of which search returned
+        it. That asymmetry is why the hint may never DECIDE on the discovery
+        side either: if it could, a rebuild would disagree with the ingest
+        that created the row, and the disagreement would be silent.
+    */
+    const claim = SERIES.recognise(listing.title)
+    if (claim.pack === null) {
+        repository.setListingSeries(listing.browseId, null)
+        repository.queueForReview(listing.browseId, claim.reasons.join('; '), null, 0)
+        counts.reviewed++
+        return
+    }
+    repository.setListingSeries(listing.browseId, claim.pack.id)
+
+    const result = CLASSIFY({ title: listing.title }, { label, learned, series: claim.pack.id })
     if (result.labelled) { counts.labelled++ }
 
     if (result.excluded !== null) {

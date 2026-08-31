@@ -22,12 +22,33 @@ exports.load = function (explicitPath) {
     }
 
     const settings = JSON.parse(stripComments(FS.readFileSync(settingsPath, 'utf8')))
-    const coins = JSON.parse(stripComments(
-        FS.readFileSync(PATH.join(ROOT, 'config', 'coins.sovereign.json'), 'utf8')
-    ))
+    /*
+        Which coins to go looking for.
+
+        Named explicitly in settings, never discovered by scanning config/ -
+        a stray file must not be able to start a sweep, and turning a series
+        on should be a decision somebody made on a date rather than a side
+        effect of adding a file. Absent, it means sovereigns, which is what
+        every installation meant before there was a choice.
+    */
+    const names = Array.isArray(settings.series) && settings.series.length > 0
+        ? settings.series
+        : ['sovereign']
+
+    settings.seriesConfigs = names.map(name => {
+        const coins = JSON.parse(stripComments(
+            FS.readFileSync(PATH.join(ROOT, 'config', 'coins.' + name + '.json'), 'utf8')
+        ))
+        if (typeof coins.seriesId !== 'string') {
+            throw new Error('config/coins.' + name + '.json has no seriesId')
+        }
+        return { name, id: coins.seriesId, coins }
+    })
 
     settings.databasePath = PATH.resolve(PATH.dirname(settingsPath), settings.database)
-    settings.coins = coins
+    /*  The first series' config, for the call sites written when there was
+        only ever one. */
+    settings.coins = settings.seriesConfigs[0].coins
     return settings
 }
 

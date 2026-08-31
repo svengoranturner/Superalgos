@@ -159,3 +159,81 @@ test('the plausibility verdict fits the coin it is describing', () => {
             'metal-specific wording in: ' + v.label)
     }
 })
+
+/*
+    The rule that makes two series safe to collect at once.
+
+    A search for "morgan silver dollar" returns sovereigns, Britannias and
+    fishing reels alongside Morgans, and a search for "gold sovereign"
+    returns the occasional dollar. If the SEARCH decided the series, every
+    one of those would be filed as whatever found it - and reclassify could
+    never reproduce the decision, because a stored listing has no memory of
+    which query returned it.
+*/
+test('the search that found a coin never decides what it is', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const { newRepository } = require('../src/store/repo.js')
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    const rows = [
+        ['v1|a|0', '1889 CC Morgan Silver Dollar', 'US.MORGAN'],
+        ['v1|b|0', '1912 George V Gold Sovereign', 'GB.SOV'],
+        /*  Nothing claims a fishing reel, and NULL is the right answer -
+            not a guess at whichever series happened to be sweeping. */
+        ['v1|c|0', 'Hardy Perfect fishing reel 3 inch', null]
+    ]
+    for (const [browseId, title] of rows) {
+        repository.saveListing({ browseId, legacyId: browseId, title, buyingOptions: 'AUCTION', endTime: now }, now)
+        repository.saveSnapshot(browseId, { price: 100, shipping: 0, observedAt: now })
+    }
+
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+
+    const seriesOf = (browseId) =>
+        db.prepare('SELECT series FROM listing WHERE browse_id = ?').get(browseId).series
+    for (const [browseId, title, expected] of rows) {
+        assert.strictEqual(seriesOf(browseId), expected, title)
+    }
+
+    /*  And the one nothing recognised is in the queue rather than silently
+        absent - a coin the tool cannot place is exactly what a human is for. */
+    const queued = repository.reviewQueue(50, '?').map(r => r.browseId)
+    assert.ok(queued.includes('v1|c|0'), 'the unplaceable lot must be asked about')
+    db.close()
+})
+
+/*  The owner's constraint: one coin at a time. A queue that alternates
+    sovereigns and silver dollars cannot be worked in one pass, because the
+    judgements are different judgements. */
+test('the review queue can be worked one coin at a time', () => {
+    const { newDatabase } = require('../src/store/db.js')
+    const { newRepository } = require('../src/store/repo.js')
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    const add = (id, title, series) => {
+        repository.saveListing({ browseId: id, legacyId: id, title, buyingOptions: 'AUCTION', endTime: now }, now)
+        repository.setListingSeries(id, series)
+        repository.queueForReview(id, 'needs a look', null, 0)
+    }
+    add('s1', 'Sovereign one', 'GB.SOV')
+    add('s2', 'Sovereign two', 'GB.SOV')
+    add('m1', 'Morgan one', 'US.MORGAN')
+    add('x1', 'Something else', null)
+
+    assert.strictEqual(repository.reviewQueue(50).length, 4, 'unfiltered is still everything')
+    assert.deepStrictEqual(repository.reviewQueue(50, 'GB.SOV').map(r => r.browseId).sort(), ['s1', 's2'])
+    assert.deepStrictEqual(repository.reviewQueue(50, 'US.MORGAN').map(r => r.browseId), ['m1'])
+    assert.deepStrictEqual(repository.reviewQueue(50, '?').map(r => r.browseId), ['x1'])
+
+    /*  The counts are what stop a chosen tab hiding the others. */
+    const counts = repository.reviewCountsBySeries()
+    assert.strictEqual(counts.find(c => c.series === 'GB.SOV').n, 2)
+    assert.strictEqual(counts.find(c => c.series === 'US.MORGAN').n, 1)
+    assert.strictEqual(counts.find(c => c.series === '?').n, 1)
+    db.close()
+})

@@ -360,7 +360,8 @@ COMMANDS.run = {
                 store: m.store,
                 source: SPOT.newSpotSource(Object.assign({}, settings.spot, { metalValue: m.feed }))
             })),
-            coins: settings.coins
+            coins: settings.coins,
+            seriesConfigs: settings.seriesConfigs
         }, settings.collector)
 
         process.on('SIGINT', () => { scheduler.stop(); db.close(); process.exit(0) })

@@ -4,6 +4,7 @@ const BROWSE = require('../ebay/browse.js')
 const { classify } = require('../catalogue/classify.js')
 const INSTRUMENTS = require('../catalogue/instruments.js')
 const EXCLUSIONS = require('../catalogue/exclusions.js')
+const SERIES = require('../catalogue/series/index.js')
 const LEARNED = require('../catalogue/learned.js')
 
 /*
@@ -75,7 +76,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
         return queries
     }
 
-    async function ingest (items, seenAt) {
+    async function ingest (items, seenAt, seriesId) {
         let created = 0
         let reviewed = 0
 
@@ -110,7 +111,30 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 }
             }
 
-            const result = classify({ title: item.title }, { label, learned })
+            /*
+                Which coin is this?
+
+                Asked of the PACKS, never of the search that found it. The
+                partition is passed only as a hint, and a hint alone never
+                decides - otherwise a Peace dollar turned up by the Morgan
+                sweep becomes a Morgan and a sovereign turned up by it
+                becomes one too, and reclassify could never reproduce either
+                because a stored listing has no memory of which query
+                returned it.
+
+                Nothing claims it, or two packs both do: that is a question
+                for a human, not a coin flip.
+            */
+            const claim = SERIES.recognise(item.title, { hint: seriesId })
+            if (claim.pack === null) {
+                repository.setListingSeries(item.browseId, null)
+                repository.queueForReview(item.browseId, claim.reasons.join('; '), null, 0)
+                reviewed++
+                continue
+            }
+            repository.setListingSeries(item.browseId, claim.pack.id)
+
+            const result = classify({ title: item.title }, { label, learned, series: claim.pack.id })
 
             if (result.excluded !== null) {
                 /* Excluded lots are still stored - the dashboard shows what
@@ -146,8 +170,10 @@ exports.newDiscoverer = function (browseClient, repository, options) {
         buildQueries,
         ingest,
 
-        /* A full sweep across every partition. */
-        async sweep (coins) {
+        /*  A full sweep across every partition of one series' searches. The
+            series id rides through to ingest as a HINT - what a partition
+            was looking for, never what it found. */
+        async sweep (coins, seriesId) {
             const seenAt = new Date().toISOString()
             const queries = buildQueries(coins)
             const report = { queries: queries.length, items: 0, classified: 0, review: 0, truncated: [], errors: [] }
@@ -158,7 +184,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                     report.items += result.items.length
                     if (result.truncated) { report.truncated.push(entry.name) }
 
-                    const ingested = await ingest(result.items, seenAt)
+                    const ingested = await ingest(result.items, seenAt, seriesId)
                     report.classified += ingested.created
                     report.review += ingested.reviewed
                 } catch (err) {
@@ -175,7 +201,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
             price is actually decided, and coarse hourly snapshots would
             miss the entire move.
         */
-        async endingSoon (coins) {
+        async endingSoon (coins, seriesId) {
             const seenAt = new Date().toISOString()
             const report = { items: 0, errors: [] }
 
@@ -192,7 +218,7 @@ exports.newDiscoverer = function (browseClient, repository, options) {
 
                     const items = (payload.itemSummaries || []).map(BROWSE.normaliseSummary)
                     report.items += items.length
-                    await ingest(items, seenAt)
+                    await ingest(items, seenAt, seriesId)
                 } catch (err) {
                     if (err.code === 'BUDGET_EXHAUSTED') { break }
                     report.errors.push(partition.name + ': ' + err.message)

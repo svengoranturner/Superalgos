@@ -1,0 +1,39 @@
+{
+  "seriesId": "US.MORGAN",
+  "marketplace": "EBAY_GB",
+  "currency": "GBP",
+  "_comment": [
+    "Search partitions for Morgan and Peace silver dollars.",
+    "",
+    "Deliberately leaner than the sovereign set. Four partitions against four",
+    "price bands is sixteen searches an hour; the sovereign side runs twenty.",
+    "That roughly doubles the Browse spend, which at ~900 calls a day against",
+    "a 5,000 limit is affordable - but it is the reason the bands are four",
+    "rather than the sovereign's five.",
+    "",
+    "Both designs get their own partition rather than one search for 'silver",
+    "dollar'. The broad phrase pulls in Eisenhowers, Seated Liberties, Trade",
+    "dollars and every modern commemorative, all of which this series would",
+    "then have to reject one at a time - and each rejection costs a stored",
+    "listing and a row in the review queue. Naming the design is the cheapest",
+    "filter available and it happens before eBay bills for the call.",
+    "",
+    "categoryIds stays EMPTY for the same reason it does on the sovereign",
+    "side: every allow-list built there proved too narrow, and filtering on",
+    "the category ANCESTRY of what comes back is both safer and visible."
+  ],
+  "categoryIds": [],
+  "partitions": [
+    { "name": "morgan-auction", "q": "morgan silver dollar", "buyingOptions": ["AUCTION"] },
+    { "name": "morgan-bin",     "q": "morgan silver dollar", "buyingOptions": ["FIXED_PRICE"] },
+    { "name": "peace-auction",  "q": "peace silver dollar",  "buyingOptions": ["AUCTION"] },
+    { "name": "peace-bin",      "q": "peace silver dollar",  "buyingOptions": ["FIXED_PRICE"] }
+  ],
+  "_bands": [
+    "A common circulated dollar runs GBP 25-60, a slabbed one GBP 60-500, and",
+    "the key dates go from there into four figures. The bottom band starts at",
+    "10 rather than 0 because below it is almost entirely replicas and",
+    "novelty pieces, which cost a call to fetch and a click to reject."
+  ],
+  "priceBands": [[10, 50], [50, 150], [150, 600], [600, 10000]]
+}

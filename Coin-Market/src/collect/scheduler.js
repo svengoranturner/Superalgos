@@ -24,6 +24,12 @@ exports.newScheduler = function (parts, options) {
     const spotMetals = given && given.length > 0
         ? given
         : [{ store: 'XAU', source: spotSource }]
+
+    /*  Every series to collect for. A caller that passed only the old single
+        `coins` object still works: it becomes the one series it always was. */
+    const seriesList = parts.seriesConfigs && parts.seriesConfigs.length > 0
+        ? parts.seriesConfigs
+        : [{ id: null, coins }]
     const config = Object.assign({
         sweepMinutes: 60,
         endingSoonMinutes: 5,
@@ -67,7 +73,22 @@ exports.newScheduler = function (parts, options) {
             })
 
             every(config.sweepMinutes, 'sweep', async () => {
-                const report = await discoverer.sweep(coins)
+                /*  One sweep per series, each with its own searches. Reported
+                    per series too: a combined total would hide a series
+                    whose queries had stopped returning anything. */
+                const report = { items: 0, classified: 0, review: 0, errors: [], truncated: [] }
+                for (const entry of seriesList) {
+                    const one = await discoverer.sweep(entry.coins, entry.id)
+                    report.items += one.items
+                    report.classified += one.classified
+                    report.review += one.review
+                    report.errors.push(...one.errors)
+                    report.truncated.push(...one.truncated)
+                    if (seriesList.length > 1) {
+                        log('sweep', entry.id + ': ' + one.items + ' seen, ' +
+                            one.classified + ' classified, ' + one.review + ' to review')
+                    }
+                }
                 log('sweep', report.items + ' listings seen, ' + report.classified + ' classified, ' +
                     report.review + ' to review' +
                     (report.truncated.length > 0
@@ -81,8 +102,14 @@ exports.newScheduler = function (parts, options) {
             })
 
             every(config.endingSoonMinutes, 'ending-soon', async () => {
-                const report = await discoverer.endingSoon(coins)
-                if (report.items > 0) { log('ending-soon', 'refreshed ' + report.items + ' closing lots') }
+                /*  Every series' closing lots, because the final hour is
+                    where an auction's price is decided whatever the coin. */
+                let refreshed = 0
+                for (const entry of seriesList) {
+                    const one = await discoverer.endingSoon(entry.coins, entry.id)
+                    refreshed += one.items
+                }
+                if (refreshed > 0) { log('ending-soon', 'refreshed ' + refreshed + ' closing lots') }
             })
 
             every(config.resolveMinutes, 'resolve', async () => {
