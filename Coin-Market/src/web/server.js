@@ -258,6 +258,7 @@ function marketPage (opened, url) {
             offerEntries.push({
                 alert,
                 level: entry.row.level,
+                key: entry.row.key,
                 name: INSTRUMENTS.displayName(entry.row.key),
                 liquidity: entry.market.liquidity
             })
@@ -270,33 +271,45 @@ function marketPage (opened, url) {
           'type has enough completed sales to say where it clears &mdash; ' +
           markets.filter(e => e.market.fairValue.sufficient).length + ' of ' + markets.length +
           ' tracked types do today &mdash; and the ask is no more than a quarter above it.</p>'
-        : '<div class="card"><div class="queue">' + offers.map(entry => {
-            const a = entry.alert
-            const days = entry.liquidity.medianDaysToSale
-            const meta = ['<span class="badge">' + escapeHtml(entry.name) + '</span>',
-                'asking ' + gbp(a.currentTotal) + ' all-in',
-                pct(a.gap) + ' over your ceiling of ' + gbp(a.bidCeiling)]
-            /*  How long this type sits before it sells. A lot that has been
-                on the shelf for months is a seller who will listen. */
-            if (Number.isFinite(days)) {
-                meta.push('this type takes ' + days.toFixed(0) + ' days to sell')
-            }
-            if (entry.liquidity.sellThroughRate !== null) {
-                meta.push(pct(entry.liquidity.sellThroughRate, 0) + ' of them sell at all')
-            }
-            return '<div class="q"><span class="pick-spacer"></span>' +
-                shot(a.imageUrl, escapeHtml(entry.name)) +
-                '<div class="q-main"><div class="q-title">' +
-                '<a href="' + escapeHtml(a.url) + '" target="_blank" rel="noopener">' +
-                escapeHtml(a.title) + '</a></div>' +
-                '<div class="q-meta">' + meta.join('<span aria-hidden="true">·</span>') + '</div></div>' +
-                '<div class="q-side"><div class="q-price"><span class="mono">' +
-                gbp(a.suggestedOffer) + '</span>' +
-                '<span class="badge good" title="Your bid ceiling less postage, with eBay' +
-                String.fromCharCode(39) + 's buyer protection fee taken out - so this is the number to ' +
-                'type into the offer box, not what it will cost you.">offer this, ' +
-                pct(a.discount) + ' under the ask</span></div></div></div>'
-        }).join('') + '</div></div>'
+        : '<form method="post" action="/apply">' +
+          '<input type="hidden" name="back" value="/">' +
+          '<div class="bulkbar">' +
+          '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
+          'Not a sovereign &mdash; selected</button>' +
+          '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
+          'Genuine &mdash; selected</button>' +
+          '<span class="thin">A wrong coin here is worth more than a dismissal: it is setting ' +
+          'the clearing price these offers are measured against.</span></div>' +
+          '<div class="card"><div class="queue">' +
+          offers.map(entry => {
+              const a = entry.alert
+              /*  Shaped for queueRow so the picture, the checkbox and the
+                  verdict controls are the same ones as everywhere else -
+                  UI-02: a wrong listing is dismissed where it is noticed. */
+              const row = {
+                  legacyId: a.legacyId, title: a.title, itemWebUrl: a.url,
+                  imageUrl: a.imageUrl, price: a.askPrice, shipping: a.shipping,
+                  buyingOptions: a.buyingOptions, instrumentKey: entry.key,
+                  priced: 1, back: '/'
+              }
+              const days = entry.liquidity.medianDaysToSale
+              const evidence = []
+              /*  How long this type sits before it sells: a lot that has been
+                  on the shelf for months is a seller who will listen. */
+              if (Number.isFinite(days)) { evidence.push('typically ' + days.toFixed(0) + ' days to sell') }
+              if (entry.liquidity.sellThroughRate !== null) {
+                  evidence.push(pct(entry.liquidity.sellThroughRate, 0) + ' of them sell at all')
+              }
+              const cell = '<span class="badge good" title="Your ceiling for a ' +
+                  escapeHtml(entry.name) + ' less postage, with the buyer protection fee eBay ' +
+                  'adds on top already taken out - so this is the number to type into the offer ' +
+                  'box. Asking ' + gbp(a.currentTotal) + ' all-in against a ceiling of ' +
+                  gbp(a.bidCeiling) + '.' + (evidence.length ? ' ' + evidence.join('; ') + '.' : '') +
+                  '">offer ' + gbp(a.suggestedOffer) + '</span> ' +
+                  '<span class="thin mono">' + pct(a.discount) + ' under ask</span>'
+              return queueRow(row, cell)
+          }).join('') +
+          '</div></div></form>'
 
     const opportunityVerdict = newPlausibilityCell(spotForOpportunities)
     const opportunityHtml = shown.length === 0

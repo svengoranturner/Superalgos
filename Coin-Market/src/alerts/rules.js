@@ -132,6 +132,8 @@ exports.evaluate = function (view, curve, options) {
             bidCeiling: ceiling,
             gap,
             askPrice: listing.price,
+            shipping: listing.shipping,
+            buyingOptions: listing.buyingOptions,
             askPremium: listing.askPremium,
             suggestedOffer,
             discount: 1 - (suggestedOffer / listing.price),
