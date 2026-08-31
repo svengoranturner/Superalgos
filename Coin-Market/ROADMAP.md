@@ -24,7 +24,12 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,617 listings**, **26 completed sales**, **179 coins judged by hand**, **4 learned
-rules**, **201 tests green**. Browse spend 732 of 5,000 today; Trading 6.
+rules**, **210 tests green**.
+
+**The tool was quoting bid ceilings nobody could act on.** Fair value is fee-inclusive; the bid you
+type into eBay is not, and nothing took the fee back out. Fixed in MKT-10, and it is what made
+MKT-11 buildable. The next wave is structural: a second coin series, staged behind a golden fixture
+(OPS-04) so the sovereign definition cannot move without saying so.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
@@ -48,6 +53,7 @@ and it is deliberately parked — see the row.
 | COL-04 | Keep `itemCreationDate` as the listing start date | Done | S | | eBay sends it on every summary and it was discarded, so `start_time` was NULL on all 5,516 rows — which silently disabled `medianDaysToSale`. Backfills on the conflict path too, or only new listings would ever have got one |
 | COL-05 | Capture item location, and filter at the query | Done | S | | `itemLocationCountry` on the search makes it genuinely cheaper — a Browse call returns 200 listings, so a third fewer results is a third fewer calls |
 | COL-06 | Refresh cadence: sweep 60m, ending-soon 5m, resolve 30m | Done | S | | Measured: 10 new listings an hour, 5,163 of 5,509 refreshed within the hour, 286 closing lots watched every 5 minutes |
+| COL-08 | Price silver against silver | Next | M | | The upstream feed already carries Ag, Au, Pd and Pt - 1,004 ticks each - and `spot`'s primary key is already `(observed_at, metal)`, so there is no migration. Only the mirror is gold-only: four `'XAU'` literals and a `spotAt(whenIso)` with no metal parameter. A Morgan priced against gold is a ~100x error that reads as an enormous opportunity |
 | COL-07 | Back the Pi database up off-site | Later | S | | Local backups only. The SD card is the likeliest thing here to die |
 
 ## MKT — what the numbers mean
@@ -62,6 +68,8 @@ and it is deliberately parked — see the row.
 | MKT-06 | Report how long a listing sits before it sells | Next | S | COL-04 backfill | `medianDaysToSale` has never worked. This is the Buy-It-Now question that costs no API calls, and it may make COL-01 unnecessary |
 | MKT-07 | Warn when one seller sets a coin type's asking median | Later | S | | Half Sovereign · Victoria Young Head asks 133% and one seller holds 83 of its 165 listings. A real number, but not a market |
 | MKT-08 | More completed sales | Later | L | time | 26 sales, about one a day. Not code — the note is here so the thinness stays visible |
+| MKT-10 | Quote the bid ceiling without the fee eBay adds on top | Done | S | | Fair value is fitted from `totalCost`, which charges the buyer fee, so a ceiling built from one is an all-in figure - but eBay levies the fee ON TOP of a bid. Every "Bid up to", max bid and suggested offer was 2.4% high on a GBP 2,000 lot and 5.6% on a GBP 50 one. `priceForCost()` is the inverse; the three live ceilings each dropped about GBP 23 |
+| MKT-11 | Buy-It-Now lots whose seller will take an offer | Done | S | MKT-10 | A Best Offer lot asks a median **33.0pp** over clearing against 31.8pp for a rigid one - the button signals willingness to haggle, not a keener price, so a rule waiting for the ask to fall below the ceiling never fires. Fires on the gap instead, capped at a quarter over. 87 in reach today, of 2,600 live Best Offer lots |
 | MKT-09 | Auction alerts fire only inside the last 120 minutes | Later | S | MKT-08 | Which is why none has ever fired. Widening it needs the uplift curve to know the 3-day and long buckets, and both are at zero auctions |
 
 ## CLS — what counts as a sovereign
@@ -76,6 +84,8 @@ and it is deliberately parked — see the row.
 | CLS-06 | Novelty copies and pick-your-coin listings | Done | S | | "Gold-Coloured Sovereign Style Coins (10pcs)" and "CHOOSE YOUR COIN" both reached the live opportunities panel. 20 variation listings caught |
 | CLS-07 | Let a multi-coin lot be admitted at its own gold | Done | M | | The lot size rides on the assignment, not the instrument — writing it to the shared instrument row would have redefined the spot value for every coin filed under the same key |
 | CLS-08 | Screen listings by country, on by default | Rejected | — | | **Cost 1,268 genuine sovereigns in one pass**, 744 of them Australian — Sydney, Melbourne and Perth mint coins are British sovereigns and the scarcest part of the series. Now opt-in, with the cost of narrowing shown beside each country |
+| CLS-10 | Series packs, so a second coin is not a mess | Next | L | OPS-04 | `GB.SOV` is a dotted literal at `instruments.js:62`, 8 of 13 exclusion rules carry sovereign text, and `exclusions.js:307-313` returns NOT_GOLD for any silver composition - one line that excludes every silver coin. Morgan and Peace dollars first: same metal, weight and fineness, and 1921 struck in both designs, which the existing portrait machinery already models |
+| CLS-11 | Labels and rules scoped to a series | Next | M | CLS-10 | `learned.js` is binary, so it cannot say "this is a Britannia, not a sovereign". Worse, an unscoped rule on the word `britannia` would silently empty the Britannia pack the day it lands - accepted today for good reasons, discovered months later |
 | CLS-09 | Read the grade from the photograph | Someday | L | | The thumbnails are more instructive than the titles. Whether that is automatable here is an open question, not a plan |
 
 ## UI — the dashboard
@@ -91,7 +101,9 @@ and it is deliberately parked — see the row.
 | UI-07 | Reach the listings behind any market number | Done | M | | 2,740 of 3,447 live priced listings had no review-queue row — they classified confidently and wrongly, so this page is the only route to them |
 | UI-08 | Every column carries its definition | Done | S | | Several are not what they look like: Asks is fixed-price only, Live counts auctions too, Bids excludes auctions that got none |
 | UI-09 | Say "spot", never "melt" | Done | S | | Melt in the UK is scrap, and scrap pays **under** spot. The tool measures gold content at spot, so the word was wrong |
-| UI-10 | A watchlist of coins you are hunting | Someday | M | | The tool tells you what the market is doing; it does not yet know what you want |
+| UI-10 | A watchlist of coins you are hunting | Next | M | | The tool tells you what the market is doing; it does not yet know what you want. Ships as two kinds - a specific coin type, and a coin type under a price - because collection gaps need mintmark-level holdings and MetalHead does not record a mintmark |
+| UI-11 | Live auctions ending soonest first | Done | S | | The % of spot badge already says what a lot is worth; the ordering should say how long you have to act. `liveAuctions` had no test at all, so the ordering it now guarantees was unpinned |
+| UI-12 | Group the market page by series, and cap per series | Next | M | CLS-10 | `instruments(0,3)` is ordered by listing count and sliced to 40 GLOBALLY. 5,617 sovereign listings against a new Morgan corpus means Morgan falls off the bottom and never appears - not clutter, invisibility |
 
 ## OPS — repo, deploy, docs
 
@@ -99,4 +111,6 @@ and it is deliberately parked — see the row.
 | --- | --- | --- | --- | --- | --- |
 | OPS-01 | This board, generated from one source | Done | S | | `scripts/roadmap.py` reads `ROADMAP.md` and writes `ROADMAP.html`, so the board and the file cannot drift |
 | OPS-02 | Every bulk write inside one transaction | Done | S | | Unwrapped, the Pi fsyncs per row: a label click took over two minutes and timed out. In a transaction the full rebuild is 3.9s and a single verdict is 56ms |
+| OPS-04 | A golden fixture of every instrument key | Now | S | | The safety net the series work needs before it starts. Every `(key, level, display_name, metal, fine_oz)` plus the titles behind them, so "did I just silently change what a sovereign is?" is answerable in 200ms rather than weeks later |
+| OPS-05 | Drop a series without losing anything | Next | S | CLS-10 | Deletes instruments and assignments; never touches listings, snapshots, outcomes or labels, which cost API calls that cannot be re-spent or human time. So a drop is reversible: re-add the pack, reclassify, and every lot comes back |
 | OPS-03 | Never rank every snapshot to use one instrument's | Done | S | | `activeListings` cost 435ms per call, once per coin type — the market page took **19 seconds** and was getting worse with every sweep. Scoped first, it is 1.4s |
