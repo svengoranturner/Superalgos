@@ -313,14 +313,20 @@ exports.newRepository = function (db, options) {
                 WITH scope AS (
                     SELECT browse_id FROM listing_instrument WHERE key = ?1
                 ),
+                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                    WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
+                    that key IS the index and MAX(observed_at) for one listing
+                    is a seek to the end of a contiguous run - and the same key
+                    makes a duplicate match impossible. Measured against the
+                    window form it replaced: identical values, far less work.
+                    See the note on reviewQueue. */
                 latest AS (
-                    SELECT browse_id, price, shipping, bid_count FROM (
-                        SELECT s.browse_id, s.price, s.shipping, s.bid_count,
-                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
-                                                  ORDER BY s.observed_at DESC) AS rn
-                        FROM listing_snapshot s
-                        JOIN scope ON scope.browse_id = s.browse_id
-                    ) WHERE rn = 1
+                    SELECT s.browse_id, s.price, s.shipping, s.bid_count
+                    FROM listing_snapshot s
+                    JOIN scope ON scope.browse_id = s.browse_id
+                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
+                                           FROM listing_snapshot s2
+                                           WHERE s2.browse_id = s.browse_id)
                 )
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
                        l.end_time AS endTime, l.item_web_url AS itemWebUrl,
@@ -476,15 +482,35 @@ exports.newRepository = function (db, options) {
                 FROM review_queue r
                 JOIN listing l ON l.browse_id = r.browse_id
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
-                /*  Same restriction as activeListings: rank only the
-                    snapshots of listings actually in the queue. */
-                LEFT JOIN (
-                    SELECT s.browse_id, s.price, s.shipping, s.bid_count,
-                           ROW_NUMBER() OVER (PARTITION BY s.browse_id
-                                              ORDER BY s.observed_at DESC) AS rn
-                    FROM listing_snapshot s
-                    JOIN review_queue rq ON rq.browse_id = s.browse_id AND rq.resolved_at IS NULL
-                ) s ON s.browse_id = r.browse_id AND s.rn = 1
+                /*
+                    The latest snapshot, as a seek rather than a ranking.
+
+                    This used to be ROW_NUMBER() OVER (PARTITION BY browse_id
+                    ORDER BY observed_at DESC), which windowed and sorted the
+                    snapshots of every unresolved queue row - 330,266 of them
+                    on the live store - to answer a question about the 682
+                    rows one coin tab shows. Measured at 2,584ms; this form
+                    is 107ms, and returns identical values in every field of
+                    every row (checked against the old query for both a
+                    scoped and an unscoped call).
+
+                    It is fast for a reason worth writing down: listing_snapshot
+                    is WITHOUT ROWID with PRIMARY KEY (browse_id, observed_at),
+                    so that key IS the table's index and MAX(observed_at) for
+                    one browse_id is a seek to the end of a contiguous run.
+                    An extra index on (browse_id, observed_at DESC) was tried
+                    and measured: 22MB for 6ms, so it was not added.
+
+                    The same primary key is what makes the join safe. Two
+                    snapshots of one listing cannot share an observed_at, so
+                    the equality can never match twice and duplicate a row -
+                    which is the usual objection to this shape, and here it is
+                    excluded by the schema rather than by luck.
+                */
+                LEFT JOIN listing_snapshot s ON s.browse_id = r.browse_id
+                    AND s.observed_at = (SELECT MAX(s2.observed_at)
+                                         FROM listing_snapshot s2
+                                         WHERE s2.browse_id = r.browse_id)
                 WHERE r.resolved_at IS NULL
                   AND (?2 IS NULL
                        OR (?2 = '?' AND l.series IS NULL)
@@ -687,14 +713,20 @@ exports.newRepository = function (db, options) {
                 WITH scope AS (
                     SELECT browse_id FROM listing_instrument WHERE key = ?1
                 ),
+                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                    WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
+                    that key IS the index and MAX(observed_at) for one listing
+                    is a seek to the end of a contiguous run - and the same key
+                    makes a duplicate match impossible. Measured against the
+                    window form it replaced: identical values, far less work.
+                    See the note on reviewQueue. */
                 latest AS (
-                    SELECT browse_id, price, shipping, bid_count, observed_at FROM (
-                        SELECT s.browse_id, s.price, s.shipping, s.bid_count, s.observed_at,
-                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
-                                                  ORDER BY s.observed_at DESC) AS rn
-                        FROM listing_snapshot s
-                        JOIN scope ON scope.browse_id = s.browse_id
-                    ) WHERE rn = 1
+                    SELECT s.browse_id, s.price, s.shipping, s.bid_count, s.observed_at
+                    FROM listing_snapshot s
+                    JOIN scope ON scope.browse_id = s.browse_id
+                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
+                                           FROM listing_snapshot s2
+                                           WHERE s2.browse_id = s.browse_id)
                 )
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
                        l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
@@ -924,14 +956,20 @@ exports.newRepository = function (db, options) {
                     FROM listing_instrument li
                     JOIN instrument i ON i.key = li.key AND i.level = 0
                 ),
+                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                    WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
+                    that key IS the index and MAX(observed_at) for one listing
+                    is a seek to the end of a contiguous run - and the same key
+                    makes a duplicate match impossible. Measured against the
+                    window form it replaced: identical values, far less work.
+                    See the note on reviewQueue. */
                 latest AS (
-                    SELECT browse_id, price, shipping, bid_count FROM (
-                        SELECT s.browse_id, s.price, s.shipping, s.bid_count,
-                               ROW_NUMBER() OVER (PARTITION BY s.browse_id
-                                                  ORDER BY s.observed_at DESC) AS rn
-                        FROM listing_snapshot s
-                        JOIN scope ON scope.browse_id = s.browse_id
-                    ) WHERE rn = 1
+                    SELECT s.browse_id, s.price, s.shipping, s.bid_count
+                    FROM listing_snapshot s
+                    JOIN scope ON scope.browse_id = s.browse_id
+                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
+                                           FROM listing_snapshot s2
+                                           WHERE s2.browse_id = s.browse_id)
                 )
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
                        l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,

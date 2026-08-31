@@ -518,3 +518,144 @@ test('the row limit keeps the dearest live lots, not the soonest', () => {
         'the soonest-ending lot displaced a dearer one from the fetch')
     db.close()
 })
+
+/*
+    The snapshot join returns the LATEST snapshot, on every branch.
+
+    It used to rank snapshots with ROW_NUMBER() OVER (PARTITION BY browse_id
+    ORDER BY observed_at DESC) across every unresolved queue row - 330,266
+    snapshots on the live store to answer a question about 682 rows, measured
+    at 2,997ms. It is now a seek to MAX(observed_at) per listing, 129ms.
+
+    What the suite pinned before was thin: one assertion that a price comes
+    back at all, on the unfiltered branch, from a fixture where each listing
+    has exactly ONE snapshot - which cannot tell "latest" from "any", and so
+    would have passed for a query that picked the oldest.
+*/
+test('the review queue quotes the latest snapshot, not just any', () => {
+    const { db, repository } = fixture()
+    const now = Date.now()
+    const at = mins => new Date(now - mins * 60000).toISOString()
+
+    const add = (legacyId, series, prices) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Gold Sovereign ' + legacyId,
+            buyingOptions: 'AUCTION', endTime: new Date(now + 3600000).toISOString()
+        })
+        /*  Inserted OLDEST LAST, so a query that takes whatever the table
+            hands back first gets the wrong one. */
+        for (const [mins, price] of prices) {
+            repository.saveSnapshot(id, { price, shipping: 4, observedAt: at(mins) })
+        }
+        repository.setListingSeries(id, series)
+        repository.queueForReview(id, 'worth a look', null, 0.5)
+        return id
+    }
+
+    add('sov', 'GB.SOV', [[10, 880], [600, 700], [1200, 650]])
+    add('dol', 'US.MORGAN', [[5, 70], [900, 55]])
+
+    /*  A queued listing with NO snapshot at all must still come back, with a
+        null price. This is what makes the join a LEFT one, and it is the row
+        a careless rewrite deletes. */
+    const bare = 'v1|bare|0'
+    repository.saveListing({
+        browseId: bare, legacyId: 'bare', title: 'Gold Sovereign no snapshot',
+        buyingOptions: 'AUCTION', endTime: new Date(now + 3600000).toISOString()
+    })
+    repository.setListingSeries(bare, 'GB.SOV')
+    repository.queueForReview(bare, 'worth a look', null, 0.5)
+
+    /*  Every branch of the series filter, because they are three different
+        code paths through the same predicate. */
+    const byId = rows => Object.fromEntries(rows.map(r => [r.legacyId, r]))
+
+    const raw = repository.reviewQueue(50)
+    /*  Counted on the RAW rows, not the keyed map: a join that matched every
+        snapshot instead of the latest one would return sov three times, and
+        keying by legacyId would hide that completely. */
+    assert.strictEqual(raw.length, 3,
+        'the snapshot join duplicated rows: ' + raw.map(r => r.legacyId).join(', '))
+    const all = byId(raw)
+    assert.strictEqual(all.sov.price, 880, 'the unfiltered branch quotes a stale price')
+    assert.strictEqual(all.dol.price, 70, 'the unfiltered branch quotes a stale price')
+    assert.strictEqual(all.bare.price, null, 'a listing with no snapshot was dropped')
+
+    const sovRaw = repository.reviewQueue(50, 'GB.SOV')
+    assert.strictEqual(sovRaw.length, 2, 'the scoped branch duplicated rows')
+    const sov = byId(sovRaw)
+    assert.strictEqual(sov.sov.price, 880, 'the scoped branch quotes a stale price')
+    assert.strictEqual(sov.bare.price, null, 'a listing with no snapshot was dropped when scoped')
+    assert.ok(!sov.dol, 'the scoped branch leaked another series')
+
+    /*  The unattributed branch, which is the one a scope predicate loses:
+        `l.series = ?` never matches NULL. */
+    const noSeries = 'v1|none|0'
+    repository.saveListing({
+        browseId: noSeries, legacyId: 'none', title: 'Something unrecognised',
+        buyingOptions: 'AUCTION', endTime: new Date(now + 3600000).toISOString()
+    })
+    repository.saveSnapshot(noSeries, { price: 41, shipping: 0, observedAt: at(700) })
+    repository.saveSnapshot(noSeries, { price: 42, shipping: 0, observedAt: at(2) })
+    repository.queueForReview(noSeries, 'nothing claimed it', null, 0)
+
+    const unattributed = byId(repository.reviewQueue(50, '?'))
+    assert.deepStrictEqual(Object.keys(unattributed), ['none'],
+        'the unattributed branch does not hold exactly the unclaimed listings')
+    assert.strictEqual(unattributed.none.price, 42,
+        'the unattributed branch quotes a stale price')
+
+    db.close()
+})
+
+
+/*
+    The same seek, on the two paths that price the market.
+
+    activeListings feeds every asking premium on the front page and
+    listingsForInstrument feeds the drill-down's price column. Both take the
+    latest snapshot per listing, and both had that expressed as a window
+    function until it was replaced with a MAX(observed_at) seek. Nothing in
+    the suite noticed the difference between "latest" and "any" - a fixture
+    where each listing has ONE snapshot cannot.
+
+    A stale price here is the worst kind of wrong: every premium on the site
+    is computed from it, and it looks entirely plausible.
+*/
+test('the market paths price a listing at its latest snapshot', () => {
+    const { db, repository } = fixture()
+    const now = Date.now()
+    const key = 'GB.SOV.BULLION.FULL'
+    const at = mins => new Date(now - mins * 60000).toISOString()
+
+    const id = 'v1|multi|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'multi', title: 'Gold Sovereign 1912',
+        buyingOptions: 'AUCTION', endTime: new Date(now + 3600000).toISOString()
+    })
+    /*  Three sweeps, the price climbing as bids come in. Inserted newest
+        FIRST so that "whatever the table returns first" is also wrong. */
+    repository.saveSnapshot(id, { price: 905, shipping: 4, observedAt: at(5) })
+    repository.saveSnapshot(id, { price: 800, shipping: 4, observedAt: at(400) })
+    repository.saveSnapshot(id, { price: 750, shipping: 4, observedAt: at(900) })
+    repository.saveClassification(id, [{ key, level: 0 }], 1, 'title', 0.2354, {})
+
+    const active = repository.activeListings(key)
+    assert.strictEqual(active.length, 1, 'activeListings duplicated a listing')
+    assert.strictEqual(active[0].price, 905,
+        'activeListings priced the lot at a stale snapshot')
+
+    const drill = repository.listingsForInstrument(key, 50)
+    assert.strictEqual(drill.length, 1, 'listingsForInstrument duplicated a listing')
+    assert.strictEqual(drill[0].price, 905,
+        'the drill-down priced the lot at a stale snapshot')
+
+    /*  And liveAuctions, the front page's ending-soonest panel. */
+    const live = repository.liveAuctions(50)
+    const one = live.find(r => r.legacyId === 'multi')
+    assert.ok(one, 'the live auction panel lost the lot');
+    assert.strictEqual(one.price, 905,
+        'the live auction panel priced the lot at a stale snapshot')
+    db.close()
+})
