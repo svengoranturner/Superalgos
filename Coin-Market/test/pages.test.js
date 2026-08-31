@@ -712,6 +712,21 @@ function orderingStore () {
     add('b-dear', null, 5000, false)
     add('b-cheap', null, 4000, false)
 
+    /*  One ENDED auction, judged. It lands in "Ended without selling" and
+        never in `live`, so it cannot disturb an ordering assertion - it is
+        here so the judged tile renders at all and its label can be pinned. */
+    add('a-ended', at(-4), 850, true)
+    repository.label({
+        legacyId: 'a-ended', title: 'Gold Sovereign a-ended', verdict: 'SOVEREIGN'
+    })
+    /*  With an outcome, so the bids figure has something to report - it is
+        auction-only by nature and is the statistic that must stay reachable
+        from the Everything tab. */
+    repository.saveOutcome('v1|a-ended|0', {
+        endTime: at(-4), sold: true, finalPrice: 860, shipping: 0,
+        bidCount: 7, saleType: 'AUCTION', censored: false, source: 'test'
+    })
+
     const spotAt = SPOT.newSpotLookup(db, {})
     return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}), key }
 }
@@ -803,10 +818,37 @@ test('an auctions-only view shows no Buy-It-Now statistic', async () => {
     assert.ok(asking.test(pages[all].body),
         'the Everything view lost its asking median')
 
+    /*  Everything shows the UNION. The bids figure is auction-only by
+        nature, which is a reason to label it rather than to make it
+        unreachable from the view whose whole point is to show everything. */
+    const bids = /median bids on auctions that got any/
+    assert.ok(bids.test(pages[auctions].body), 'the auction view lost its bids figure')
+    assert.ok(bids.test(pages[all].body),
+        'the Everything view cannot reach a statistic the auction view shows')
+    assert.ok(!bids.test(pages[bin].body),
+        'the Buy-It-Now view shows an auction-only statistic')
+
     /*  Each figure names the population it is drawn from, so a filtered
         count and a corpus-wide metric can sit side by side honestly. */
     assert.match(pages[bin].body, /across live Buy-It-Now lots/)
     assert.match(pages[auctions].body, /auctions actually <strong>cleared<\/strong> at/)
+
+    /*  Every FILTER-SCOPED count says which filter, including the judged
+        tile - it sits in the same hero row as two counts that do, so being
+        the one that does not is how a number gets read as corpus-wide. */
+    for (const [sale, page] of [['auction', pages[auctions]], ['bin', pages[bin]]]) {
+        const noun = sale === 'auction' ? 'at auction' : 'at Buy-It-Now'
+        for (const label of ['completed sales', 'live']) {
+            assert.ok(page.body.includes(label + ' ' + noun),
+                '"' + label + '" is not scoped to the ' + sale + ' tab')
+        }
+        assert.ok(/you have judged/.test(page.body) || sale === 'bin',
+            'the fixture no longer renders a judged tile, so its label is untested')
+        if (/you have judged/.test(page.body)) {
+            assert.ok(page.body.includes('you have judged ' + noun),
+                'the judged tile is filter-scoped but does not say so')
+        }
+    }
 
     opened.db.close()
 })
@@ -820,7 +862,8 @@ test('the drill-down says how much the default is hiding', async () => {
         fetch - opening on auctions hides most of a real market, and the
         label is the only thing that says so on every page view. */
     assert.match(body, /Buy-It-Now \(2\)/, 'the Buy-It-Now tab does not carry its count')
-    assert.match(body, /Everything \(5\)/, 'the Everything tab does not carry its count')
+    assert.match(body, /Everything \(6\)/, 'the Everything tab does not carry its count')
+    assert.match(body, /Auctions \(4\)/, 'the auction tab does not carry its count')
 
     opened.db.close()
 })
@@ -847,15 +890,242 @@ test('a review tab counts what it opens on', async () => {
 
     /*  The coin tabs used to carry an unfiltered total beside a filtered
         list. On the live store that had the unattributed tab reading 20,562
-        and opening on 1,691. */
+        and opening on 1,691.
+
+        Read from the CURRENT tab, not the first one with a number in it.
+        The strip is ordered by the filtered count and the page deliberately
+        lands on the biggest REAL series rather than the unattributed pile,
+        so the first tab and the rendered one are routinely different coins -
+        and comparing one tab's count against another tab's rows is a test
+        that passes for the wrong reason. */
     const strips = tabStrips(body)
-    const label = (strips.coinStrip || '').match(/>([^<]*\((\d+)\)[^<]*)</)
-    assert.ok(label, 'no coin tab with a count rendered')
+    const current = (strips.coinStrip || '').match(/class="tab on"[^>]*>([^<]*)</)
+    assert.ok(current, 'no coin tab is marked as the current one')
+    const advertised = Number((current[1].match(/\((\d+)\)/) || [])[1])
+    assert.ok(Number.isFinite(advertised),
+        'the current coin tab carries no count: ' + current[1])
 
     const shown = [...body.matchAll(/name="pick" value="/g)].length
-    const advertised = Number(label[2])
-    assert.ok(advertised <= shown,
-        'a coin tab advertises ' + advertised + ' but the page renders ' + shown)
+    const settled = [...body.matchAll(/pick-spacer/g)].length
+    assert.ok(advertised <= shown + settled,
+        'the current coin tab advertises ' + advertised + ' but the page renders ' +
+        shown + ' judgeable rows and ' + settled + ' already-settled ones')
 
     opened.db.close()
+})
+
+/*
+    The one ordering the row limit can lie about.
+
+    While the live section was displayed dearest-first it matched the order
+    the SQL admitted rows in, so a cap could only hide the tail of what you
+    were reading. Ending-soonest is the first ordering where the two differ:
+    the fetch still admits the DEAREST, so a cheap lot closing in minutes can
+    be missing entirely from a list whose stated promise is that the top of it
+    is what you can still bid on.
+
+    No key on the live store is truncated today - the largest fetches 480 of
+    500 - so this is about what the page says when it happens, which is the
+    only part that can be got right in advance.
+*/
+test('a capped fetch does not claim to be the whole market', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+    const at = h => new Date(Date.now() + h * 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    /*  More live auctions than the page fetches, with price and end time
+        running in opposite directions so the cap provably drops the soonest. */
+    for (let i = 0; i < 620; i++) {
+        const id = 'v1|lot' + i + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'lot' + i, title: 'Gold Sovereign ' + i,
+            buyingOptions: 'AUCTION', endTime: at(i + 1)
+        }, now)
+        repository.saveSnapshot(id, { price: 500 + i, shipping: 0, observedAt: now })
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const path = '/listings?key=' + key
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    /*  The tab knows the real size; the sections only ever see the fetch.
+        The page must not print the second as though it were the first. */
+    assert.match(body, /Auctions \(620\)/, 'the tab does not carry the true count')
+    assert.match(body, /620 lots on this tab/,
+        'the page does not disclose that the fetch was capped')
+    assert.match(body, /fetched the dearest 500 of them/,
+        'the page does not say which 500 it fetched')
+
+    /*  And it must stop promising that the top of the list is the soonest,
+        because on a capped fetch it is the soonest of the dearest. */
+    assert.ok(!/the top of this list is the part you can still bid on/.test(body),
+        'a capped fetch still promises the soonest-ending lots');
+
+    /*  Concretely: lot0 ends first and is the cheapest, so the cap drops it.
+        If it were present the disclosure would be unnecessary. */
+    assert.ok(!/value="lot0"/.test(body),
+        'the fixture no longer truncates, so this test proves nothing')
+
+    db.close()
+})
+
+
+/*
+    The live store's shape, which twoSeriesStore does not have: the biggest
+    pile by far is the unattributed one, and the page deliberately does NOT
+    land there. So the first tab in the strip and the tab actually being
+    shown are different coins, which is the only arrangement in which reading
+    the wrong one is visible.
+*/
+function lopsidedStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const add = (n, series, auction) => {
+        const id = 'v1|' + (series || 'none') + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: (series || 'none') + n,
+            title: 'Gold Sovereign ' + n,
+            buyingOptions: auction ? 'AUCTION' : 'FIXED_PRICE',
+            endTime: auction ? new Date(Date.now() + 3600000).toISOString() : null
+        }, now)
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+        if (series !== null) { repository.setListingSeries(id, series) }
+        repository.queueForReview(id, 'worth a look', null, 0.5)
+    }
+
+    /*  Twelve unattributed against three sovereigns, all auctions, so the
+        unattributed tab leads the strip and the sovereign tab is current. */
+    for (let n = 0; n < 12; n++) { add(n, null, true) }
+    for (let n = 0; n < 3; n++) { add(100 + n, 'GB.SOV', true) }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the review page lands on a real coin, and counts that one', async () => {
+    const opened = lopsidedStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+    const strips = tabStrips(body)
+
+    /*  Landing on the unattributed pile is landing on a page of jewellery
+        and fishing reels, so the page skips it - which is exactly why the
+        first tab is not the one to read a count from. */
+    const first = (strips.coinStrip || '').match(/>([^<]*\(\d+\)[^<]*)</)
+    const current = (strips.coinStrip || '').match(/class="tab on"[^>]*>([^<]*)</)
+    assert.ok(first && current, 'the coin strip is missing a first or current tab')
+    assert.match(first[1], /Not attributed \(12\)/, 'the largest pile does not lead the strip')
+    assert.match(current[1], /\(3\)/, 'the page is not showing the sovereigns')
+    assert.notStrictEqual(first[1], current[1],
+        'the fixture no longer distinguishes the first tab from the current one')
+
+    /*  And the count on the tab being shown is the number of rows shown. */
+    const shown = [...body.matchAll(/name="pick" value="/g)].length
+    assert.strictEqual(shown, 3,
+        'the current tab advertises 3 but the page renders ' + shown)
+    opened.db.close()
+})
+
+/*
+    The documented first run.
+
+    The demo is the only path that produces a working store without eBay
+    credentials, and its noise lots are the only thing it queues for review.
+    While every one of them was FIXED_PRICE, a fresh demo's review page had
+    three empty sections under an auction default - on the one run where the
+    tool has to explain itself and the user has no way to know a filter is
+    the reason.
+*/
+test('a fresh demo has review work on the tab it opens', async () => {
+    const db = newDatabase(':memory:')
+    require('../src/demo.js').generate(db, {})
+    const repository = newRepository(db, { sellerSalt: 'demo' })
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+    const shown = [...body.matchAll(/name="pick" value="/g)].length
+    assert.ok(shown > 0,
+        'a bare /review on a fresh demo renders no rows at all');
+
+    /*  And the other tab still has the bulk, so the demo shows what the
+        filter is FOR rather than just having some of everything. */
+    const strips = tabStrips(body)
+    const bin = (strips.saleStrip || '').match(/Buy-It-Now \((\d+)\)/)
+    assert.ok(bin && Number(bin[1]) > 0,
+        'the demo has nothing on the Buy-It-Now tab')
+    db.close()
+})
+
+
+/*
+    Which coin a bare /review opens on, when the two readings disagree.
+
+    Sovereigns hold the bigger queue outright; Morgans hold more of it that
+    an auction-defaulted page will actually show. Landing by the unfiltered
+    total would open the largest queue on its emptiest tab - the page would
+    say "British Gold Sovereigns (1)" and render one row while twelve Morgan
+    auctions sat one tab over.
+*/
+test('the review queue opens on the coin with the most work on this tab', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 49.7, null, 'test')
+
+    const add = (id, series, auction) => {
+        repository.saveListing({
+            browseId: 'v1|' + id + '|0', legacyId: id, title: 'Coin ' + id,
+            buyingOptions: auction ? 'AUCTION' : 'FIXED_PRICE',
+            endTime: auction ? new Date(Date.now() + 3600000).toISOString() : null
+        }, now)
+        repository.saveSnapshot('v1|' + id + '|0', { price: 900, shipping: 0, observedAt: now })
+        repository.setListingSeries('v1|' + id + '|0', series)
+        repository.queueForReview('v1|' + id + '|0', 'worth a look', null, 0.5)
+    }
+
+    /*  Sovereigns: 20 queued, 1 of them an auction.
+        Morgans:    12 queued, all of them auctions. */
+    for (let n = 0; n < 20; n++) { add('s' + n, 'GB.SOV', n === 0) }
+    for (let n = 0; n < 12; n++) { add('m' + n, 'US.MORGAN', true) }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+    const current = (tabStrips(body).coinStrip || '').match(/class="tab on"[^>]*>([^<]*)</)
+    assert.ok(current, 'no current coin tab')
+    assert.match(current[1], /Morgan/,
+        'the queue opened on the largest pile rather than the most workable one: ' + current[1])
+    assert.match(current[1], /\(12\)/, 'the tab does not carry its filtered count')
+
+    /*  And the tab NOT being shown carries its filtered count too. This is
+        the pair that separates the two numbers: sovereigns hold 20 queued
+        rows of which 1 is an auction, so a tab reading (20) here would be
+        advertising work this view cannot show. */
+    assert.match(tabStrips(body).coinStrip, /British Gold Sovereigns \(1\)/,
+        'the sovereign tab advertises its unfiltered total on an auction view')
+
+    /*  And switching to the Everything tab does flip which coin is biggest,
+        which is what makes the two readings genuinely different. */
+    const all = (await fetchAll(opened, ['/review?sale=all']))['/review?sale=all'].body
+    const currentAll = (tabStrips(all).coinStrip || '').match(/class="tab on"[^>]*>([^<]*)</)
+    assert.match(currentAll[1], /Sovereign/,
+        'the Everything view does not open on the largest queue: ' + currentAll[1])
+    db.close()
 })

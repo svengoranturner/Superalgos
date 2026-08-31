@@ -229,10 +229,23 @@ exports.generate = function (db, options) {
         counts.live++
     }
 
-    /* Noise the classifier must reject. */
+    /*  Noise the classifier must reject.
+
+        Listed BOTH ways, which it was not until the review queue began
+        opening on auctions. These noise lots are the only thing the demo
+        queues for review, so while every one of them was FIXED_PRICE a fresh
+        `coin-market demo` produced a review page with three empty sections
+        and no hint that a filter was the reason - on the documented first
+        run, which is the one place the tool has to explain itself.
+
+        A third, so the auction tab has work on it and the Buy-It-Now tab
+        still has the bulk. Junk gets listed both ways in the real market
+        too: 823 of the live store's queued lots are plain AUCTION. */
     for (let i = 0; i < 40; i++) {
         const title = NOISE[Math.floor(random() * NOISE.length)]
-        const item = newItem(title, 'FIXED_PRICE', now + 7 * DAY_MS, 120 + random() * 300, now - DAY_MS)
+        const auction = i % 3 === 0
+        const item = newItem(title, auction ? 'AUCTION' : 'FIXED_PRICE',
+            now + 7 * DAY_MS, 120 + random() * 300, now - DAY_MS)
         if (!store(item, new Date(now).toISOString())) { counts.noise++ }
     }
 

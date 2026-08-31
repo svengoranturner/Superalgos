@@ -1401,7 +1401,8 @@ function listingsPage (opened, url) {
     }
 
     const sale = saleFrom(url)
-    const rows = repository.listingsForInstrument(key, 500, sale)
+    const FETCH = 500
+    const rows = repository.listingsForInstrument(key, FETCH, sale)
     const verdictCell = newPlausibilityCell(opened.spotAt)
     /*  This page deliberately shows everything, including lots the sweep has
         stopped seeing - it is the route to a listing that classified wrongly
@@ -1442,6 +1443,34 @@ function listingsPage (opened, url) {
         from one lot. That was the second of the two medians behind the
         original bug.
     */
+    /*
+        Whether the fetch saw everything, which the new ordering made into a
+        question worth asking.
+
+        listingsForInstrument admits rows by `COALESCE(o.sold,0) DESC, live
+        DESC, totalCost DESC` and stops at FETCH. While the live section was
+        also displayed dearest-first, admission order and display order were
+        the same thing, so a cap could only ever hide the tail of what you
+        were already reading. Ordering the live section by end time breaks
+        that: the rows admitted are still the DEAREST, so on a capped fetch
+        "ending soonest" means soonest of the dearest - and a cheap lot
+        closing in ten minutes can be missing from a list whose whole promise
+        is that the top of it is what you can still bid on.
+
+        Detected rather than assumed: saleCounts is uncapped and rows is not,
+        so the comparison is exact and costs nothing. No key is truncated on
+        the live store today - the largest fetches 480 of 500 - but that is a
+        reason to say so when it happens, not a reason to leave the promise
+        unqualified.
+
+        Not fixed by making end time a SQL key: that admits the soonest and
+        drops the dearest, and the dearest lot is the one most likely to be
+        distorting the premium this page exists to explain. The two cannot
+        both be guaranteed from one capped fetch, so the page says which one
+        it has.
+    */
+    const capped = saleCounts[sale] > rows.length
+
     const metalName = METAL_NAMES[market.metal] || market.metal
     const askTile = '<div><div class="n">' + pct(market.liquidity.medianAskPremium) + '</div>' +
         '<div class="l">median <strong>asking</strong> premium over ' + escapeHtml(metalName) +
@@ -1457,9 +1486,13 @@ function listingsPage (opened, url) {
           '<div class="l">median bids on auctions that got any</div></div>'
         : ''
 
+    /*  Everything shows the union, not the intersection. The bids figure
+        is auction-only by nature, which is a reason to label it, not a
+        reason to make it unreachable from the view whose whole point is to
+        show everything. */
     const statTiles = sale === 'auction'
         ? clearTile + bidsTile
-        : (sale === 'bin' ? askTile : clearTile + askTile)
+        : (sale === 'bin' ? askTile : clearTile + askTile + bidsTile)
 
     /*  What the counts on this page are counting. On a filtered tab
         "12 completed sales" is 12 completed AUCTIONS, and saying so is what
@@ -1520,8 +1553,20 @@ function listingsPage (opened, url) {
         (items.length > CAP
             ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + CAP +
               ' of ' + items.length + ', ' +
-              escapeHtml((ordering || 'dearest first').toLowerCase()) + '.</p>'
-            : '') + '</div>' + bar + '</form>'
+              escapeHtml((ordering || 'dearest first').toLowerCase()) + '.' +
+              /*  items.length counts the FETCH, not the store. Presenting a
+                  fetch artefact as a total is how "of 474" reads as the
+                  whole market when it is 474 of a capped 500. */
+              (capped
+                  ? ' This coin type has ' + saleCounts[sale] + ' lots on this tab; the page ' +
+                    'fetched the dearest ' + rows.length + ' of them.'
+                  : '') +
+              '</p>'
+            : (capped
+                ? '<p class="thin" style="margin:12px 0 0">This coin type has ' +
+                  saleCounts[sale] + ' lots on this tab; the page fetched the dearest ' +
+                  rows.length + ' of them.</p>'
+                : '')) + '</div>' + bar + '</form>'
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
@@ -1539,7 +1584,8 @@ moving the numbers on the front page.${sale === 'all' ? '' :
   <div><div class="n">${unflagged}</div>
     <div class="l">of them never flagged for review &mdash; they classified confidently, so this
       page is the only way to reach them</div></div>
-  ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged</div></div>' : ''}
+  ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged' +
+    saleNoun + '</div></div>' : ''}
 </div>
 
 <div class="card">
@@ -1562,7 +1608,11 @@ ${sold.length === 0
 <p class="thin">${liveOrdering} &mdash; ${timed === 0
     ? 'within one coin type the dearest lot is also the highest premium, and a lot priced far ' +
       'from its neighbours is both the most likely to be wrong and the most visible when it is'
-    : 'the top of this list is the part you can still bid on'}. Click a photo to see it large.
+    : (capped
+        ? 'ordered within the ' + rows.length + ' dearest lots this page fetched, which is not ' +
+          'the same as the soonest overall &mdash; a cheap lot closing shortly can be outside ' +
+          'that sample'
+        : 'the top of this list is the part you can still bid on')}. Click a photo to see it large.
 If the coin is real but the denomination is wrong, set it in the dropdown and mark it genuine
 rather than dismissing it.</p>
 ${live.length === 0
