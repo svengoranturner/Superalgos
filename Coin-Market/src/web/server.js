@@ -776,16 +776,27 @@ function reviewPage (opened, url) {
     */
     const seriesCounts = opened.repository.reviewCountsBySeries()
     const requested = url === undefined ? null : url.searchParams.get('coin')
-    const chosen = seriesCounts.some(c => c.series === requested)
-        ? requested
-        : (seriesCounts.length > 0 ? seriesCounts[0].series : null)
+    /*
+        Default to a real coin, never to the unattributed pile.
 
+        '?' is usually the largest group and almost none of it is work: on
+        the live store it was 3,206 rows of which 2,986 were already excluded
+        by category or country and sit there only so a bad rule stays
+        visible. Landing on that is landing on a page of jewellery and
+        fishing reels. The tab is still there, with its count, for the 220
+        that genuinely are a question.
+    */
+    const realSeries = seriesCounts.filter(c => c.series !== '?')
+    const fallback = (realSeries[0] || seriesCounts[0] || {}).series || null
+    const chosen = seriesCounts.some(c => c.series === requested) ? requested : fallback
+
+    /*  A single group needs no chooser - one tab is not a choice. */
     const seriesTabs = seriesCounts.length < 2 ? '' : tabs('/review', 'coin',
         seriesCounts.map(c => {
             const pack = c.series === '?' ? null : SERIES.get(c.series)
             return {
                 value: c.series,
-                label: (pack ? pack.label : 'Not recognised') + ' (' + c.n + ')',
+                label: (pack ? pack.label : 'Not attributed') + ' (' + c.n + ')',
                 /*  No default tab: a bare /review shows the biggest pile,
                     and the tab for it is the one marked current, so the URL
                     and the page always agree about what you are looking at. */
