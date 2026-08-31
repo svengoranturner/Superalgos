@@ -61,6 +61,13 @@ exports.newRepository = function (db, options) {
                 category_path = COALESCE(excluded.category_path, listing.category_path),
                 /* Backfilled on the next sweep; never cleared back to NULL. */
                 item_country = COALESCE(excluded.item_country, listing.item_country),
+                /*  Same treatment. Without it the 5,516 rows stored before
+                    browse.js kept itemCreationDate would never acquire one,
+                    because a listing we already know only ever takes the
+                    conflict path - so the fix would have applied to new
+                    listings alone and medianDaysToSale would have stayed
+                    broken for months. */
+                start_time = COALESCE(excluded.start_time, listing.start_time),
                 expires_at = excluded.expires_at,
                 /* Backfill identity and condition detail as eBay starts
                    supplying them, without clobbering what we already hold. */
