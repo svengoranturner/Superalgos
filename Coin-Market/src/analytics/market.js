@@ -72,6 +72,11 @@ exports.newMarketView = function (repository, spotAt, options) {
                 const total = PREMIUM.totalCost(row.price, row.shipping)
                 return {
                     browseId: row.browseId,
+                    /*  The id every human decision is keyed on. activeListings
+                        has always selected it and this mapping has always
+                        dropped it, so an alert could name a listing but not
+                        offer a way to judge it. */
+                    legacyId: row.legacyId,
                     title: row.title,
                     buyingOptions: row.buyingOptions,
                     endTime: row.endTime,

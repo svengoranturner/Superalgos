@@ -90,6 +90,29 @@ test('sold outcomes survive the round trip through the read model', () => {
     assert.strictEqual(market.liquidity.sellThroughRate, 1)
 })
 
+/*  Every human decision in this tool is keyed on the legacy id, so a lot
+    the market view surfaces has to be one the owner can then judge. The
+    query selected it and the view's mapping dropped it, which meant an
+    alert could name a listing but offer no way to say it was wrong. */
+test('a live listing keeps the id its verdict will be recorded against', () => {
+    const { db, repository } = fixture()
+    repository.saveListing({
+        browseId: 'v1|live|0', legacyId: 'live-1', title: 'Gold Sovereign 1912',
+        buyingOptions: 'FIXED_PRICE|BEST_OFFER', endTime: null
+    })
+    repository.saveSnapshot('v1|live|0', { price: 800, shipping: 4, observedAt: new Date().toISOString() })
+    repository.saveClassification('v1|live|0',
+        [{ key: 'GB.SOV.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(new Date().toISOString(), 'XAU', 3292, null, 'test')
+
+    const view = MARKET.newMarketView(repository, SPOT.newSpotLookup(db), {})
+    const active = view.forInstrument('GB.SOV.FULL').active
+    assert.strictEqual(active.length, 1)
+    assert.strictEqual(active[0].legacyId, 'live-1')
+    db.close()
+})
+
 test('a spot gap withholds the premium instead of using a stale price', () => {
     const { db, repository } = fixture()
     const base = Date.parse('2026-08-20T00:00:00Z')
