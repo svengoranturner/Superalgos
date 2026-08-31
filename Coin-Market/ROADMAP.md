@@ -24,7 +24,7 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,652 listings**, **26 completed sales**, **216 coins judged by hand**, **6 learned
-rules**, **237 tests green**.
+rules**, **240 tests green**.
 
 **Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
@@ -37,7 +37,7 @@ against silver rather than gold, with their own pools, their own idea of an odd 
 exclusions. Nothing about sovereigns moved: the golden fixture (OPS-04) held through every step, and
 old and new code reclassified the same snapshot to byte-identical rows.
 
-**Collection is not switched on.** The pack classifies Morgans correctly but no sweep looks for
+**Collection is not switched on.** The pack classifies Morgans correctly and the market page now has a place to put them, but no sweep looks for
 them, so the store holds none. Turning it on is a config change and a call-budget decision.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
@@ -117,7 +117,7 @@ and it is deliberately parked — see the row.
 | UI-14 | Put the market page back in reach | Done | M | | Eight sections, 55 lot rows, and the two panels worth acting on were **67.7% of the page** - stacked, so the offers heading sat 4,855px down and was reached by text search. Capped to 10 and 8 with the rest folded inside the same form, evidence collapsed, sticky jump bar. Page 11,144px → 4,261px; offers 4,855px → 1,907px |
 | UI-10 | A watchlist of coins you are hunting | Next | M | | The tool tells you what the market is doing; it does not yet know what you want. Ships as two kinds - a specific coin type, and a coin type under a price - because collection gaps need mintmark-level holdings and MetalHead does not record a mintmark |
 | UI-11 | Live auctions ending soonest first | Done | S | | The % of spot badge already says what a lot is worth; the ordering should say how long you have to act. `liveAuctions` had no test at all, so the ordering it now guarantees was unpinned |
-| UI-12 | Group the market page by series, and cap per series | Next | M | CLS-10 | `instruments(0,3)` is ordered by listing count and sliced to 40 GLOBALLY. 5,617 sovereign listings against a new Morgan corpus means Morgan falls off the bottom and never appears - not clutter, invisibility |
+| UI-12 | Group the market page by series, and cap per series | Done | M | CLS-10 | `instruments(0,3)` is ordered by listing count and sliced to 40 GLOBALLY. Measured on a seeded two-series copy of 566 qualifying instruments, the old cap gave the second series **7 of its 40 rows** against the first's 33 &mdash; squeezed rather than invisible at 347 listings, and approaching invisible as a new series starts smaller. Each series now has its own block, cap, instrument table and composition chart, and states how many it left out. The headline metric names its own metal |
 
 ## OPS — repo, deploy, docs
 
@@ -125,6 +125,7 @@ and it is deliberately parked — see the row.
 | --- | --- | --- | --- | --- | --- |
 | OPS-01 | This board, generated from one source | Done | S | | `scripts/roadmap.py` reads `ROADMAP.md` and writes `ROADMAP.html`, so the board and the file cannot drift |
 | OPS-02 | Every bulk write inside one transaction | Done | S | | Unwrapped, the Pi fsyncs per row: a label click took over two minutes and timed out. In a transaction the full rebuild is 3.9s and a single verdict is 56ms |
+| OPS-06 | Ask every page for itself, once | Done | S | | Nothing tested the pages, and two defects reached the owner because of it: an offers panel whose every row lost its checkbox and verdict buttons, and a market page that 500'd on every request after a rename. The suite now starts the real server on an ephemeral port and fetches each page. Both bugs were reintroduced to confirm each fails the test that describes it |
 | OPS-04 | A golden fixture of every instrument key | Done | S | | The safety net the series work needed before it started. **1,807 keys, 682 real titles** stratified across every pool, denomination, review reason and known-dangerous phrasing, and **234 category paths** — 70ms. Six deliberate mutations (separator, pool threshold, negation reading, fine ounces, spaced mintmark, category screen) were each caught by the right test. Regenerate with `npm run golden <db>`; never hand-edit it |
 | OPS-05 | Drop a series without losing anything | Next | S | CLS-10 | Deletes instruments and assignments; never touches listings, snapshots, outcomes or labels, which cost API calls that cannot be re-spent or human time. So a drop is reversible: re-add the pack, reclassify, and every lot comes back |
 | OPS-03 | Never rank every snapshot to use one instrument's | Done | S | | `activeListings` cost 435ms per call, once per coin type — the market page took **19 seconds** and was getting worse with every sweep. Scoped first, it is 1.4s |
