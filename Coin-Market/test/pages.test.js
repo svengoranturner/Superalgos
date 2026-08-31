@@ -208,13 +208,19 @@ test('a silver coin is measured against silver, on the page as well as in the st
         await fetchAll(opened, ['/review', '/listings?key=US.MORGAN.COMMON.DOLLAR'])
 
     /*  The fixture prices its Morgans at GBP 70-75 against silver at
-        GBP 49.70/oz and 0.7734 oz, so roughly 180-195% of spot. Measured
-        against gold the same rows would read about 3%. */
-    const percents = [...drill.body.matchAll(/(\d+)% of spot/g)].map(m => Number(m[1]))
-    assert.ok(percents.length > 0, 'no plausibility figures rendered at all')
-    for (const p of percents) {
-        assert.ok(p > 100 && p < 400,
-            'a Morgan read ' + p + '% of spot - that is another metal, not this coin')
+        GBP 49.70/oz and 0.7734 oz, so a premium of roughly +80% to +95%.
+        Measured against GOLD the same rows would read about −97%, which is
+        the number this test exists to keep off the page.
+
+        Read as a signed premium, because that is what the badge now shows:
+        every other figure in the tool is a premium, so "130% of spot" was
+        the one a reader had to convert before comparing it with anything. */
+    const premiums = [...drill.body.matchAll(/([+−-])(\d+)%/g)]
+        .map(m => (m[1] === '+' ? 1 : -1) * Number(m[2]))
+    assert.ok(premiums.length > 0, 'no plausibility figures rendered at all')
+    for (const p of premiums) {
+        assert.ok(p > 0 && p < 300,
+            'a Morgan read ' + p + '% premium - that is another metal, not this coin')
     }
 
     /*  And nothing on either page should be calling them impossible. */

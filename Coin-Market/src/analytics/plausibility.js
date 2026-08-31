@@ -169,6 +169,11 @@ exports.assess = function (price, fineOz, spotGbpPerOz, context) {
         spotValue,
         ratio,
         percentOfSpot: ratio * 100,
+        /*  The same number as a premium: what you pay OVER the metal, which
+            is the figure the rest of the tool speaks in. "130% of spot" and
+            "+30%" say the same thing, but only one of them sits beside a
+            clearing premium of 9.6% without the reader having to convert. */
+        premium: ratio - 1,
         verdict: verdict.code,
         label: verdict.label,
         detail: verdict.detail,

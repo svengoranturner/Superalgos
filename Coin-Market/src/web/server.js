@@ -316,7 +316,7 @@ function marketPage (opened, url) {
             .filter(row => row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
 
         /*
-            Ending soonest by default. The % of spot badge already tells you
+            Ending soonest by default. The premium badge already tells you
             what a lot is worth; the ordering should tell you how long you
             have to act on it - a lot closing in twenty minutes is a decision
             now, and one closing on Thursday is not, whatever their prices.
@@ -632,6 +632,15 @@ ${salesHtml}
     own series, and a row whose series has no spot data gets a blank rather
     than another metal's price.
 */
+/*  A premium with its sign always shown, because the sign is the point:
+    +30% and -30% are opposite findings and a bare "30%" is neither. Rounded
+    to whole points - the precision beyond that is not real. */
+function signedPct (premium) {
+    if (premium === null || premium === undefined || !Number.isFinite(premium)) { return '—' }
+    const points = Math.round(premium * 100)
+    return (points > 0 ? '+' : (points < 0 ? '−' : '')) + Math.abs(points) + '%'
+}
+
 function newPlausibilityCell (spotAt) {
     const PLAUSIBILITY = require('../analytics/plausibility.js')
     const now = new Date().toISOString()
@@ -703,8 +712,13 @@ function newPlausibilityCell (spotAt) {
         return '<span class="badge ' + tone + '" title="' +
             escapeHtml(v.detail + ' Measured against ' + measuredAgainst +
                 (assumed ? ', the smallest this series mints, because the denomination is unknown.' : '.')) +
+            /*  A premium, signed, not a percentage OF spot. Every other
+                figure in the tool is a premium - clearing premium, asking
+                premium, spread - so "130% of spot" was the one number a
+                reader had to convert before it could be compared with the
+                column next to it. */
             '">' + escapeHtml(v.label) + '</span> <span class="thin mono">' +
-            Math.round(v.percentOfSpot) + '% of spot</span>'
+            signedPct(v.premium) + '</span>'
     }
 }
 
