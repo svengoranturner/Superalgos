@@ -24,7 +24,7 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,652 listings**, **26 completed sales**, **216 coins judged by hand**, **6 learned
-rules**, **221 tests green**.
+rules**, **232 tests green**.
 
 **Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
@@ -32,10 +32,13 @@ Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried
 recommended lots that had already sold (UI-13). Every one of them was a number the tool stated
 confidently and could not support.
 
-**The safety net for the next wave is in.** OPS-04 freezes what the tool believes a sovereign is —
-1,807 instrument keys, 682 real titles across every pool, denomination, review reason and
-known-dangerous phrasing, and 234 category paths — and answers "did I just change that?" in 70ms.
-Six deliberate mutations were each caught by the right test. The series work (CLS-10) can start.
+**The tool now tracks two coins.** Morgan and Peace silver dollars sit alongside sovereigns, priced
+against silver rather than gold, with their own pools, their own idea of an odd price, and their own
+exclusions. Nothing about sovereigns moved: the golden fixture (OPS-04) held through every step, and
+old and new code reclassified the same snapshot to byte-identical rows.
+
+**Collection is not switched on.** The pack classifies Morgans correctly but no sweep looks for
+them, so the store holds none. Turning it on is a config change and a call-budget decision.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
 gains about one a day, and every clearing figure rests on them. Six of the ten coin types now show
@@ -59,7 +62,7 @@ and it is deliberately parked — see the row.
 | COL-04 | Keep `itemCreationDate` as the listing start date | Done | S | | eBay sends it on every summary and it was discarded, so `start_time` was NULL on all 5,516 rows — which silently disabled `medianDaysToSale`. Backfills on the conflict path too, or only new listings would ever have got one |
 | COL-05 | Capture item location, and filter at the query | Done | S | | `itemLocationCountry` on the search makes it genuinely cheaper — a Browse call returns 200 listings, so a third fewer results is a third fewer calls |
 | COL-06 | Refresh cadence: sweep 60m, ending-soon 5m, resolve 30m | Done | S | | Measured: 10 new listings an hour, 5,163 of 5,509 refreshed within the hour, 286 closing lots watched every 5 minutes |
-| COL-08 | Price silver against silver | Next | M | | The upstream feed already carries Ag, Au, Pd and Pt - 1,004 ticks each - and `spot`'s primary key is already `(observed_at, metal)`, so there is no migration. Only the mirror is gold-only: four `'XAU'` literals and a `spotAt(whenIso)` with no metal parameter. A Morgan priced against gold is a ~100x error that reads as an enormous opportunity |
+| COL-08 | Price silver against silver | Done | M | | The upstream feed already carries Ag, Au, Pd and Pt - 1,004 ticks each - and `spot`'s primary key is already `(observed_at, metal)`, so there is no migration. Only the mirror is gold-only: four `'XAU'` literals and a `spotAt(whenIso)` with no metal parameter. A Morgan priced against gold reads &pound;2,544 instead of &pound;38 &mdash; a 66&times; error arriving disguised as the find of the year. `spotAt(when, metal)` defaults to gold and NEVER falls back: a metal with no ticks returns blank. Silver backfilled its own 1,011-tick history on the first run, because each metal resumes from its own high-water mark |
 | COL-07 | Back the Pi database up off-site | Later | S | | Local backups only. The SD card is the likeliest thing here to die |
 
 ## MKT — what the numbers mean
@@ -92,7 +95,7 @@ and it is deliberately parked — see the row.
 | CLS-06 | Novelty copies and pick-your-coin listings | Done | S | | "Gold-Coloured Sovereign Style Coins (10pcs)" and "CHOOSE YOUR COIN" both reached the live opportunities panel. 20 variation listings caught |
 | CLS-07 | Let a multi-coin lot be admitted at its own gold | Done | M | | The lot size rides on the assignment, not the instrument — writing it to the shared instrument row would have redefined the spot value for every coin filed under the same key |
 | CLS-08 | Screen listings by country, on by default | Rejected | — | | **Cost 1,268 genuine sovereigns in one pass**, 744 of them Australian — Sydney, Melbourne and Perth mint coins are British sovereigns and the scarcest part of the series. Now opt-in, with the cost of narrowing shown beside each country |
-| CLS-10 | Series packs, so a second coin is not a mess | Now | L | OPS-04 | `GB.SOV` is a dotted literal at `instruments.js:62`, 8 of 13 exclusion rules carry sovereign text, and `exclusions.js:307-313` returns NOT_GOLD for any silver composition - one line that excludes every silver coin. **Extraction landed and proven a no-op**: old and new code reclassified the same 5,652 listings and produced byte-identical `instrument` (1,807), `listing_instrument` (8,513) and `review_queue` (3,834) rows. `displayName` no longer parses keys by position; exclusion rules are tagged with a series rather than moved, because `screen()` returns on first match and splitting the list would silently reorder it. Remaining: the Morgan pack itself &mdash; same metal, weight and fineness as Peace, and 1921 struck in both designs, which the existing portrait machinery already models |
+| CLS-10 | Series packs, so a second coin is not a mess | Done | L | OPS-04 | `GB.SOV` is a dotted literal at `instruments.js:62`, 8 of 13 exclusion rules carry sovereign text, and `exclusions.js:307-313` returns NOT_GOLD for any silver composition - one line that excludes every silver coin. **Extraction landed and proven a no-op**: old and new code reclassified the same 5,652 listings and produced byte-identical `instrument` (1,807), `listing_instrument` (8,513) and `review_queue` (3,834) rows. `displayName` no longer parses keys by position; exclusion rules are tagged with a series rather than moved, because `screen()` returns on first match and splitting the list would silently reorder it. **Morgan and Peace dollars are in.** Validated on 400 real eBay listings rather than invented ones, which found three defects nobody would have imagined: a 2021 `.999` centenary filing itself beside genuine Carson City dollars, sealed bulk bags filing as single coins, and the fix for that excluding "Reverse of 78" as a lot of 78 coins. Proven inert for sovereigns: old and new code reclassified one snapshot to byte-identical instrument, assignment and review rows |
 | CLS-11 | Labels and rules scoped to a series | Next | M | CLS-10 | `learned.js` is binary, so it cannot say "this is a Britannia, not a sovereign". Worse, an unscoped rule on the word `britannia` would silently empty the Britannia pack the day it lands - accepted today for good reasons, discovered months later |
 | CLS-12 | Item aspects are collected and never read | Next | S | | `EXCLUSIONS.screen(title, aspects)` has exactly one caller and is **always passed null** — neither `discover.js:113` nor `reclassify.js` passes aspects. So the `aspect` table (549 rows) is written and purged but never read, and every aspect-driven rule is dead code, including the composition check at `exclusions.js:306-313`. This corrects the premise of CLS-10: that line does **not** currently exclude every silver coin, because it never runs. Either wire aspects in or stop storing them |
 | CLS-09 | Read the grade from the photograph | Someday | L | | The thumbnails are more instructive than the titles. Whether that is automatable here is an open question, not a plan |
