@@ -24,7 +24,7 @@ here, run the script, republish. The two cannot drift.
 
 Live on the Pi, collecting from production eBay UK. Counted from the store, not quoted from the
 last edit: **5,652 listings**, **26 completed sales**, **216 coins judged by hand**, **6 learned
-rules**, **243 tests green**.
+rules**, **244 tests green**.
 
 **Four measurement bugs found and fixed this week, three of them by the owner reading the screen.**
 Bid ceilings carried a fee nobody could remove (MKT-10); completed sales carried no fee at all
