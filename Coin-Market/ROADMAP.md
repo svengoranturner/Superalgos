@@ -42,7 +42,7 @@ review queue is filtered to one coin at a time with every group's count on its t
 never mix.
 
 **And the first thing collection revealed is a decision to make.** With the country filter on `[GB]`
-the store holds 822 UK Morgans against 6,321 US ones it cannot price &mdash; see COL-09. The filter is
+the store holds 822 UK Morgans against 6,321 US ones it cannot price - see COL-09. The filter is
 right for a gold series and arguable for a silver one, and it is currently a single setting for both.
 
 **One dependency gates a disproportionate share of everything below: completed sales.** The tool
