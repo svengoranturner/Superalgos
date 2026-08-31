@@ -496,7 +496,7 @@ ${countryPicker(repository)}
   <div>
     <div class="n">${overpay === null ? '—' : gbp(overpay)}</div>
     <div class="l">what paying the asking price costs you, per coin, versus where auctions clear
-      — ${escapeHtml(INSTRUMENTS.displayName(headline.row.key))}</div>
+      — ${escapeHtml(INSTRUMENTS.displayName(headline.entry.row.key))}</div>
   </div>
   <div>
     <div class="n">${pct(hm.fairValue.p50)}</div>
