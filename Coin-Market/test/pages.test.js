@@ -55,8 +55,16 @@ function twoSeriesStore () {
     }
 
     for (let n = 0; n < 6; n++) {
-        add(n, 'GB.SOV.BULLION.FULL', 0.2354, 900 + n, n % 2 === 0)
-        add(n, 'US.MORGAN.COMMON.DOLLAR', 0.7734, 70 + n, n % 2 === 0)
+        const sov = add(n, 'GB.SOV.BULLION.FULL', 0.2354, 900 + n, n % 2 === 0)
+        const dollar = add(n, 'US.MORGAN.COMMON.DOLLAR', 0.7734, 70 + n, n % 2 === 0)
+        /*  A queue with both coins in it, because an empty one hides every
+            bug about telling them apart. */
+        if (n < 3) {
+            repository.setListingSeries(sov, 'GB.SOV')
+            repository.queueForReview(sov, 'worth a look', 'GB.SOV.BULLION.FULL', 0.5)
+            repository.setListingSeries(dollar, 'US.MORGAN')
+            repository.queueForReview(dollar, 'worth a look', 'US.MORGAN.COMMON.DOLLAR', 0.5)
+        }
     }
     /*  A few resolved sales, so fair value and the sold table have something
         to say rather than every number being a blank. */
@@ -282,4 +290,51 @@ test('every collected series looks for its own new listings', () => {
         assert.strictEqual(newest[0].bands, false)
         assert.strictEqual(newest[0].maxPages, 1)
     }
+})
+
+/*
+    The owner's report: on the Morgan tab, clicking "auctions only" served
+    sovereign auctions.
+
+    saleTabs was given no parameters, so every link it built dropped the
+    coin and fell back to the default series. It reads as the tab not
+    working; it is a lost parameter. The same omission sent you to a
+    different queue after every verdict, because the return link carried
+    only one of the two filters as well.
+
+    So the property is: each filter's links carry the other, in both
+    directions, and so does the way back.
+*/
+test('choosing a sale type keeps the coin, and choosing a coin keeps the sale type', async () => {
+    const opened = twoSeriesStore()
+    const { '/review?coin=US.MORGAN': morgan } = await fetchAll(opened, ['/review?coin=US.MORGAN'])
+
+    /*  Every link that CHANGES the sale type must stay on Morgans. */
+    const saleLinks = [...morgan.body.matchAll(/href="(\/review\?[^"]*sale=[^"]*)"/g)].map(m => m[1])
+    assert.ok(saleLinks.length > 0, 'no sale-type links rendered')
+    for (const href of saleLinks) {
+        assert.match(href, /coin=US\.MORGAN/, 'a sale-type link dropped the coin: ' + href)
+    }
+
+    /*  And from a filtered view, switching COIN must keep the sale type.
+        Checked on the link to the other series specifically: the "Everything"
+        sale link also contains coin=, and it drops sale= on purpose, which
+        is what that tab is for. */
+    const { '/review?coin=US.MORGAN&sale=auction': auctions } =
+        await fetchAll(opened, ['/review?coin=US.MORGAN&sale=auction'])
+    const otherCoin = [...auctions.body.matchAll(/href="(\/review\?[^"]*coin=GB\.SOV[^"]*)"/g)]
+        .map(m => m[1])
+    assert.ok(otherCoin.length > 0, 'no link to the other series')
+    for (const href of otherCoin) {
+        assert.match(href, /sale=auction/, 'switching coin dropped the sale type: ' + href)
+    }
+
+    /*  The Everything tab is the one link allowed to drop it. */
+    assert.ok(auctions.body.includes('href="/review?coin=US.MORGAN"'),
+        'no way back to every sale type without losing the coin')
+
+    /*  The way back after a verdict, too. */
+    assert.match(auctions.body, /name="back" value="\/review\?coin=US\.MORGAN&amp;sale=auction"/,
+        'the return path lost a filter')
+    opened.db.close()
 })

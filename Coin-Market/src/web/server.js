@@ -819,6 +819,10 @@ function reviewPage (opened, url) {
         never hide how much is waiting under another. The default is
         whichever has the most, because that is the pile worth starting on.
     */
+    const sale = ['auction', 'bin'].includes(url === undefined ? null : url.searchParams.get('sale'))
+        ? url.searchParams.get('sale')
+        : 'all'
+
     const seriesCounts = opened.repository.reviewCountsBySeries()
     const requested = url === undefined ? null : url.searchParams.get('coin')
     /*
@@ -836,6 +840,10 @@ function reviewPage (opened, url) {
     const chosen = seriesCounts.some(c => c.series === requested) ? requested : fallback
 
     /*  A single group needs no chooser - one tab is not a choice. */
+    /*  Each filter carries the other. Without that, switching one silently
+        resets the other: picking "auctions only" while looking at silver
+        dollars dropped the coin and served sovereign auctions, which reads
+        as the tab not working rather than as a lost parameter. */
     const seriesTabs = seriesCounts.length < 2 ? '' : tabs('/review', 'coin',
         seriesCounts.map(c => {
             const pack = c.series === '?' ? null : SERIES.get(c.series)
@@ -847,18 +855,21 @@ function reviewPage (opened, url) {
                     and the page always agree about what you are looking at. */
                 isDefault: false
             }
-        }), chosen, {})
+        }), chosen, sale === 'all' ? {} : { sale })
 
     const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1, chosen)
     const truncated = fetched.length > QUEUE_LIMIT
     const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
     const verdictCell = newPlausibilityCell(opened.spotAt)
 
-    const sale = ['auction', 'bin'].includes(url === undefined ? null : url.searchParams.get('sale'))
-        ? url.searchParams.get('sale')
-        : 'all'
     const filtered = rows.filter(r => matchesSale(r, sale))
-    const back = '/review' + (sale === 'all' ? '' : '?sale=' + sale)
+    /*  Back to the queue you were actually working through, both filters
+        intact. Landing on a different one after every verdict is the same
+        lost-parameter bug as the tabs, one click later. */
+    const backParams = []
+    if (chosen !== null) { backParams.push('coin=' + encodeURIComponent(chosen)) }
+    if (sale !== 'all') { backParams.push('sale=' + encodeURIComponent(sale)) }
+    const back = '/review' + (backParams.length === 0 ? '' : '?' + backParams.join('&'))
     for (const row of filtered) { row.back = back }
 
     const excluded = filtered.filter(r => (r.reason || '').startsWith('EXCLUDED'))
@@ -928,7 +939,7 @@ ${applied}
 </div>
 
 <div class="card">
-  ${saleTabs('/review', sale)}
+  ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen })}
   <p class="thin" style="margin:10px 0 0">A live lot is filtered on how it is offered, a
   completed one on how it actually sold. ${sale === 'bin'
       ? 'No Buy-It-Now lot has a recorded outcome yet &mdash; they carry no end time, so the tool never learns whether they sold.'
