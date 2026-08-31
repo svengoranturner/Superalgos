@@ -22,6 +22,34 @@ const SERIES = require('../catalogue/series/index.js')
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /*
+    Auction or Buy-It-Now, for live and completed alike.
+
+    A completed lot is judged on how it ACTUALLY SOLD, a live one on how it
+    is OFFERED - not the same question, and they must not use the same
+    column. Hence the sale_type / buying_options pair rather than either
+    alone.
+
+    Held here as two strings because the drill-down filters on them and the
+    tab counts must agree with what that filter admits. Written out twice,
+    those two would drift the first time either was touched, and the symptom
+    would be a tab labelled "Buy-It-Now (304)" that opens on 297 rows -
+    which reads as a bug in the page rather than in a predicate.
+
+    Deliberately NOT expressed as `NOT (auction)`. The two are equivalent in
+    two-valued logic, but a NULL buying_options makes both NULL, and keeping
+    the positive form in each direction means a row with no buying options
+    lands in neither tab rather than in whichever one negation happened to
+    admit.
+*/
+const SALE_IS_AUCTION =
+    "((o.sale_type IS NOT NULL AND o.sale_type = 'AUCTION') OR " +
+    "(o.sale_type IS NULL AND l.buying_options LIKE '%AUCTION%'))"
+
+const SALE_IS_BIN =
+    "((o.sale_type IS NOT NULL AND o.sale_type <> 'AUCTION') OR " +
+    "(o.sale_type IS NULL AND l.buying_options NOT LIKE '%AUCTION%'))"
+
+/*
     node:sqlite refuses to bind `undefined`, and an object that simply
     omits an optional field is the normal case here - a Browse summary
     without shipping options, a listing with no condition label. Coercing
@@ -362,15 +390,48 @@ exports.newRepository = function (db, options) {
 
         /*  How many are waiting, per coin. Shown on the tabs so choosing
             one series to work through never hides the size of another. */
-        reviewCountsBySeries () {
+        /*
+            How much is waiting under each coin - and how much of it the
+            current sale filter will actually show.
+
+            `n` is the number the tab must display, because it is the number
+            of rows clicking that tab produces. The unfiltered total came
+            apart the moment the queue defaulted to auctions: on the live
+            store the unattributed tab read 20,562 and opened on 1,691, and
+            sovereigns read 675 and opened on 76. A tab that overstates its
+            own contents ninefold reads as a broken page.
+
+            `total` is kept beside it so the tab can still say what it is a
+            slice OF. Losing that would break the older promise this function
+            exists for: every series' count is on screen at once, so choosing
+            one can never hide how much is waiting under another.
+
+            Offer-based, deliberately, and NOT the SALE_IS_AUCTION predicate
+            used by the drill-down. reviewQueue selects no listing_outcome
+            columns at all, so the page's own matchesSale() has no sale_type
+            to read and judges every row on buying_options. Counting by a
+            different rule than the page filters by is how the two would
+            disagree again, one layer down.
+        */
+        reviewCountsBySeries (saleFilter) {
+            const filter = saleFilter === 'auction' || saleFilter === 'bin' ? saleFilter : 'all'
             return db.prepare(`
-                SELECT COALESCE(l.series, '?') AS series, COUNT(*) AS n
+                SELECT COALESCE(l.series, '?') AS series,
+                       COUNT(*) AS total,
+                       SUM(CASE WHEN ?1 = 'all' THEN 1
+                                WHEN ?1 = 'auction' AND l.buying_options LIKE '%AUCTION%' THEN 1
+                                WHEN ?1 = 'bin' AND l.buying_options NOT LIKE '%AUCTION%' THEN 1
+                                ELSE 0 END) AS n
                 FROM review_queue r
                 JOIN listing l ON l.browse_id = r.browse_id
                 WHERE r.resolved_at IS NULL
                 GROUP BY COALESCE(l.series, '?')
-                ORDER BY n DESC
-            `).all()
+                ORDER BY n DESC, total DESC
+            `).all(filter).map(row => ({
+                series: row.series,
+                n: row.n || 0,
+                total: row.total || 0
+            }))
         },
 
         /*  seriesId narrows the queue to one coin. '?' means the listings no
@@ -676,17 +737,9 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
                 WHERE li.key = ?1
-                  /*  Auction or Buy-It-Now, for live and completed alike. A
-                      completed lot is judged on how it actually sold, a live
-                      one on how it is offered - which is not the same
-                      question and must not use the same column. */
                   AND (?5 = 'all'
-                       OR (?5 = 'auction' AND (
-                             (o.sale_type IS NOT NULL AND o.sale_type = 'AUCTION') OR
-                             (o.sale_type IS NULL AND l.buying_options LIKE '%AUCTION%')))
-                       OR (?5 = 'bin' AND (
-                             (o.sale_type IS NOT NULL AND o.sale_type <> 'AUCTION') OR
-                             (o.sale_type IS NULL AND l.buying_options NOT LIKE '%AUCTION%'))))
+                       OR (?5 = 'auction' AND ${SALE_IS_AUCTION})
+                       OR (?5 = 'bin' AND ${SALE_IS_BIN}))
                 /*  Completed sales first, always.
 
                     They are few - tens against thousands - and they are the
@@ -708,6 +761,40 @@ exports.newRepository = function (db, options) {
                 limit || 200,
                 saleFilter === 'auction' || saleFilter === 'bin' ? saleFilter : 'all'
             )
+        },
+
+        /*
+            How many lots each sale tab would show, for the tab labels.
+
+            The drill-down now opens on auctions, so the Buy-It-Now pile is
+            skipped by default - on the busiest coin type that is 372 lots of
+            the 474 live. A default that quietly hides four fifths of the
+            market is only honest if the tab says how much it is hiding, so
+            the count goes on the label.
+
+            Its own query rather than counting the fetched rows, because
+            those come back already filtered AND capped at 500: counting them
+            would report the size of the fetch, not the size of the pile. One
+            indexed pass over listing_instrument with no snapshot window -
+            2ms against the 190ms the page already spends.
+        */
+        saleCountsForInstrument (key) {
+            const row = db.prepare(`
+                SELECT COUNT(*) AS total,
+                       SUM(CASE WHEN ${SALE_IS_AUCTION} THEN 1 ELSE 0 END) AS auction,
+                       SUM(CASE WHEN ${SALE_IS_BIN} THEN 1 ELSE 0 END) AS bin
+                FROM listing_instrument li
+                JOIN listing l ON l.browse_id = li.browse_id
+                LEFT JOIN listing_outcome o ON o.browse_id = li.browse_id
+                WHERE li.key = ?1
+            `).get(key)
+            /*  SUM over no rows is NULL, and a tab reading "(null)" is worse
+                than one reading "(0)". */
+            return {
+                all: row.total || 0,
+                auction: row.auction || 0,
+                bin: row.bin || 0
+            }
         },
 
         /* -------------------------------------------------- settings */

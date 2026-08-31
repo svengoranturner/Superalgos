@@ -330,7 +330,7 @@ function marketPage (opened, url) {
     }
 
     const shown = opportunities.slice(0, 40)
-    for (const row of shown) { row.back = '/'; row.sweepAt = sweepAt }
+    for (const row of shown) { row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
         not silently widen the sample underneath them. */
@@ -740,9 +740,15 @@ function tabs (basePath, param, options, current, params) {
                 .map(k => encodeURIComponent(k) + '=' + encodeURIComponent(query[k]))
                 .join('&')
             const href = basePath + (search === '' ? '' : '?' + search)
+            /*  A tab label has room for a number and nothing else, so what
+                the number MEANS goes in the tooltip rather than in prose
+                beside the strip. */
+            const title = option.title === undefined || option.title === null
+                ? ''
+                : ' title="' + escapeHtml(option.title) + '"'
             return option.value === current
-                ? '<span class="tab on">' + escapeHtml(option.label) + '</span>'
-                : '<a class="tab" href="' + escapeHtml(href) + '">' +
+                ? '<span class="tab on"' + title + '>' + escapeHtml(option.label) + '</span>'
+                : '<a class="tab" href="' + escapeHtml(href) + '"' + title + '>' +
                   escapeHtml(option.label) + '</a>'
         }).join('') + '</div>'
 }
@@ -766,12 +772,85 @@ function cappedQueue (rows, render, visible, moreLabel) {
         card(tail) + '</details>'
 }
 
-function saleTabs (basePath, current, params) {
+/*
+    Auctions first, and by default.
+
+    An auction that ended is a price somebody paid; a Buy-It-Now that is
+    still listed is a price somebody hoped for. The tool holds 106 resolved
+    outcomes and every one of them is an auction, so the auction tab is the
+    only view built entirely on evidence - which makes it the right thing to
+    land on, not merely one option of three.
+
+    The counts are what keep that honest. Buy-It-Now is 89% of the sovereign
+    market by listing count, so opening on auctions hides most of what is on
+    sale; a tab reading "Buy-It-Now (304)" says so on every page view, which
+    a default with a bare label would not.
+*/
+const SALE_DEFAULT = 'auction'
+
+function saleTabs (basePath, current, params, counts) {
+    const n = (key) => counts === undefined || counts === null ||
+        !Number.isFinite(counts[key]) ? '' : ' (' + counts[key] + ')'
     return tabs(basePath, 'sale', [
-        { value: 'all', label: 'Everything', isDefault: true },
-        { value: 'auction', label: 'Auctions only' },
-        { value: 'bin', label: 'Buy-It-Now only' }
+        { value: 'auction', label: 'Auctions' + n('auction'), isDefault: true },
+        { value: 'bin', label: 'Buy-It-Now' + n('bin') },
+        { value: 'all', label: 'Everything' + n('all') }
     ], current, params)
+}
+
+/*
+    Which sale filter a URL is asking for.
+
+    'all' has to be accepted EXPLICITLY now. tabs() drops the query parameter
+    for whichever option is the default, so before this change a bare URL and
+    ?sale=all were the same request; now a bare URL means auctions and
+    "Everything" has to say so. Anything unrecognised falls to the default
+    rather than to 'all', so a hand-edited URL cannot land on a view no tab
+    is showing as current.
+*/
+function saleFrom (url) {
+    const raw = url === undefined || url === null ? null : url.searchParams.get('sale')
+    return ['auction', 'bin', 'all'].includes(raw) ? raw : SALE_DEFAULT
+}
+
+/*
+    Ending soonest first, which is the only order a bid can act on.
+
+    Re-sorted HERE and never in the SQL, and the reason is the row limit.
+    listingsForInstrument orders by `COALESCE(o.sold,0) DESC, live DESC,
+    totalCost DESC` and takes 500: the dearest live lots are the ones
+    admitted, and the dearest lot is the one most likely to be distorting the
+    number this page exists to explain. Making end time the SQL key would
+    silently change WHICH 500 rows come back and drop exactly those outliers
+    - a sort that quietly edits the sample rather than reordering it.
+
+    Untimed lots last, dearest-first among themselves. A Buy-It-Now is
+    Good-'Til-Cancelled: putting it in the timed sequence invents a deadline
+    it does not have, and putting it first leads with the least urgent lot in
+    the list. This matches activeListings' own `ORDER BY end_time IS NULL,
+    end_time ASC`.
+
+    The null branches are explicit rather than load-bearing, and it is worth
+    being exact about which. A bare String(a.endTime).localeCompare(...)
+    happens to produce the same order on today's data: "null" sorts after
+    "2026", so untimed lots land last anyway, and two untimed lots compare
+    equal and keep the dearest-first order the SQL already gave them. So this
+    is not guarding against a bug that exists - it is refusing to depend on
+    two coincidences, that ISO years sort below the word "null" and that the
+    incoming order happens to be the one wanted. Neither survives a change to
+    the SQL ORDER BY, and neither is visible from the call site.
+
+    Raw < and > rather than localeCompare on the timed branch, because
+    localeCompare is locale-sensitive and ISO-8601 already sorts
+    lexicographically in the order it means.
+*/
+function byEndingSoonest (a, b) {
+    const at = a.endTime || null
+    const bt = b.endTime || null
+    if (at === null && bt === null) { return (b.totalCost || 0) - (a.totalCost || 0) }
+    if (at === null) { return 1 }
+    if (bt === null) { return -1 }
+    return at < bt ? -1 : (at > bt ? 1 : 0)
 }
 
 /*  A live listing is judged on how it is offered, a completed one on how it
@@ -819,11 +898,9 @@ function reviewPage (opened, url) {
         never hide how much is waiting under another. The default is
         whichever has the most, because that is the pile worth starting on.
     */
-    const sale = ['auction', 'bin'].includes(url === undefined ? null : url.searchParams.get('sale'))
-        ? url.searchParams.get('sale')
-        : 'all'
+    const sale = saleFrom(url)
 
-    const seriesCounts = opened.repository.reviewCountsBySeries()
+    const seriesCounts = opened.repository.reviewCountsBySeries(sale)
     const requested = url === undefined ? null : url.searchParams.get('coin')
     /*
         Default to a real coin, never to the unattributed pile.
@@ -835,6 +912,10 @@ function reviewPage (opened, url) {
         fishing reels. The tab is still there, with its count, for the 220
         that genuinely are a question.
     */
+    /*  Biggest pile THE CURRENT FILTER WILL SHOW. seriesCounts is ordered
+        by the filtered count, so this is the first real series - picking by
+        the unfiltered total could land you on the largest queue and
+        simultaneously its emptiest tab. */
     const realSeries = seriesCounts.filter(c => c.series !== '?')
     const fallback = (realSeries[0] || seriesCounts[0] || {}).series || null
     const chosen = seriesCounts.some(c => c.series === requested) ? requested : fallback
@@ -849,13 +930,20 @@ function reviewPage (opened, url) {
             const pack = c.series === '?' ? null : SERIES.get(c.series)
             return {
                 value: c.series,
+                /*  c.n, not c.total: the label must be the number of rows
+                    the tab opens on. Under the auction default the two are
+                    an order of magnitude apart. */
                 label: (pack ? pack.label : 'Not attributed') + ' (' + c.n + ')',
+                title: c.n === c.total
+                    ? c.total + ' waiting under this coin'
+                    : c.n + ' of ' + c.total + ' waiting under this coin match the ' +
+                      'current sale filter',
                 /*  No default tab: a bare /review shows the biggest pile,
                     and the tab for it is the one marked current, so the URL
                     and the page always agree about what you are looking at. */
                 isDefault: false
             }
-        }), chosen, sale === 'all' ? {} : { sale })
+        }), chosen, { sale })
 
     const fetched = opened.repository.reviewQueue(QUEUE_LIMIT + 1, chosen)
     const truncated = fetched.length > QUEUE_LIMIT
@@ -863,14 +951,29 @@ function reviewPage (opened, url) {
     const verdictCell = newPlausibilityCell(opened.spotAt)
 
     const filtered = rows.filter(r => matchesSale(r, sale))
+
+    /*  Free here, unlike on the drill-down: this page fetches the queue
+        unfiltered and narrows it in JS, so the other tabs' sizes are already
+        in hand. Counted over `rows` rather than the store, so the labels
+        describe the same set the sections are drawn from - including when
+        the 6,000-row cap has bitten. */
+    const queueSaleCounts = {
+        all: rows.length,
+        auction: rows.filter(r => matchesSale(r, 'auction')).length,
+        bin: rows.filter(r => matchesSale(r, 'bin')).length
+    }
     /*  Back to the queue you were actually working through, both filters
         intact. Landing on a different one after every verdict is the same
         lost-parameter bug as the tabs, one click later. */
     const backParams = []
     if (chosen !== null) { backParams.push('coin=' + encodeURIComponent(chosen)) }
-    if (sale !== 'all') { backParams.push('sale=' + encodeURIComponent(sale)) }
+    /*  ALWAYS stated, never omitted-when-default. The old form dropped
+        the parameter for 'all'; now that a bare URL means auctions, dropping
+        it would send you from the Everything view back into the auction view
+        after every verdict - the same lost-parameter bug the tabs had, one
+        click later. */
+    backParams.push('sale=' + encodeURIComponent(sale))
     const back = '/review' + (backParams.length === 0 ? '' : '?' + backParams.join('&'))
-    for (const row of filtered) { row.back = back }
 
     const excluded = filtered.filter(r => (r.reason || '').startsWith('EXCLUDED'))
     const uncertain = filtered.filter(r => !(r.reason || '').startsWith('EXCLUDED'))
@@ -920,10 +1023,22 @@ function reviewPage (opened, url) {
 
     const settled = filtered.filter(r => r.verdict).length
 
+    /*  Every count and every empty state on this page is computed over the
+        filtered rows, so each of them is a claim about the current tab and
+        not about the queue. Under the old 'Everything' default the two were
+        the same thing and the prose could say "nothing is awaiting a
+        decision"; on an auction-defaulted page that sentence would report an
+        all-clear having looked at 11% of the queue. Naming the population in
+        one place keeps the three empty states honest together. */
+    const only = sale === 'auction' ? ' at auction' : (sale === 'bin' ? ' at Buy-It-Now' : '')
+    const among = sale === 'all' ? '' : ' on this tab'
+
     return RENDER.page('Needs review - Coin Market', `
 <h1>Needs review</h1>
 <p class="sub">Listings the classifier would not price without a human decision. Every statistic
-in this tool is computed over what survives this filter, so it is shown rather than hidden.</p>
+in this tool is computed over what survives this filter, so it is shown rather than hidden.${
+    sale === 'all' ? '' : ' You are looking at the ' + (sale === 'auction'
+        ? 'auctions' : 'Buy-It-Now lots') + ' only &mdash; the tabs below carry the rest.'}</p>
 ${seriesTabs}
 ${applied}
 
@@ -934,31 +1049,35 @@ ${applied}
   are then offered a rule that generalises it, with the count of what it would catch and what it
   would break &mdash; scoped to this coin, so a good reason to reject a sovereign can never empty
   another series.${seriesTabs === '' ? '' : ' One coin at a time: the tabs above carry the size of ' +
-  'every queue, so working through one never hides another.'}
+  'every queue' + (sale === 'all' ? '' : ' on this tab') + ', so working through one never ' +
+  'hides another.'}
   ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
 </div>
 
 <div class="card">
-  ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen })}
+  ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen }, queueSaleCounts)}
   <p class="thin" style="margin:10px 0 0">A live lot is filtered on how it is offered, a
-  completed one on how it actually sold. ${sale === 'bin'
+  completed one on how it actually sold. The queue opens on auctions because that is where the
+  tool has outcomes to learn from &mdash; every resolved sale it holds is one. ${sale === 'bin'
       ? 'No Buy-It-Now lot has a recorded outcome yet &mdash; they carry no end time, so the tool never learns whether they sold.'
       : ''}</p>
 </div>
 
-<h2>Making a number wrong right now (${affecting.length})</h2>
+<h2>Making a number wrong right now (${affecting.length}${only})</h2>
 <p class="thin">Flagged as uncertain, but still counted in the market statistics. These are the
-ones behind anything that looks wrong on the front page.</p>
-${list(affecting, 'Nothing uncertain is currently being priced.')}
+ones behind anything that looks wrong on the front page.${sale === 'all' ? '' :
+    ' Counted over this tab only &mdash; a lot sold the other way can be making a number wrong ' +
+    'too, and it is on the tab above.'}</p>
+${list(affecting, 'Nothing uncertain is currently being priced' + among + '.')}
 
-<h2>Uncertain, but not being priced (${inert.length})</h2>
-${list(inert, 'Nothing else awaiting a decision.', 150)}
+<h2>Uncertain, but not being priced (${inert.length}${only})</h2>
+${list(inert, 'Nothing else awaiting a decision' + among + '.', 150)}
 
-<h2>Deliberately excluded (${excluded.length})</h2>
+<h2>Deliberately excluded (${excluded.length}${only})</h2>
 <p class="thin">Mounts, copies, cases and multi-coin lots. If something here looks wrongly
 dropped, mark it genuine &mdash; that overrides the rule that dropped it, which is the failure
 mode worth watching for: a bad rule quietly eating half the market.</p>
-${list(excluded, 'Nothing excluded.', 150)}
+${list(excluded, 'Nothing excluded' + among + '.', 150)}
 ${truncated ? '<p class="thin warn">The queue is longer than this page reads &mdash; only the first ' + QUEUE_LIMIT + ' rows were fetched, so the counts above are floors rather than totals.</p>' : ''}
 `, url.pathname)
 }
@@ -1281,9 +1400,7 @@ function listingsPage (opened, url) {
             '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>', url.pathname)
     }
 
-    const sale = ['auction', 'bin'].includes(url.searchParams.get('sale'))
-        ? url.searchParams.get('sale')
-        : 'all'
+    const sale = saleFrom(url)
     const rows = repository.listingsForInstrument(key, 500, sale)
     const verdictCell = newPlausibilityCell(opened.spotAt)
     /*  This page deliberately shows everything, including lots the sweep has
@@ -1293,8 +1410,6 @@ function listingsPage (opened, url) {
     const sweepAt = repository.lastSweepAt()
     for (const row of rows) {
         row.sweepAt = sweepAt
-        row.back = '/listings?key=' + encodeURIComponent(key) +
-            (sale === 'all' ? '' : '&sale=' + sale)
         /*  The drill-down knows the instrument from the URL, so the controls
             can pre-select the denomination here too. */
         row.instrumentKey = key
@@ -1302,6 +1417,55 @@ function listingsPage (opened, url) {
 
     const name = INSTRUMENTS.displayName(key)
     const market = view.forInstrument(key)
+    const saleCounts = repository.saleCountsForInstrument(key)
+
+    /*
+        Show only the figure whose population matches the tab you are on.
+
+        The asking median is built from FIXED_PRICE listings alone
+        (liquidity.js:44) and the clearing figure from sold auctions alone
+        (liquidity.js:36). Both are correct; the bug was printing the
+        Buy-It-Now one under an auctions-only view, which is the exact
+        cross-pollution this page's filter exists to prevent - and it became
+        the DEFAULT view with this change, so it could not wait.
+
+        forInstrument stays corpus-wide and unfiltered. Passing a sale filter
+        into it is how two definitions of one number get born: it is shared
+        with the front page, the alert rules and the offline report, and
+        market.js:130-143 still carries the scar from the last time, when the
+        page printed "Clears at: -" beside "Spread: 40.3%". Nothing here
+        changes a number; it changes which one is shown and what it is called.
+
+        fairValue.p50 rather than liquidity.medianClearingPremium: the
+        decay-weighted p50 needs three sales and blanks below that, while the
+        plain median has no minimum and will happily report a whole market
+        from one lot. That was the second of the two medians behind the
+        original bug.
+    */
+    const metalName = METAL_NAMES[market.metal] || market.metal
+    const askTile = '<div><div class="n">' + pct(market.liquidity.medianAskPremium) + '</div>' +
+        '<div class="l">median <strong>asking</strong> premium over ' + escapeHtml(metalName) +
+        ' content, across live Buy-It-Now lots</div></div>'
+    const clearTile = '<div><div class="n">' +
+        (market.fairValue.sufficient ? pct(market.fairValue.p50) : '&mdash;') + '</div>' +
+        '<div class="l">median premium auctions actually <strong>cleared</strong> at over ' +
+        escapeHtml(metalName) + ' content' +
+        (market.fairValue.sufficient ? '' : ' &mdash; needs three sales to say') +
+        '</div></div>'
+    const bidsTile = Number.isFinite(market.liquidity.medianBidCount)
+        ? '<div><div class="n">' + market.liquidity.medianBidCount + '</div>' +
+          '<div class="l">median bids on auctions that got any</div></div>'
+        : ''
+
+    const statTiles = sale === 'auction'
+        ? clearTile + bidsTile
+        : (sale === 'bin' ? askTile : clearTile + askTile)
+
+    /*  What the counts on this page are counting. On a filtered tab
+        "12 completed sales" is 12 completed AUCTIONS, and saying so is what
+        lets a filter-scoped count sit honestly beside a corpus-scoped
+        metric. */
+    const saleNoun = sale === 'auction' ? ' at auction' : (sale === 'bin' ? ' at Buy-It-Now' : '')
 
     /*  Live and ended are counted separately so this page agrees with the
         Live column that led you here. Ended lots still matter - they feed
@@ -1313,8 +1477,17 @@ function listingsPage (opened, url) {
         opinion; an unsold lot is an opinion that was refused. */
     const sold = rows.filter(r => r.sold === 1)
         .sort((a, b) => String(b.endedAt || '').localeCompare(String(a.endedAt || '')))
-    const live = rows.filter(r => r.sold !== 1 && r.live === 1)
+    const live = rows.filter(r => r.sold !== 1 && r.live === 1).sort(byEndingSoonest)
     const unsold = rows.filter(r => r.sold !== 1 && r.live !== 1)
+
+    /*  Whether "ending soonest" is even a thing to say. On the auction tab
+        every lot has an end time; on the Buy-It-Now tab none of them do, and
+        the list is dearest-first exactly as it always was. Derived rather
+        than written down, so the blurb cannot go stale against the filter. */
+    const timed = live.filter(r => r.endTime).length
+    const liveOrdering = timed === 0
+        ? 'Dearest first'
+        : (timed === live.length ? 'Ending soonest first' : 'Ending soonest first, undated last')
 
     /*  The number that justifies this page existing. Of the live listings
         counted into an instrument, most were never flagged for review at
@@ -1323,10 +1496,14 @@ function listingsPage (opened, url) {
     const unflagged = live.filter(r => !r.reason).length
     const settled = rows.filter(r => r.verdict).length
 
-    /*  Capped, and says so. Dearest first means the lots most likely to be
-        distorting the number are at the top, so a cap costs little - but a
-        list that silently stops is a list you would wrongly believe you had
-        worked through. */
+    /*  Capped, and says so. A list that silently stops is a list you would
+        wrongly believe you had worked through.
+
+        The cap costs little in either ordering, but for different reasons.
+        Dearest-first puts the lots most likely to be distorting the number
+        at the top; ending-soonest puts the only lots you can still act on at
+        the top. What the cap drops is what the SECTION is ordered by, so the
+        note has to name that ordering rather than assume one. */
     const CAP = 200
     const bar = '<div class="bulkbar">' +
         '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
@@ -1334,28 +1511,31 @@ function listingsPage (opened, url) {
         '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
         'Genuine &mdash; selected</button></div>'
 
-    const list = (items) => '<form method="post" action="/apply">' +
+    const list = (items, ordering) => '<form method="post" action="/apply">' +
         '<input type="hidden" name="back" value="' +
-        escapeHtml('/listings?key=' + key + (sale === 'all' ? '' : '&sale=' + sale)) + '">' +
+        escapeHtml('/listings?key=' + encodeURIComponent(key) + '&sale=' + sale) + '">' +
         bar +
         '<div class="card"><div class="queue">' +
         items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
         (items.length > CAP
-            ? '<p class="thin" style="margin:12px 0 0">Showing the dearest ' + CAP +
-              ' of ' + items.length + '.</p>'
+            ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + CAP +
+              ' of ' + items.length + ', ' +
+              escapeHtml((ordering || 'dearest first').toLowerCase()) + '.</p>'
             : '') + '</div>' + bar + '</form>'
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
 <p class="sub">Every listing counted under this coin type. Anything here that is not this coin is
-moving the numbers on the front page.</p>
+moving the numbers on the front page.${sale === 'all' ? '' :
+    ' Showing the ' + (sale === 'auction' ? 'auctions' : 'Buy-It-Now lots') +
+    ' only &mdash; ' + saleCounts[sale === 'auction' ? 'bin' : 'auction'] +
+    ' lots are on the other tab.'}</p>
 
 <div class="card hero">
-  <div><div class="n">${sold.length}</div><div class="l">completed sales &mdash; the evidence
-    everything else is measured against</div></div>
-  <div><div class="n">${live.length}</div><div class="l">live listings counted here</div></div>
-  <div><div class="n">${pct(market.liquidity.medianAskPremium)}</div>
-    <div class="l">median asking premium over gold content</div></div>
+  <div><div class="n">${sold.length}</div><div class="l">completed sales${saleNoun}
+    &mdash; the evidence everything else is measured against</div></div>
+  <div><div class="n">${live.length}</div><div class="l">live${saleNoun} counted here</div></div>
+  ${statTiles}
   <div><div class="n">${unflagged}</div>
     <div class="l">of them never flagged for review &mdash; they classified confidently, so this
       page is the only way to reach them</div></div>
@@ -1363,7 +1543,7 @@ moving the numbers on the front page.</p>
 </div>
 
 <div class="card">
-  ${saleTabs('/listings', sale, { key })}
+  ${saleTabs('/listings', sale, { key }, saleCounts)}
   <p class="thin" style="margin:10px 0 0">A completed lot is filtered on how it actually sold, a
   live one on how it is offered. Note that no Buy-It-Now lot has a recorded outcome &mdash; they
   carry no end time, so the tool never learns whether they sold.</p>
@@ -1376,19 +1556,24 @@ Most recent first.</p>
 ${sold.length === 0
     ? '<p class="thin">No completed sales under this coin type yet. They arrive as auctions this ' +
       'tool was already watching close, so the count only grows with time on the market.</p>'
-    : list(sold)}
+    : list(sold, 'most recent first')}
 
 <h2>On sale now (${live.length})</h2>
-<p class="thin">Dearest first &mdash; within one coin type that is also the highest premium, and a
-lot priced far from its neighbours is both the most likely to be wrong and the most visible when
-it is. Click a photo to see it large. If the coin is real but the denomination is wrong, set it
-in the dropdown and mark it genuine rather than dismissing it.</p>
-${live.length === 0 ? '<p class="thin">Nothing live under this coin type.</p>' : list(live)}
+<p class="thin">${liveOrdering} &mdash; ${timed === 0
+    ? 'within one coin type the dearest lot is also the highest premium, and a lot priced far ' +
+      'from its neighbours is both the most likely to be wrong and the most visible when it is'
+    : 'the top of this list is the part you can still bid on'}. Click a photo to see it large.
+If the coin is real but the denomination is wrong, set it in the dropdown and mark it genuine
+rather than dismissing it.</p>
+${live.length === 0
+    ? '<p class="thin">Nothing live under this coin type' +
+      (sale === 'all' ? '' : ' on this tab') + '.</p>'
+    : list(live, liveOrdering)}
 
 ${unsold.length === 0 ? '' : `<h2>Ended without selling (${unsold.length})</h2>
 <p class="thin">The asking price was refused. Useful for the sell-through rate, and worth
 nothing at all as a clearing price.</p>
-${list(unsold)}`}
+${list(unsold, 'dearest first')}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
 `, url.pathname)

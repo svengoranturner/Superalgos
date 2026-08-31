@@ -470,3 +470,51 @@ test('completed sales survive the row limit on a busy instrument', () => {
     assert.strictEqual(rows[0].finalBidCount, 15)
     db.close()
 })
+
+/*
+    The row limit admits the DEAREST live lots, and that is a decision, not
+    an accident.
+
+    The drill-down sorts its live section by end time, but does it in JS
+    after the fetch. Moving that ordering into the SQL would look tidier and
+    would quietly change which rows come back: with `end_time ASC` as a sort
+    key, a limit of 5 admits the five soonest and drops everything dearer
+    that ends later. The dearest lot is the one most likely to be distorting
+    the premium the page exists to explain, so losing it loses the reason for
+    the page.
+
+    The sibling test above pins the FIRST key (completed sales lead). This
+    one pins the last, which is the one a plausible refactor reaches for.
+*/
+test('the row limit keeps the dearest live lots, not the soonest', () => {
+    const { db, repository } = fixture()
+    const key = 'GB.SOV.BULLION.FULL'
+    const at = hours => new Date(Date.now() + hours * 60 * 60 * 1000).toISOString()
+
+    /*  Ten live auctions where price and end time run in OPPOSITE
+        directions: the dearest ends last. Under dearest-first it is
+        admitted; under ending-soonest it is the first thing dropped. */
+    for (let i = 0; i < 10; i++) {
+        const id = 'v1|lot' + i + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'lot' + i, title: 'Gold Sovereign ' + i,
+            buyingOptions: 'AUCTION', endTime: at(i + 1)
+        })
+        repository.saveSnapshot(id, { price: 1000 + i * 100, shipping: 0 })
+        repository.saveClassification(id, [{ key, level: 0 }], 1, 'title', 0.2354, {})
+    }
+
+    const rows = repository.listingsForInstrument(key, 5)
+    assert.strictEqual(rows.length, 5)
+
+    const got = rows.map(r => r.legacyId)
+    assert.deepStrictEqual(got, ['lot9', 'lot8', 'lot7', 'lot6', 'lot5'],
+        'the fetch no longer admits the dearest five: ' + JSON.stringify(got))
+
+    /*  Said the other way round, because this is the claim that matters: the
+        lot ending soonest is the CHEAPEST here, and it must not displace a
+        dearer one from the sample. */
+    assert.ok(!got.includes('lot0'),
+        'the soonest-ending lot displaced a dearer one from the fetch')
+    db.close()
+})

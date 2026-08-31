@@ -306,36 +306,80 @@ test('every collected series looks for its own new listings', () => {
     So the property is: each filter's links carry the other, in both
     directions, and so does the way back.
 */
+/*  The two tab strips, told apart by what they offer rather than by their
+    order on the page. Scoping each assertion to ONE strip is the whole point:
+    a coin tab is SUPPOSED to change the coin, so a rule of the form "every
+    /review link carrying sale= keeps coin=" quietly tests the wrong thing the
+    moment coin tabs start carrying the sale - which is exactly what an
+    auction default makes them do. */
+function tabStrips (body) {
+    const strips = [...body.matchAll(/<div class="tabs">([\s\S]*?)<\/div>/g)].map(m => m[1])
+    const hrefs = strip => [...strip.matchAll(/href="([^"]*)"/g)].map(m => m[1])
+    const sale = strips.find(x => /Auctions/.test(x) && /Buy-It-Now/.test(x))
+    const coin = strips.find(x => x !== sale && /Morgan|Sovereign|Not attributed/.test(x))
+    return { sale: hrefs(sale || ''), coin: hrefs(coin || ''), saleStrip: sale, coinStrip: coin }
+}
+
 test('choosing a sale type keeps the coin, and choosing a coin keeps the sale type', async () => {
     const opened = twoSeriesStore()
     const { '/review?coin=US.MORGAN': morgan } = await fetchAll(opened, ['/review?coin=US.MORGAN'])
+    const bare = tabStrips(morgan.body)
 
     /*  Every link that CHANGES the sale type must stay on Morgans. */
-    const saleLinks = [...morgan.body.matchAll(/href="(\/review\?[^"]*sale=[^"]*)"/g)].map(m => m[1])
-    assert.ok(saleLinks.length > 0, 'no sale-type links rendered')
-    for (const href of saleLinks) {
+    assert.ok(bare.sale.length > 0, 'no sale-type links rendered')
+    for (const href of bare.sale) {
         assert.match(href, /coin=US\.MORGAN/, 'a sale-type link dropped the coin: ' + href)
     }
 
-    /*  And from a filtered view, switching COIN must keep the sale type.
-        Checked on the link to the other series specifically: the "Everything"
-        sale link also contains coin=, and it drops sale= on purpose, which
-        is what that tab is for. */
+    /*  A bare ?coin= URL is the AUCTION view now, so the auction tab is the
+        current one and renders as a span rather than a link. If it is still
+        offered as a link here, the default did not move. */
+    assert.ok(!bare.sale.some(h => /sale=auction/.test(h)),
+        'the auction tab is offered as a link, so it is not the current view')
+
+    /*  And from a filtered view, switching COIN must keep the sale type. */
     const { '/review?coin=US.MORGAN&sale=auction': auctions } =
         await fetchAll(opened, ['/review?coin=US.MORGAN&sale=auction'])
-    const otherCoin = [...auctions.body.matchAll(/href="(\/review\?[^"]*coin=GB\.SOV[^"]*)"/g)]
-        .map(m => m[1])
+    const filtered = tabStrips(auctions.body)
+    const otherCoin = filtered.coin.filter(h => /coin=GB\.SOV/.test(h))
     assert.ok(otherCoin.length > 0, 'no link to the other series')
     for (const href of otherCoin) {
         assert.match(href, /sale=auction/, 'switching coin dropped the sale type: ' + href)
     }
 
-    /*  The Everything tab is the one link allowed to drop it. */
-    assert.ok(auctions.body.includes('href="/review?coin=US.MORGAN"'),
-        'no way back to every sale type without losing the coin')
+    /*  Everything must now SAY sale=all. It used to be the default and so
+        carried no parameter at all; a bare URL means auctions today, so a
+        link that drops the parameter no longer leads where its label says. */
+    assert.ok(filtered.sale.some(h => h === '/review?coin=US.MORGAN&amp;sale=all'),
+        'no way to every sale type that keeps the coin: ' + JSON.stringify(filtered.sale))
 
-    /*  The way back after a verdict, too. */
+    /*  The default tab is the one allowed to drop the parameter, and only
+        when it is not the current view. */
+    const { '/review?coin=US.MORGAN&sale=bin': bin } =
+        await fetchAll(opened, ['/review?coin=US.MORGAN&sale=bin'])
+    assert.ok(tabStrips(bin.body).sale.some(h => h === '/review?coin=US.MORGAN'),
+        'the default tab does not drop its parameter, so a bare URL is unreachable')
+
+    /*  And from the EVERYTHING view specifically, which is the case the
+        old omit-when-default idiom left broken: sale=all was the default so
+        it was dropped from every link, and once a bare URL means auctions,
+        clicking another coin from Everything silently narrows you to
+        auctions. The auction and bin views cannot catch this - they are
+        never the omitted value. */
+    const { '/review?coin=US.MORGAN&sale=all': everything } =
+        await fetchAll(opened, ['/review?coin=US.MORGAN&sale=all'])
+    const fromAll = tabStrips(everything.body).coin.filter(h => /coin=GB\.SOV/.test(h))
+    assert.ok(fromAll.length > 0, 'no link to the other series from the Everything view')
+    for (const href of fromAll) {
+        assert.match(href, /sale=all/,
+            'switching coin from Everything drops you into auctions: ' + href)
+    }
+
+    /*  The way back after a verdict, too - stated explicitly whatever the
+        filter, including the default. */
     assert.match(auctions.body, /name="back" value="\/review\?coin=US\.MORGAN&amp;sale=auction"/,
+        'the return path lost a filter')
+    assert.match(bin.body, /name="back" value="\/review\?coin=US\.MORGAN&amp;sale=bin"/,
         'the return path lost a filter')
     opened.db.close()
 })
@@ -624,5 +668,194 @@ test('a queued listing still counts as priced, so the preview cannot understate'
     assert.strictEqual(promised, before - after,
         'the confirmation page promised ' + promised + ' but the click dropped ' +
         (before - after))
+    opened.db.close()
+})
+
+/*
+    A drill-down with lots that can be told apart BY ORDER.
+
+    twoSeriesStore gives every auction the same end time, so nothing there
+    can catch a sort. This one spreads end times deliberately and makes the
+    dearest lot the LAST to end, so dearest-first and ending-soonest-first
+    produce opposite sequences: a test that passes under both is not testing
+    the sort.
+*/
+function orderingStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+    const at = hours => new Date(Date.now() + hours * 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const add = (legacyId, endTime, price, auction) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Gold Sovereign ' + legacyId,
+            buyingOptions: auction ? 'AUCTION' : 'FIXED_PRICE',
+            endTime
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 0, observedAt: now })
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        return id
+    }
+
+    /*  Auctions: dearest ends LAST, so the two orderings disagree. */
+    add('a-soon', at(1), 800, true)
+    add('a-mid', at(5), 900, true)
+    add('a-late', at(9), 1000, true)
+
+    /*  Good-'Til-Cancelled Buy-It-Nows: no end time at all, and dearer than
+        every auction, so under dearest-first they would lead the list. */
+    add('b-dear', null, 5000, false)
+    add('b-cheap', null, 4000, false)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}), key }
+}
+
+/*  The legacy ids of the "On sale now" section, in the order rendered. */
+function liveOrder (body) {
+    const section = body.split('<h2>On sale now')[1] || ''
+    const upTo = section.split('<h2>')[0]
+    return [...upTo.matchAll(/name="pick" value="([^"]*)"/g)].map(m => m[1])
+}
+
+test('a bare drill-down URL is the auction view, and Everything must ask', async () => {
+    const opened = orderingStore()
+    const bare = '/listings?key=' + opened.key
+    const all = bare + '&sale=all'
+    const pages = await fetchAll(opened, [bare, all])
+
+    /*  Three auctions, no Buy-It-Now, without anything having been clicked. */
+    assert.deepStrictEqual(liveOrder(pages[bare].body).sort(),
+        ['a-late', 'a-mid', 'a-soon'],
+        'a bare drill-down URL is not the auction view')
+
+    /*  And sale=all has to be an accepted value, not merely the fallback for
+        anything unrecognised - it is the only way back to the whole market. */
+    assert.strictEqual(liveOrder(pages[all].body).length, 5,
+        'sale=all does not show every lot')
+
+    opened.db.close()
+})
+
+test('live lots run ending soonest, with the undated ones last', async () => {
+    const opened = orderingStore()
+    const path = '/listings?key=' + opened.key + '&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    /*  The auctions in end-time order, THEN the Good-'Til-Cancelled lots
+        dearest-first. Written as one exact sequence because the interesting
+        failures are orderings that get part of it right: dearest-first would
+        put b-dear first, and a bare String() comparison would sort the
+        undated lots as "null" - after "2026" - scattering them among the
+        auctions rather than below them. */
+    assert.deepStrictEqual(liveOrder(body),
+        ['a-soon', 'a-mid', 'a-late', 'b-dear', 'b-cheap'],
+        'live lots are not ending-soonest with undated last')
+
+    /*  And the blurb has to describe what the list actually did. */
+    assert.match(body, /Ending soonest first, undated last/,
+        'the ordering blurb does not match a mixed list')
+
+    opened.db.close()
+})
+
+test('the ordering blurb follows the tab rather than being written down', async () => {
+    const opened = orderingStore()
+    const auctions = '/listings?key=' + opened.key
+    const bin = '/listings?key=' + opened.key + '&sale=bin'
+    const pages = await fetchAll(opened, [auctions, bin])
+
+    /*  Every auction has an end time, so the qualifier would be noise. */
+    assert.match(pages[auctions].body, /Ending soonest first &mdash;/)
+    assert.ok(!/undated last/.test(pages[auctions].body),
+        'the auction tab claims undated lots it does not have')
+
+    /*  No Buy-It-Now lot has one, so there is no soonest to speak of and the
+        list is dearest-first exactly as it always was. */
+    assert.match(pages[bin].body, /Dearest first/)
+    assert.deepStrictEqual(liveOrder(pages[bin].body), ['b-dear', 'b-cheap'],
+        'undated lots are not dearest-first among themselves')
+
+    opened.db.close()
+})
+
+test('an auctions-only view shows no Buy-It-Now statistic', async () => {
+    const opened = orderingStore()
+    const auctions = '/listings?key=' + opened.key
+    const bin = '/listings?key=' + opened.key + '&sale=bin'
+    const all = '/listings?key=' + opened.key + '&sale=all'
+    const pages = await fetchAll(opened, [auctions, bin, all])
+
+    /*  The asking median is built from FIXED_PRICE listings alone
+        (liquidity.js:44). Printing it under an auctions-only view is the
+        cross-pollution the filter exists to prevent, and it is the DEFAULT
+        view - so this is the one that would be wrong on every page load. */
+    const asking = /median <strong>asking<\/strong> premium/
+    assert.ok(!asking.test(pages[auctions].body),
+        'the auction view shows a Buy-It-Now-only asking median')
+    assert.ok(asking.test(pages[bin].body),
+        'the Buy-It-Now view lost its asking median')
+    assert.ok(asking.test(pages[all].body),
+        'the Everything view lost its asking median')
+
+    /*  Each figure names the population it is drawn from, so a filtered
+        count and a corpus-wide metric can sit side by side honestly. */
+    assert.match(pages[bin].body, /across live Buy-It-Now lots/)
+    assert.match(pages[auctions].body, /auctions actually <strong>cleared<\/strong> at/)
+
+    opened.db.close()
+})
+
+test('the drill-down says how much the default is hiding', async () => {
+    const opened = orderingStore()
+    const auctions = '/listings?key=' + opened.key
+    const body = (await fetchAll(opened, [auctions]))[auctions].body
+
+    /*  The tab counts must be the size of the pile, not the size of the
+        fetch - opening on auctions hides most of a real market, and the
+        label is the only thing that says so on every page view. */
+    assert.match(body, /Buy-It-Now \(2\)/, 'the Buy-It-Now tab does not carry its count')
+    assert.match(body, /Everything \(5\)/, 'the Everything tab does not carry its count')
+
+    opened.db.close()
+})
+
+test('a filtered listings view states the filter in every link back', async () => {
+    const opened = orderingStore()
+    for (const sale of ['auction', 'bin', 'all']) {
+        const path = '/listings?key=' + opened.key + '&sale=' + sale
+        const body = (await fetchAll(opened, [path]))[path].body
+        const backs = [...body.matchAll(/name="back" value="([^"]*)"/g)].map(m => m[1])
+        assert.ok(backs.length > 0, 'no return path rendered for sale=' + sale)
+        for (const b of backs) {
+            assert.ok(b.includes('sale=' + sale),
+                'a return path omitted the filter and would land elsewhere: ' + b)
+        }
+    }
+    opened.db.close()
+})
+
+test('a review tab counts what it opens on', async () => {
+    const opened = twoSeriesStore()
+    const bare = '/review'
+    const body = (await fetchAll(opened, [bare]))[bare].body
+
+    /*  The coin tabs used to carry an unfiltered total beside a filtered
+        list. On the live store that had the unattributed tab reading 20,562
+        and opening on 1,691. */
+    const strips = tabStrips(body)
+    const label = (strips.coinStrip || '').match(/>([^<]*\((\d+)\)[^<]*)</)
+    assert.ok(label, 'no coin tab with a count rendered')
+
+    const shown = [...body.matchAll(/name="pick" value="/g)].length
+    const advertised = Number(label[2])
+    assert.ok(advertised <= shown,
+        'a coin tab advertises ' + advertised + ' but the page renders ' + shown)
+
     opened.db.close()
 })
