@@ -49,9 +49,13 @@ exports.newDiscoverer = function (browseClient, repository, options) {
     function buildQueries (coins) {
         const queries = []
         for (const partition of coins.partitions) {
-            const bands = coins.priceBands && coins.priceBands.length > 0
-                ? coins.priceBands
-                : [null]
+            /*  A partition may opt out of price banding. Bands exist to keep
+                a broad search under eBay's 10,000-item cap; a partition that
+                asks for the NEWEST few and stops has no such problem, and
+                banding it would multiply one cheap call into six. */
+            const bands = partition.bands === false
+                ? [null]
+                : (coins.priceBands && coins.priceBands.length > 0 ? coins.priceBands : [null])
             for (const band of bands) {
                 const filter = { buyingOptions: partition.buyingOptions }
                 if (band !== null) {
@@ -77,6 +81,11 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 }
                 queries.push({
                     name: partition.name + (band ? '-' + band[0] + '-' + band[1] : ''),
+                    /*  How deep to page. One page is 200 listings; a
+                        newly-listed partition wants the newest page and
+                        nothing behind it, because everything behind it is
+                        what the other partitions already sweep. */
+                    maxPages: Number.isFinite(partition.maxPages) ? partition.maxPages : undefined,
                     query: {
                         q: partition.q,
                         category_ids: (coins.categoryIds || []).join(',') || undefined,
@@ -193,7 +202,9 @@ exports.newDiscoverer = function (browseClient, repository, options) {
 
             for (const entry of queries) {
                 try {
-                    const result = await browseClient.searchAll(entry.query, { job: 'discover' })
+                    const result = await browseClient.searchAll(entry.query, entry.maxPages === undefined
+                        ? { job: 'discover' }
+                        : { job: 'discover', maxPages: entry.maxPages })
                     report.items += result.items.length
                     if (result.truncated) { report.truncated.push(entry.name) }
 

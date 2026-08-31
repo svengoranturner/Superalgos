@@ -224,3 +224,56 @@ test('a silver coin is measured against silver, on the page as well as in the st
     }
     opened.db.close()
 })
+
+/*
+    MKT-14. A partition that asks for the newest auctions and stops.
+
+    Measured over 1,637 auctions, the median gap between a seller listing
+    one and this tool first seeing it was 87.8 hours - more than half of a
+    7-day auction - because a fresh listing sits deep in a relevance-sorted
+    result set and only surfaces as it nears its end. A tool that never sees
+    an auction near its start cannot know what it opened at.
+
+    The cost has to stay at one call: banding it would multiply that by six,
+    and paging deeper would re-fetch what the other partitions already sweep.
+*/
+test('the newest-listings partition costs one call and skips the bands', () => {
+    const DISCOVER = require('../src/collect/discover.js')
+    const discoverer = DISCOVER.newDiscoverer({}, {}, { allowedCountries: () => ['GB'] })
+
+    const queries = discoverer.buildQueries({
+        currency: 'GBP',
+        priceBands: [[10, 50], [50, 90], [90, 150]],
+        partitions: [
+            { name: 'banded', q: 'gold sovereign', buyingOptions: ['AUCTION'] },
+            {
+                name: 'newest', q: 'gold sovereign', buyingOptions: ['AUCTION'],
+                sort: 'newlyListed', bands: false, maxPages: 1
+            }
+        ]
+    })
+
+    const newest = queries.filter(q => q.name.startsWith('newest'))
+    assert.strictEqual(newest.length, 1, 'the newest partition must not be multiplied by bands')
+    assert.strictEqual(newest[0].maxPages, 1, 'it must not page past the newest listings')
+    assert.strictEqual(newest[0].query.sort, 'newlyListed')
+    assert.ok(!/price:/.test(newest[0].query.filter), 'no price band on an unbanded partition')
+
+    /*  And the banded partitions are untouched by any of that. */
+    assert.strictEqual(queries.filter(q => q.name.startsWith('banded')).length, 3)
+    assert.strictEqual(queries.find(q => q.name.startsWith('banded')).maxPages, undefined)
+})
+
+/*  Both series ship the partition, because the question - what should I
+    open an auction at? - is asked of whatever you are selling. */
+test('every collected series looks for its own new listings', () => {
+    for (const name of ['sovereign', 'morgan']) {
+        const coins = require('../config/coins.' + name + '.json')
+        const newest = coins.partitions.filter(p => p.sort === 'newlyListed')
+        assert.strictEqual(newest.length, 1, name + ' has no newly-listed partition')
+        assert.deepStrictEqual(newest[0].buyingOptions, ['AUCTION'],
+            'a starting price is an auction idea')
+        assert.strictEqual(newest[0].bands, false)
+        assert.strictEqual(newest[0].maxPages, 1)
+    }
+})

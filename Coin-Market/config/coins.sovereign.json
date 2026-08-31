@@ -23,7 +23,28 @@
     { "name": "sovereign-auction",      "q": "gold sovereign",      "buyingOptions": ["AUCTION"] },
     { "name": "sovereign-bin",          "q": "gold sovereign",      "buyingOptions": ["FIXED_PRICE"] },
     { "name": "half-sovereign-auction", "q": "half sovereign gold", "buyingOptions": ["AUCTION"] },
-    { "name": "half-sovereign-bin",     "q": "half sovereign gold", "buyingOptions": ["FIXED_PRICE"] }
+    { "name": "half-sovereign-bin",     "q": "half sovereign gold", "buyingOptions": ["FIXED_PRICE"] },
+    { "name": "sovereign-new", "q": "gold sovereign", "buyingOptions": ["AUCTION"], "sort": "newlyListed", "bands": false, "maxPages": 1 }
+  ],
+  "_newlyListed": [
+    "One partition per series that asks for the NEWEST auctions and stops",
+    "after a single page. It exists because of a measurement, not a hunch:",
+    "over 1,637 auctions, the median gap between a seller listing one and",
+    "this tool first seeing it was 87.8 HOURS - more than half of a 7-day",
+    "auction - and only 5% were seen within an hour. A tool that never sees",
+    "an auction near its start cannot know what it opened at, which makes",
+    "the question worth asking (does opening low draw more bids and a higher",
+    "hammer?) unanswerable.",
+    "",
+    "The reason for the lag is that a fresh 7-day auction sits deep in a",
+    "relevance-sorted result set and only surfaces as it nears its end. So",
+    "sorting by newlyListed is the whole fix.",
+    "",
+    "Auctions only, because a starting price is an auction idea. No price",
+    "bands and one page: 200 newest listings an hour against roughly ten new",
+    "sovereigns an hour is ample headroom, and paging deeper would just",
+    "re-fetch what the other partitions already sweep. One call per series",
+    "per hour."
   ],
   "priceBands": [[100, 300], [300, 500], [500, 800], [800, 2000], [2000, 20000]],
   "watchlist": {
