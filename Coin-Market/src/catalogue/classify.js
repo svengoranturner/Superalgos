@@ -1,6 +1,7 @@
 'use strict'
 
 const COINS = require('./coins.js')
+const SERIES = require('./series/index.js')
 const EXCLUSIONS = require('./exclusions.js')
 const CONDITIONS = require('./conditions.js')
 const LEARNED = require('./learned.js')
@@ -22,7 +23,25 @@ const LEARNED = require('./learned.js')
     sovereign) so that "22ct", "9ct", weights and postcodes cannot be
     mistaken for dates.
 */
-function extractYear (title) {
+/*  The pattern depends only on the series' mintmarks, so it is built once
+    per series rather than once per title - reclassify runs this across five
+    thousand titles and a fresh RegExp each time is pure waste. Longest mark
+    first, because an alternation is ordered: 'S' before 'SA' would match the
+    S and leave the A behind. */
+const YEAR_PATTERNS = new Map()
+function yearPatternFor (pack) {
+    if (!YEAR_PATTERNS.has(pack.id)) {
+        const marks = pack.mintMarks.slice()
+            .sort((a, b) => b.length - a.length || a.localeCompare(b))
+            .join('|')
+        YEAR_PATTERNS.set(pack.id,
+            new RegExp('\\b(1[89]\\d{2}|20[0-4]\\d)\\s?(' + marks + ')?\\b', 'gi'))
+    }
+    return YEAR_PATTERNS.get(pack.id)
+}
+
+function extractYear (title, packOrId) {
+    const pack = SERIES.resolve(packOrId)
     const candidates = []
     const marks = []
     /*
@@ -43,11 +62,13 @@ function extractYear (title) {
         Sovereign" the S is followed by "overeign", so there is no boundary
         after it and the letter is not taken. Checked against 4,000 live
         titles with no false reading. */
-    const pattern = /\b(1[89]\d{2}|20[0-4]\d)\s?(SA|[SMPCIA])?\b/gi
+    /*  Reset, because the shared pattern carries a lastIndex between calls. */
+    const pattern = yearPatternFor(pack)
+    pattern.lastIndex = 0
     let match
     while ((match = pattern.exec(title)) !== null) {
         const year = parseInt(match[1], 10)
-        if (year >= 1817 && year <= 2049) {
+        if (year >= pack.yearRange.from && year <= pack.yearRange.to) {
             candidates.push(year)
             if (match[2] !== undefined) { marks.push(match[2].toUpperCase()) }
         }
@@ -389,6 +410,10 @@ exports.classify = function (listing, context) {
     const title = String(listing.title || '')
     const aspects = listing.aspects || null
     const learned = (context && context.learned) || null
+    /*  Which family of coins we are asking about. Defaults to the tool's
+        original series so every existing caller is unchanged; a caller that
+        knows better passes context.series. */
+    const pack = SERIES.resolve(context && context.series)
     const label = (context && context.label) || null
 
     /*  A confirmed coin skips the exclusion rules entirely rather than being
@@ -402,7 +427,7 @@ exports.classify = function (listing, context) {
     const confirmed = label !== null && label.verdict === LEARNED.VERDICT.SOVEREIGN
 
     if (!confirmed) {
-        const excluded = EXCLUSIONS.screen(title, aspects) ||
+        const excluded = EXCLUSIONS.screen(title, aspects, pack) ||
             (learned === null ? null : learned.exclusionFor(title))
         if (excluded !== null) {
             return LEARNED.apply(
@@ -411,7 +436,7 @@ exports.classify = function (listing, context) {
         }
     }
 
-    const yearResult = extractYear(title)
+    const yearResult = extractYear(title, pack)
     const denomResult = extractDenomination(title)
     const portraitResult = extractPortrait(title, yearResult.year)
     const mintResult = extractMint(title, yearResult.year, yearResult.mintmark)
@@ -474,11 +499,15 @@ exports.classify = function (listing, context) {
 
     if (descriptors.certNumber !== undefined) { attributes.certNumber = descriptors.certNumber }
 
+    /*  Stamped on the attributes so keyAt, keysFor and fineOzFor all agree
+        without being told separately - and so a stored vector remembers
+        which series decided it. */
+    attributes.series = pack.id
     attributes.bullionPool = COINS.isBullionPool(attributes)
     /*  Which pool it trades in, by the reason it is not ordinary bullion.
         The boolean above is kept because plenty of code still asks the
         simpler question. */
-    attributes.pool = COINS.poolFor(attributes)
+    attributes.pool = pack.poolFor(attributes)
 
     const reasons = []
     if (attributes.denomination === null) { reasons.push('Denomination not identified') }

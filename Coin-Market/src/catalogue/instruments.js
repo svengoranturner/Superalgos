@@ -1,6 +1,7 @@
 'use strict'
 
 const COINS = require('./coins.js')
+const SERIES = require('./series/index.js')
 
 /*
     Instrument keys.
@@ -13,15 +14,11 @@ const COINS = require('./coins.js')
     first.
 */
 
-const LEVEL_FIELDS = [
-    [],                                                  /* L0: series + denomination */
-    ['portrait'],
-    ['portrait', 'year'],
-    ['portrait', 'year', 'mint'],
-    ['portrait', 'year', 'mint', 'gradeBand']
-]
-
-exports.MAX_LEVEL = LEVEL_FIELDS.length - 1
+/*  The ladder belongs to the series now: a coin family with no portraits,
+    or with a mintmark that means something different, declares its own
+    rather than bending this one. MAX_LEVEL stays as the default series'
+    depth because callers loop up to it. */
+exports.MAX_LEVEL = SERIES.defaultPack().levelFields.length - 1
 
 /*
     Builds the key at a given level, or null when a required attribute is
@@ -29,9 +26,16 @@ exports.MAX_LEVEL = LEVEL_FIELDS.length - 1
     "unknown mint" bucket would silently merge London coins with branch
     mints that trade at multiples of the price.
 */
-exports.keyAt = function (attributes, level) {
+exports.keyAt = function (attributes, level, packOrId) {
     if (attributes === null || attributes === undefined) { return null }
     if (attributes.denomination === null || attributes.denomination === undefined) { return null }
+
+    /*  attributes.series is honoured ahead of the argument, because a stored
+        attribute vector already carries the series it was classified as and
+        a caller that forgot to pass a pack must not silently re-badge it. */
+    const pack = SERIES.resolve(attributes.series || packOrId)
+    const ladder = pack.levelFields[level]
+    if (ladder === undefined) { return null }
 
     /*
         Bullion and collector coins are separate instruments, not the same
@@ -59,9 +63,9 @@ exports.keyAt = function (attributes, level) {
         built by hand. */
     const pool = attributes.pool ||
         (attributes.bullionPool === false ? 'COLLECTOR' : 'BULLION')
-    const parts = [attributes.series || 'GB.SOV', pool, attributes.denomination]
+    const parts = [pack.id, pool, attributes.denomination]
 
-    for (const field of LEVEL_FIELDS[level]) {
+    for (const field of ladder) {
         const value = attributes[field]
         if (value === null || value === undefined) { return null }
         parts.push(String(value))
@@ -70,10 +74,11 @@ exports.keyAt = function (attributes, level) {
 }
 
 /* Every key this listing belongs to, coarsest first. */
-exports.keysFor = function (attributes) {
+exports.keysFor = function (attributes, packOrId) {
     const keys = []
-    for (let level = 0; level <= exports.MAX_LEVEL; level++) {
-        const key = exports.keyAt(attributes, level)
+    const pack = SERIES.resolve((attributes && attributes.series) || packOrId)
+    for (let level = 0; level < pack.levelFields.length; level++) {
+        const key = exports.keyAt(attributes, level, pack)
         if (key === null) { break }        /* levels are nested: a gap ends the chain */
         keys.push({ key, level })
     }
@@ -89,8 +94,9 @@ exports.keysFor = function (attributes) {
     The lot size lives on listing_instrument.quantity instead, and the
     queries multiply the two when they read a listing's spot.
 */
-exports.fineOzFor = function (attributes) {
-    const denomination = COINS.DENOMINATIONS[attributes.denomination]
+exports.fineOzFor = function (attributes, packOrId) {
+    const pack = SERIES.resolve((attributes && attributes.series) || packOrId)
+    const denomination = pack.denominations[attributes.denomination]
     return denomination === undefined ? null : denomination.fineOz
 }
 
@@ -105,27 +111,57 @@ exports.gradeLabel = function (band) {
     return GRADE_LABELS[band] !== undefined ? GRADE_LABELS[band] : band.replace(/_/g, ' ')
 }
 
-exports.displayName = function (key) {
-    const parts = key.split('.')
-    /* parts[0..1] are the series prefix 'GB','SOV'; parts[2] is the pool. */
-    const pool = parts[2]
-    const denomination = COINS.DENOMINATIONS[parts[3]]
-    const bits = [denomination === undefined ? parts[3] : denomination.label]
+/*  One ladder field, rendered. Falls back to the raw value for anything the
+    pack does not recognise, because a code on screen is still findable and a
+    blank is not. */
+function labelFor (pack, field, value) {
+    if (field === 'portrait') {
+        const portrait = pack.portraitByCode ? pack.portraitByCode.get(value) : undefined
+        return portrait === undefined ? value : portrait.label
+    }
+    if (field === 'mint') {
+        const mint = pack.mints ? pack.mints[value] : undefined
+        return mint === undefined ? value : mint.label
+    }
+    if (field === 'gradeBand') { return exports.gradeLabel(value) }
+    return value
+}
 
-    if (parts[4] !== undefined) {
-        const portrait = COINS.PORTRAIT_BY_CODE.get(parts[4])
-        bits.push(portrait === undefined ? parts[4] : portrait.label)
-    }
-    if (parts[5] !== undefined) { bits.push(parts[5]) }
-    if (parts[6] !== undefined) {
-        const mint = COINS.MINTS[parts[6]]
-        bits.push(mint === undefined ? parts[6] : mint.label)
-    }
-    if (parts[7] !== undefined) { bits.push(exports.gradeLabel(parts[7])) }
+/*
+    The name a coin type goes by on screen.
+
+    This used to parse its key BY POSITION - parts[2] is the pool, parts[3]
+    the denomination - which worked only because every key began with exactly
+    two segments of series. On any other shape it read the wrong fields and
+    returned an empty string, which was then written to a NOT NULL column;
+    test/store.test.js has stored such a key since long before anyone noticed.
+
+    Now the registry says which series owns the key, and the series' own
+    ladder says what each remaining segment means. So a series id of any
+    length works, and an unrecognised key returns the key itself: a name you
+    cannot read is bad, but a row you cannot find is worse, and a blank
+    "Coin type" cell reads as a rendering fault rather than a data one.
+*/
+exports.displayName = function (key) {
+    const found = SERIES.forKey(key)
+    if (found === null) { return String(key) }
+
+    const { pack, rest } = found
+    const [pool, denominationCode, ...tail] = rest
+    const denomination = pack.denominations[denominationCode]
+    const bits = [denomination === undefined ? denominationCode : denomination.label]
+
+    /*  The deepest ladder names every field in order, so segment i of the
+        tail is field i. That is the same mapping keyAt used to build it. */
+    const fields = pack.levelFields[pack.levelFields.length - 1]
+    tail.forEach((value, i) => {
+        if (value === undefined || fields[i] === undefined) { return }
+        bits.push(labelFor(pack, fields[i], value))
+    })
 
     /*  Every pool is labelled, not just the unusual ones. An unlabelled
         "Sovereign" is exactly the ambiguity this split exists to remove. */
     const label = bits.join(' · ')
-    const poolLabel = COINS.POOLS[pool]
-    return poolLabel === undefined ? label : label + ' (' + poolLabel + ')' 
+    const poolLabel = pack.pools[pool]
+    return poolLabel === undefined ? label : label + ' (' + poolLabel + ')'
 }

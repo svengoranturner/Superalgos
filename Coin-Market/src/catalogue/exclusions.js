@@ -1,5 +1,7 @@
 'use strict'
 
+const SERIES = require('./series/index.js')
+
 /*
     Exclusion rules.
 
@@ -14,6 +16,21 @@
     dropped, and so a false positive is diagnosable rather than invisible.
 */
 
+/*
+    A rule with no `series` is about coins in general - is this jewellery, a
+    replica, a fishing reel - and applies whatever family we are looking for.
+    A rule WITH one is about that family specifically, and must not be
+    applied to another: NOT_A_SOVEREIGN rejects anything finer than 22ct,
+    which is every Britannia ever struck, and SUB_SOVEREIGN rejects the 1/10
+    and 1/20 fractions that other series genuinely mint.
+
+    Tagged in place rather than moved into the pack, deliberately. screen()
+    returns on the FIRST match, so lifting five rules into a separate list
+    would change which rule wins for a title that matches both a series rule
+    and a later universal one - a silent reordering, in the one function
+    where order is the whole design. It also keeps each rule's evidence
+    beside it, which is where this codebase puts it.
+*/
 const RULES = [
     {
         code: 'COUNTERFEIT',
@@ -70,6 +87,7 @@ const RULES = [
     },
     {
         code: 'NOT_A_SOVEREIGN',
+        series: 'GB.SOV',
         reason: 'Gold, but not a sovereign',
         /*  Fineness is decisive and needs no keyword list. A sovereign is
             22ct - 916 fine - by definition, so a title claiming 24ct or
@@ -110,6 +128,7 @@ const RULES = [
     },
     {
         code: 'FANTASY_ISSUE',
+        series: 'GB.SOV',
         reason: 'A coin that was never struck as a sovereign',
         /*  There is no Edward VIII sovereign. He abdicated before any
             circulating coinage was issued; the handful of 1937 patterns are
@@ -127,6 +146,7 @@ const RULES = [
     },
     {
         code: 'SUB_SOVEREIGN',
+        series: 'GB.SOV',
         reason: 'Smaller than a quarter - not a sovereign denomination',
         /*  The Royal Mint's smallest sovereign is the quarter. Eighths,
             tenths and hundredths are private issues from Hattons and the
@@ -141,6 +161,7 @@ const RULES = [
     },
     {
         code: 'ABOUT_A_SOVEREIGN',
+        series: 'GB.SOV',
         reason: 'A different coin that merely depicts or commemorates the sovereign',
         /* "2009 UK GBP 2 Two Pounds Coin - Anniversary of the Gold Sovereign"
            is a two-pound commemorative, not a sovereign. Worded to avoid the
@@ -155,6 +176,7 @@ const RULES = [
     },
     {
         code: 'PROOF_SET_OR_BUNDLE',
+        series: 'GB.SOV',
         reason: 'Multi-coin set or job lot',
         /*  Sellers spell the count out far more often than they use a
             digit - "Three-Coin Set", "Four-coin Sovereign Collection" - and
@@ -286,7 +308,9 @@ exports.readableAs = function (title) {
     return String(title).replace(NEGATED, ' ').replace(PACKAGING, ' ')
 }
 
-exports.screen = function (title, aspects) {
+exports.screen = function (title, aspects, packOrId) {
+
+    const pack = SERIES.resolve(packOrId)
 
     /*  Read the title with its negations and packaging removed, so a coin
         described as "never mounted, in capsule" is not dropped for being a
@@ -294,6 +318,7 @@ exports.screen = function (title, aspects) {
     const readable = exports.readableAs(title)
 
     for (const rule of RULES) {
+        if (rule.series !== undefined && rule.series !== pack.id) { continue }
         if (rule.test.test(readable)) { return { code: rule.code, reason: rule.reason } }
     }
 
