@@ -90,6 +90,53 @@ test('sold outcomes survive the round trip through the read model', () => {
     assert.strictEqual(market.liquidity.sellThroughRate, 1)
 })
 
+/*  CLS-07 kept lot size off the shared instrument row, because writing it
+    there would have redefined the gold content of every coin under the same
+    key. The read path made the same mistake by other means: it took the
+    instrument's fine ounces from active[0].fineOz, which IS lot-multiplied,
+    so whichever listing happened to sort first set the gold for all of them.
+    A nine-coin set was due at the front of GB.SOV.UNATTRIBUTED.HALF on
+    2026-09-03, which would have multiplied that key's bid ceiling by nine. */
+test('a multi-coin lot does not redefine the gold in one coin', () => {
+    const { db, repository } = fixture()
+    const now = Date.now()
+    const SINGLE = 0.2354
+
+    /*  The bulk lot ends soonest, so activeListings sorts it first - which is
+        precisely when the old code adopted its gold as the instrument's. */
+    repository.saveListing({
+        browseId: 'v1|set|0', legacyId: 'set', title: 'Full Set (9) Gold Half Sovereigns',
+        buyingOptions: 'AUCTION', endTime: new Date(now + 3600000).toISOString()
+    })
+    repository.saveSnapshot('v1|set|0', { price: 6000, shipping: 0, observedAt: new Date().toISOString() })
+    repository.saveClassification('v1|set|0',
+        [{ key: 'GB.SOV.HALF', level: 0 }], 0.9, 'title', SINGLE, { quantity: 9 })
+
+    repository.saveListing({
+        browseId: 'v1|one|0', legacyId: 'one', title: 'Gold Half Sovereign 1912',
+        buyingOptions: 'AUCTION', endTime: new Date(now + 2 * 3600000).toISOString()
+    })
+    repository.saveSnapshot('v1|one|0', { price: 700, shipping: 0, observedAt: new Date().toISOString() })
+    repository.saveClassification('v1|one|0',
+        [{ key: 'GB.SOV.HALF', level: 0 }], 0.9, 'title', SINGLE, {})
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(new Date().toISOString(), 'XAU', 3292, null, 'test')
+
+    const view = MARKET.newMarketView(repository, SPOT.newSpotLookup(db), {})
+    const market = view.forInstrument('GB.SOV.HALF')
+
+    /*  The nine-coin lot is genuinely nine coins' gold - that part is right,
+        and the ask premium depends on it. */
+    const bulk = market.active.find(a => a.legacyId === 'set')
+    assert.ok(Math.abs(bulk.fineOz - SINGLE * 9) < 1e-9, 'a lot carries its own gold')
+
+    /*  But the INSTRUMENT is one coin, whatever is listed under it. */
+    assert.ok(Math.abs(market.fineOz - SINGLE) < 1e-9,
+        'instrument fineOz was ' + market.fineOz + ', expected one coin at ' + SINGLE)
+    db.close()
+})
+
 /*  Every human decision in this tool is keyed on the legacy id, so a lot
     the market view surfaces has to be one the owner can then judge. The
     query selected it and the view's mapping dropped it, which meant an

@@ -7,6 +7,7 @@ const ALERT_RULES = require('../alerts/rules.js')
 const LEARNED = require('../catalogue/learned.js')
 const CLASSIFY = require('../catalogue/classify.js')
 const RECLASSIFY = require('../catalogue/reclassify.js')
+const PREMIUM = require('../analytics/premium.js')
 
 const { escapeHtml, pct, gbp } = RENDER
 
@@ -153,23 +154,42 @@ function marketPage (opened, url) {
     */
     const composition = repository.marketComposition()
     const sales = repository.recentSales(15)
-    const spotNow = opened.spotAt(new Date().toISOString())
     const salesHtml = sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
         : '<div class="card scroll"><table><thead><tr><th>Sold</th><th>Coin type</th>' +
           '<th>Price</th><th>Bids</th><th>Premium over spot</th></tr></thead><tbody>' +
           sales.map(sale => {
-              const paid = sale.finalPrice + (sale.finalShipping || 0)
-              const premium = spotNow === null || !Number.isFinite(sale.fineOz) || sale.fineOz <= 0
+              /*
+                  This table did its own arithmetic and got two things wrong.
+
+                  It charged no buyer protection fee, so a 1968 sovereign that
+                  cost its winner GBP 845.40 was reported at GBP 822.25 and
+                  6.2% over spot when the true figure was 9.1% - MKT-01's
+                  error, in the one place that never went through totalCost().
+
+                  And it priced every sale against TODAY'S gold rather than
+                  the gold price when the lot closed, so a premium changed
+                  after the fact whenever spot moved. Every one of the 26
+                  resolved outcomes has spot within tolerance at its own end
+                  time, so there is nothing to gain by using today's.
+              */
+              const spotThen = opened.spotAt(sale.endedAt)
+              const hammer = PREMIUM.listedCost(sale.finalPrice, sale.finalShipping)
+              const paid = PREMIUM.totalCost(sale.finalPrice, sale.finalShipping)
+              const premium = spotThen === null || !Number.isFinite(sale.fineOz) || sale.fineOz <= 0
                   ? null
-                  : (paid / (sale.fineOz * spotNow.gbpPerOz)) - 1
+                  : PREMIUM.premium(paid, sale.fineOz, spotThen.gbpPerOz)
               return '<tr>' +
                   '<td class="thin">' + escapeHtml(String(sale.endedAt || '').slice(0, 10)) + '</td>' +
                   '<td>' + (sale.itemWebUrl
                       ? '<a href="' + escapeHtml(sale.itemWebUrl) + '" target="_blank" rel="noopener">' +
                         escapeHtml(sale.title.slice(0, 58)) + '</a>'
                       : escapeHtml(sale.title.slice(0, 58))) + '</td>' +
-                  '<td class="mono"><strong>' + gbp(paid) + '</strong></td>' +
+                  '<td class="mono"><strong title="What the winner actually paid: ' +
+                      gbp(hammer) + ' to the seller plus ' + gbp(paid - hammer) +
+                      ' buyer protection fee to eBay. The premium beside it is measured on ' +
+                      'this figure, against the gold price when the lot closed.">' +
+                      gbp(paid) + '</strong></td>' +
                   '<td class="mono">' + (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
@@ -198,7 +218,6 @@ function marketPage (opened, url) {
     const NEAR_SPOT = 1.05
     const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
     const spotForOpportunities = opened.spotAt(new Date().toISOString())
-    const PREMIUM = require('../analytics/premium.js')
 
     let opportunities = []
     let considered = 0

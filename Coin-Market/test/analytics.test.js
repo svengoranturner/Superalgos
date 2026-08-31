@@ -201,12 +201,16 @@ test('the buyer protection fee is part of what a coin costs', () => {
     const BUYER = require('../src/analytics/buyercost.js')
     const PREMIUM = require('../src/analytics/premium.js')
 
-    /*  The schedule is calibrated on real observed orders. If it ever drifts
-        from them, this is where it shows. */
+    /*  The schedule is calibrated on real observed orders. Fitted to one it
+        was 5p over on BOTH, which read as rounding until the second order
+        showed the offset was constant; at fixed 0.70 they reproduce exactly.
+        So the tolerance is a penny, not ten - a fit that has drifted off by
+        5p again is the signal, and a loose bound would have hidden it. */
+    assert.ok(BUYER.OBSERVED.length >= 2, 'one order cannot separate a fit from an offset')
     for (const observed of BUYER.OBSERVED) {
         const computed = BUYER.buyerFee(observed.orderTotal)
         const error = Math.abs(computed - observed.fee)
-        assert.ok(error <= 0.10,
+        assert.ok(error <= 0.01,
             observed.note + ': computed £' + computed + ' against an actual £' + observed.fee)
     }
 

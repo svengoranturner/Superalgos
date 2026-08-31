@@ -27,7 +27,16 @@
 */
 
 const DEFAULT_SCHEDULE = {
-    fixed: 0.75,
+    /*  0.70 rather than 0.75: fitted to one order, the schedule was 5p over
+        on it and 5p over on the second order too - a constant offset, not
+        noise, which one observation could not distinguish from a good fit.
+        At 0.70 both orders reproduce to the penny with a round 2% rate.
+
+        Honestly: two orders GBP 7 apart cannot separate the fixed term from
+        the rate. A rate of 1.99% with the old 0.75 fits them just as well.
+        0.70 + a round 2% is the likelier published schedule, but a single
+        CHEAP order would settle it, because the fixed term dominates there. */
+    fixed: 0.70,
     tiers: [
         { upTo: 300, rate: 0.04 },
         { upTo: Infinity, rate: 0.02 }
@@ -135,5 +144,9 @@ exports.OBSERVED = [
     /*  "Nice 1919 P King George V Full Gold Sovereign - Never Cleaned Or
         Mounted." Sold 2026-08-30 21:12. Item GBP 829.12, fee GBP 23.28,
         buyer paid GBP 852.40. */
-    { orderTotal: 829.12, fee: 23.28, note: '1919 P sovereign, 30 Aug 2026' }
+    { orderTotal: 829.12, fee: 23.28, note: '1919 P sovereign, 30 Aug 2026' },
+    /*  "1968 UK FULL GOLD SOVEREIGN COIN." Sold 2026-08-30 17:32. Item
+        GBP 822.25, fee GBP 23.15, buyer paid GBP 845.40. The order that
+        showed the 5p offset was constant rather than rounding. */
+    { orderTotal: 822.25, fee: 23.15, note: '1968 sovereign, 30 Aug 2026' }
 ]

@@ -129,8 +129,23 @@ exports.newMarketView = function (repository, spotAt, options) {
                 ? liquidity.medianAskPremium - fair.p50
                 : null
 
-            const fineOz = active.length > 0 ? active[0].fineOz
-                : (rawOutcomes.length > 0 ? rawOutcomes[0].fineOz : null)
+            /*
+                One coin's gold, from the instrument row.
+
+                This used to be active[0].fineOz - whichever listing sorted
+                first. But a listing's fineOz is its LOT's gold: fine_oz
+                multiplied by quantity, which is exactly what CLS-07 built.
+                So a nine-coin set arriving at the front of its key
+                multiplied that key's bid ceiling by nine, and every alert
+                under it with it. Measured 2026-08-31: no key was poisoned
+                that day, but a nine-coin half-sovereign lot was due at the
+                front of GB.SOV.UNATTRIBUTED.HALF on 03 Sep and a four-coin
+                lot at the front of GB.SOV.UNATTRIBUTED.FULL on 04 Sep.
+
+                CLS-07 kept lot size off the shared instrument row for this
+                exact reason; the read path had to learn the same lesson.
+            */
+            const fineOz = repository.instrumentFineOz(key)
             const spotNow = spotAt(new Date(asOf).toISOString())
 
             const ceiling = (fair.sufficient && fineOz !== null && spotNow !== null)

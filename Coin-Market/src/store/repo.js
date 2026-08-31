@@ -433,6 +433,20 @@ exports.newRepository = function (db, options) {
         /*  The title a decision should be recorded against. Looked up rather
             than posted back, because a batch of thirty would otherwise carry
             thirty hidden title fields for no reason. */
+        /*
+            The fine ounces in ONE coin of this type.
+
+            Read from the instrument row rather than from a listing, because
+            a listing's fineOz is deliberately multiplied by its lot size
+            (CLS-07). Taking it from whichever lot happened to sort first
+            made a nine-coin set redefine the gold content of every coin
+            filed under the same key.
+        */
+        instrumentFineOz (key) {
+            const row = db.prepare('SELECT fine_oz FROM instrument WHERE key = ?').get(key)
+            return row === undefined || row.fine_oz === null ? null : row.fine_oz
+        },
+
         titleFor (legacyId) {
             const row = db.prepare(
                 'SELECT title FROM listing WHERE legacy_id = ? ORDER BY last_seen DESC LIMIT 1'
