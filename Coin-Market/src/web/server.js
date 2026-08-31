@@ -114,7 +114,10 @@ function marketPage (opened, url) {
         two of them and a few dozen rows: an index would be answering a
         question nobody is asking yet.
     */
-    const PER_SERIES = 25
+    /*  40, which is what the global cap allowed a single series before this
+        change - so a store with one coin in it shows exactly what it did.
+        The table lives inside a collapsed fold, so length is cheap. */
+    const PER_SERIES = 40
     const grouped = new Map()
     for (const row of repository.instruments(0, 3)) {
         if (row.listingCount < minSample) { continue }
@@ -484,9 +487,13 @@ function marketPage (opened, url) {
         '<div class="card scroll"><table>' + TABLE_HEAD +
         '<tbody>' + instrumentRows(block.entries) + '</tbody></table></div>' +
         (block.hidden > 0
+            /*  Named, not hidden. A capped table and a complete one look
+                identical, and the ones left out are the smallest - which is
+                where a coin type nobody has looked at yet would sit. */
             ? '<p class="thin" style="margin:-10px 0 14px">' + block.hidden +
-              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series are not ' +
-              'shown here. <a href="/review">The review queue</a> reaches every one of them.</p>'
+              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series ' +
+              (block.hidden === 1 ? 'is' : 'are') + ' tracked but not listed here; the ones with ' +
+              'the most listings are shown first.</p>'
             : '')
     ).join('')
 
