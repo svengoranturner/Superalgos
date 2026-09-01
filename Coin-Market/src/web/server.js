@@ -24,6 +24,30 @@ const METAL_NAMES = { XAU: 'gold', XAG: 'silver', XPT: 'platinum', XPD: 'palladi
     the network.
 */
 
+/*
+    Never serve one of these pages from a cache.
+
+    Every page here is a live read of the store - prices that moved on the
+    last sweep, a queue that shrinks as you work it, a rule you accepted ten
+    seconds ago. There were no cache headers at all, which does not mean "do
+    not cache": with no Cache-Control, no ETag and no Last-Modified, a browser
+    falls back to heuristic caching and is entitled to reuse a response it
+    already has. So a reload could legitimately show yesterday's premiums with
+    nothing to say it was doing so.
+
+    It cost a real hour: a deploy landed on the Pi, the server was verified to
+    be serving the new markup, and the owner's browser kept showing the old
+    page.
+
+    no-store rather than no-cache, because no-cache still permits storing the
+    response and revalidating - and there is no validator here to revalidate
+    against. The pages are small and local; there is nothing to save.
+*/
+const HTML_HEADERS = {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store, must-revalidate'
+}
+
 exports.start = function (opened, options) {
 
     const config = Object.assign({ port: 34260, host: '127.0.0.1' }, options || {})
@@ -32,7 +56,7 @@ exports.start = function (opened, options) {
         const url = new URL(request.url, 'http://' + config.host)
 
         const fail = (err) => {
-            response.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+            response.writeHead(500, HTML_HEADERS)
             response.end(RENDER.page('Error', '<h1>Something went wrong</h1><pre>' +
                 escapeHtml(err.stack || err.message) + '</pre>', url.pathname))
         }
@@ -79,7 +103,7 @@ exports.start = function (opened, options) {
             } else {
                 html = marketPage(opened, url)
             }
-            response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            response.writeHead(200, HTML_HEADERS)
             response.end(html)
         } catch (err) { fail(err) }
     })

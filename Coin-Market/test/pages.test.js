@@ -94,7 +94,11 @@ async function fetchAll (opened, paths) {
     try {
         for (const path of paths) {
             const response = await fetch('http://127.0.0.1:' + port + path)
-            out[path] = { status: response.status, body: await response.text() }
+            out[path] = {
+                status: response.status,
+                headers: response.headers,
+                body: await response.text()
+            }
         }
     } finally {
         server.close()
@@ -1128,4 +1132,28 @@ test('the review queue opens on the coin with the most work on this tab', async 
     assert.match(currentAll[1], /Sovereign/,
         'the Everything view does not open on the largest queue: ' + currentAll[1])
     db.close()
+})
+
+
+/*
+    A live dashboard must never be served from a cache.
+
+    There were no cache headers at all, and "no headers" is not "do not
+    cache": with no Cache-Control, no ETag and no Last-Modified a browser
+    falls back to heuristic caching and may reuse what it already has. The
+    symptom is the worst kind - the page looks fine and the numbers are
+    yesterday's - and it cost an hour after a deploy that had, in fact,
+    worked.
+*/
+test('no page is cacheable', async () => {
+    const opened = twoSeriesStore()
+    const paths = ['/', '/review', '/rules', '/listings?key=GB.SOV.BULLION.FULL']
+    const pages = await fetchAll(opened, paths)
+
+    for (const path of paths) {
+        const cc = pages[path].headers.get('cache-control')
+        assert.ok(cc && /no-store/.test(cc),
+            path + ' is cacheable: Cache-Control is ' + JSON.stringify(cc))
+    }
+    opened.db.close()
 })
