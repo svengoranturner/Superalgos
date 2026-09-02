@@ -337,7 +337,13 @@ function marketPage (opened, url) {
                   resolved outcomes has spot within tolerance at its own end
                   time, so there is nothing to gain by using today's.
               */
-              const spotThen = opened.spotAt(sale.endedAt)
+              /*  Its OWN metal. Without the second argument this asks for
+                  gold, and every sold silver dollar reported about -97%: a
+                  number so far out it read as a broken feed rather than a
+                  wrong unit. spotAt refuses to substitute one metal for
+                  another, so a gap in the silver feed leaves the cell blank
+                  instead of quietly pricing it as gold. */
+              const spotThen = opened.spotAt(sale.endedAt, sale.metal)
               const hammer = PREMIUM.listedCost(sale.finalPrice, sale.finalShipping)
               const paid = PREMIUM.totalCost(sale.finalPrice, sale.finalShipping)
               const premium = spotThen === null || !Number.isFinite(sale.fineOz) || sale.fineOz <= 0
@@ -359,7 +365,7 @@ function marketPage (opened, url) {
                   '<td class="mono"><strong title="What the winner actually paid: ' +
                       gbp(hammer) + ' to the seller plus ' + gbp(paid - hammer) +
                       ' buyer protection fee to eBay. The premium beside it is measured on ' +
-                      'this figure, against the gold price when the lot closed.">' +
+                      'this figure, against the price of its own metal when the lot closed.">' +
                       gbp(paid) + '</strong></td>' +
                   '<td class="mono">' + (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
@@ -392,16 +398,41 @@ function marketPage (opened, url) {
         clock rule would have blanked these panels because of it. */
     const sweepAt = repository.lastSweepAt()
     const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
-    const spotForOpportunities = opened.spotAt(new Date().toISOString())
+
+    /*
+        SPOT PER ROW, because this panel is not about one metal.
+
+        It used to take a single gold price for the whole page and divide
+        every lot by it. A GBP 74 silver dollar against gold reads 3% of its
+        "spot value", so it sailed through a filter meant to admit things
+        within 5% OF spot - and `sort=spot` then ranked every one of them
+        above every sovereign. Measured on the live store: 217 of the 281
+        admitted lots were Morgans, and the badge printed beside them said
+        "+110%" because THAT number was already computed against silver. The
+        panel was admitting on one metal and labelling on another.
+
+        The single lookup was also a second, quieter bug: it sat behind
+        `if (spot !== null)`, so a gap in the GOLD feed emptied the panel of
+        silver coins too. Per row, a missing price for one metal costs only
+        the rows made of it - and `.filter(Number.isFinite)` below already
+        drops them, so no new branch is needed.
+    */
+    const now = new Date().toISOString()
 
     let opportunities = []
     let considered = 0
-    if (spotForOpportunities !== null) {
+    {
         opportunities = repository.liveAuctions(500)
             .map(row => {
                 const total = PREMIUM.totalCost(row.price, row.shipping)
-                const gold = row.fineOz * spotForOpportunities.gbpPerOz
-                return Object.assign({}, row, { total, gold, ratio: gold > 0 ? total / gold : null })
+                const spot = opened.spotAt(now, row.metal)
+                /*  `metalValue`, not `gold` - it is silver half the time. */
+                const metalValue = spot === null ? null : row.fineOz * spot.gbpPerOz
+                return Object.assign({}, row, {
+                    total,
+                    metalValue,
+                    ratio: metalValue > 0 ? total / metalValue : null
+                })
             })
             .filter(row => Number.isFinite(row.ratio))
         considered = opportunities.length
@@ -531,7 +562,7 @@ function marketPage (opened, url) {
 
     const opportunityVerdict = newPlausibilityCell(opened.spotAt)
     const opportunityHtml = shown.length === 0
-        ? '<p class="thin">No live auction is currently at or near the spot value of its gold. ' +
+        ? '<p class="thin">No live auction is currently at or near the spot value of its metal. ' +
           considered + ' were checked.</p>'
         : '<form method="post" action="/apply">' +
           '<input type="hidden" name="back" value="/">' +
@@ -641,7 +672,7 @@ ${countryPicker(repository)}
 
 <h2 id="auctions">Live auctions at or near spot (${shown.length})</h2>
 <p class="thin">Auctions on coins the tool can identify, whose current bid is within 5% of the
-spot value of the gold in them. Worth watching even if you do not bid: where one of these
+spot value of the metal in them. Worth watching even if you do not bid: where one of these
 finishes is how fair value gets measured.
 ${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
 ${opportunitySort}

@@ -124,7 +124,22 @@ exports.newRepository = function (db, options) {
         upsertInstrument: db.prepare(`
             INSERT INTO instrument (key, level, display_name, metal, fine_oz, attributes)
             VALUES (?,?,?,?,?,?)
-            ON CONFLICT(key) DO NOTHING
+            /*  METAL IS REFRESHED, everything else is left as first written.
+
+                DO NOTHING froze the metal at row creation, which is fine
+                until a coin's series decides it - and then a row created
+                before that decision keeps the old answer forever. Checked on
+                the live store and it happens to be clean (1,842 sovereign
+                rows XAU, 474 Morgan rows XAG), but only by luck of ordering:
+                every page that prices a coin now reads this column, so a
+                stale one would be a wrong premium that looks entirely
+                plausible.
+
+                display_name is deliberately NOT refreshed. scripts/golden.js
+                compares stored names against freshly computed ones to detect
+                exactly that drift, and updating it here would silently
+                answer the question that check exists to ask. */
+            ON CONFLICT(key) DO UPDATE SET metal = excluded.metal
         `),
         queueReview: db.prepare(`
             INSERT OR REPLACE INTO review_queue (browse_id, reason, best_guess, confidence, queued_at)
@@ -915,7 +930,12 @@ exports.newRepository = function (db, options) {
                        o.bid_count AS finalBidCount, o.ended_at AS endedAt,
                        o.sale_type AS saleType, o.censored, o.sold,
                        li.key AS instrumentKey, li.quantity AS lotQuantity,
-                       i.fine_oz * li.quantity AS fineOz
+                       i.fine_oz * li.quantity AS fineOz,
+                       /*  Same omission as liveAuctions, and the same cause.
+                        Every sold Morgan was priced against gold and reported
+                        about -97%: a number so wrong it read as a data fault
+                        rather than a unit one. */
+                       i.metal, l.series
                 FROM listing_outcome o
                 JOIN listing l ON l.browse_id = o.browse_id
                 /*  Level 0 only: one row per sale, at the coarsest coin type
@@ -952,7 +972,17 @@ exports.newRepository = function (db, options) {
         liveAuctions (limit) {
             return db.prepare(`
                 WITH scope AS (
-                    SELECT li.browse_id, li.key, li.quantity, i.fine_oz
+                    /*  THE METAL TRAVELS WITH THE COIN. Without it the caller
+                        asks spot for no metal, gets gold, and measures a
+                        silver dollar against it: a GBP 74 Morgan reads 3% of
+                        its "spot value", passes an "at or near spot" filter
+                        meant for a 5% band, and outranks every sovereign in
+                        the panel. Measured on the live store: 217 of the 281
+                        admitted lots were Morgans that do not belong there.
+
+                        clearingObservations and activeListings have selected
+                        this all along; these two queries were simply missed. */
+                    SELECT li.browse_id, li.key, li.quantity, i.fine_oz, i.metal
                     FROM listing_instrument li
                     JOIN instrument i ON i.key = li.key AND i.level = 0
                 ),
@@ -981,6 +1011,10 @@ exports.newRepository = function (db, options) {
                        l.last_seen AS lastSeen,
                        scope.key AS instrumentKey, scope.quantity AS lotQuantity,
                        scope.fine_oz * scope.quantity AS fineOz,
+                       /*  The metal this coin is made of, and the series it
+                           belongs to - so a caller can price it and name it
+                           without guessing at either. */
+                       scope.metal, l.series,
                        s.price, s.shipping, s.bid_count AS bidCount,
                        lb.verdict, lb.denomination AS labelledDenomination,
                        lb.quantity AS labelledQuantity,

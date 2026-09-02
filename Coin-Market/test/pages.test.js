@@ -1222,3 +1222,209 @@ test('an unusable extra address does not stop the dashboard', async () => {
     await new Promise(resolve => server.close(resolve))
     opened.db.close()
 })
+
+/*
+    A silver coin is admitted on silver, not on gold.
+
+    THE BUG THIS PINS, in the owner's own screenshot: "Live auctions at or
+    near spot" listing a MORGAN DOLLAR at GBP 78.69 badged "priced near spot
+    +110%". The panel took ONE gold price for the page and divided every lot
+    by it, so a cheap silver coin read about 3% of its "spot value" and
+    passed a filter meant to admit things within 5% OF spot. The badge beside
+    it was already computed against silver and said +110%, so the panel
+    admitted on one metal and labelled on another.
+
+    Measured on the live store before the fix: 217 of 281 admitted lots were
+    Morgans. After: 21, and the sovereign count was unchanged at 64 - which
+    is the regression signal that matters.
+
+    The fixture below is built so the two rules disagree loudly. The Morgan
+    is priced at more than twice its silver, so it must NOT be admitted; and
+    against gold it would read about 3%, so a page that still divides by gold
+    cannot help admitting it.
+*/
+test('a silver lot is judged on silver, in the panel as well as on the badge', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3253.92, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 48.50, null, 'test')
+
+    const add = (legacyId, key, fineOz, price) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Coin ' + legacyId,
+            buyingOptions: 'AUCTION', endTime: soon
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, key.startsWith('US.') ? 'US.MORGAN' : 'GB.SOV')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', fineOz, {})
+    }
+
+    /*  A sovereign at its gold: 0.2354 oz x 3253.92 = GBP 765.97, priced at
+        GBP 780 -> 1.018, comfortably inside the 5% band. */
+    add('sov', 'GB.SOV.BULLION.FULL', 0.2354, 780)
+
+    /*  A Morgan at MORE THAN TWICE its silver: 0.7734 oz x 48.50 = GBP 37.51,
+        priced at GBP 78.69 -> 2.10 against silver, which must be refused.
+        Against GOLD the same lot reads 78.69 / 2516 = 0.031, which the old
+        code admitted without hesitation. */
+    add('morgan', 'US.MORGAN.COMMON.DOLLAR', 0.7734, 78.69)
+
+    /*  One Buy-It-Now per coin type, purely so the page renders. A key with
+        no ask sample and no completed sale is dropped from `markets`
+        entirely, and with both keys dropped the whole page short-circuits to
+        "no market yet" - so without these the panel under test does not
+        exist and the assertions below would pass or fail for the wrong
+        reason. Priced far above spot so neither can reach the panel. */
+    const ask = (legacyId, key, fineOz, price) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Coin ' + legacyId,
+            buyingOptions: 'FIXED_PRICE', endTime: null
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, key.startsWith('US.') ? 'US.MORGAN' : 'GB.SOV')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', fineOz, {})
+    }
+    ask('sov-ask', 'GB.SOV.BULLION.FULL', 0.2354, 1400)
+    ask('morgan-ask', 'US.MORGAN.COMMON.DOLLAR', 0.7734, 140)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    /*  ?min=1 because the market page hides a coin type with fewer than
+        three listings, and this fixture is deliberately two per type - one
+        auction to judge and one ask so the type exists at all. The filter is
+        not what is under test here. */
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const panel = body.split('id="auctions"')[1] || body
+
+    assert.ok(body.includes('id="auctions"'),
+        'the near-spot panel did not render at all, so nothing below is tested')
+    assert.ok(panel.includes('value="sov"'),
+        'the sovereign, which IS within 5% of its gold, was dropped')
+    assert.ok(!panel.includes('value="morgan"'),
+        'a Morgan priced at twice its silver was admitted to the near-spot panel')
+
+    /*  And the metal must reach the row at all - the whole fix is one column
+        travelling with the coin. */
+    const live = repository.liveAuctions(50)
+    const morgan = live.find(r => r.legacyId === 'morgan')
+    assert.strictEqual(morgan.metal, 'XAG', 'liveAuctions did not carry the metal')
+    assert.strictEqual(live.find(r => r.legacyId === 'sov').metal, 'XAU')
+
+    db.close()
+})
+
+/*
+    The same omission, on the table of what actually sold.
+
+    Every resolved Morgan reported about -97%, because the premium was taken
+    against gold. That is not a rounding error - it is the wrong unit, and it
+    made the one table in the tool built entirely on real prices useless for
+    half its rows.
+*/
+test('a sold silver lot reports its premium over silver', () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3253.92, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 48.50, null, 'test')
+
+    const id = 'v1|sold|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'sold', title: 'Morgan Dollar 1903',
+        buyingOptions: 'AUCTION', endTime: now
+    }, now)
+    repository.saveSnapshot(id, { price: 78, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'US.MORGAN')
+    repository.saveClassification(id, [{ key: 'US.MORGAN.COMMON.DOLLAR', level: 0 }],
+        0.9, 'title', 0.7734, {})
+    repository.saveOutcome(id, {
+        endTime: now, sold: true, finalPrice: 78.69, shipping: 0,
+        bidCount: 4, saleType: 'AUCTION', censored: false, source: 'test'
+    })
+
+    const sale = repository.recentSales(5).find(r => r.legacyId === 'sold')
+    assert.strictEqual(sale.metal, 'XAG', 'recentSales did not carry the metal')
+    assert.strictEqual(sale.series, 'US.MORGAN', 'recentSales did not carry the series')
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    /*  What the page now asks for, and what it used to ask for. */
+    assert.strictEqual(spotAt(sale.endedAt, sale.metal).gbpPerOz, 48.50)
+    assert.strictEqual(spotAt(sale.endedAt).gbpPerOz, 3253.92,
+        'the no-metal lookup should still be gold - that is WHY it had to be passed')
+    db.close()
+})
+
+/*
+    And the number a person actually reads.
+
+    The test above proves the metal reaches the row and that the two lookups
+    differ. It does NOT prove the page uses the right one - reverting the call
+    site left it passing, which is exactly the gap a mutation check exists to
+    find. This one renders the table and reads the premium out of it.
+
+    GBP 78.69 against 0.7734 oz of silver at GBP 48.50 is about +115%. Against
+    gold the same lot is about -97%. There is no arithmetic that confuses
+    those two, so a loose "is it positive" assertion is enough and will not
+    go brittle when the buyer-fee schedule is next recalibrated.
+*/
+test('the sold table prints a silver premium, not a gold one', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3253.92, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 48.50, null, 'test')
+
+    const key = 'US.MORGAN.COMMON.DOLLAR'
+    const file = (legacyId, opts) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Morgan Dollar ' + legacyId,
+            buyingOptions: opts.buyingOptions, endTime: opts.endTime
+        }, now)
+        repository.saveSnapshot(id, { price: opts.price, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, 'US.MORGAN')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.7734, {})
+        return id
+    }
+
+    const sold = file('sold', { buyingOptions: 'AUCTION', endTime: now, price: 78 })
+    repository.saveOutcome(sold, {
+        endTime: now, sold: true, finalPrice: 78.69, shipping: 0,
+        bidCount: 4, saleType: 'AUCTION', censored: false, source: 'test'
+    })
+    /*  An ask, so the coin type survives into `markets` and the page renders
+        rather than short-circuiting to "no market yet". */
+    file('ask', { buyingOptions: 'FIXED_PRICE', endTime: null, price: 140 })
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const table = body.split('id="sold"')[1] || ''
+    assert.ok(table.length > 0, 'the sold table did not render, so nothing below is tested')
+
+    /*  Every percentage in the sold row. Against gold this coin reads about
+        -97%; against silver, about +115%. */
+    const percents = [...table.matchAll(/(-?\d+(?:\.\d+)?)%/g)].map(m => Number(m[1]))
+    assert.ok(percents.length > 0, 'no premium was printed at all')
+    assert.ok(!percents.some(n => n < -50),
+        'the sold table is still pricing silver against gold: ' + JSON.stringify(percents))
+    assert.ok(percents.some(n => n > 50),
+        'expected a premium over silver, got: ' + JSON.stringify(percents))
+
+    db.close()
+})
