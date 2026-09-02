@@ -52,7 +52,7 @@ exports.start = function (opened, options) {
 
     const config = Object.assign({ port: 34260, host: '127.0.0.1' }, options || {})
 
-    const server = HTTP.createServer((request, response) => {
+    const handler = (request, response) => {
         const url = new URL(request.url, 'http://' + config.host)
 
         const fail = (err) => {
@@ -106,7 +106,9 @@ exports.start = function (opened, options) {
             response.writeHead(200, HTML_HEADERS)
             response.end(html)
         } catch (err) { fail(err) }
-    })
+    }
+
+    const server = HTTP.createServer(handler)
 
     server.listen(config.port, config.host, () => {
         /*  Quiet for tests, which start this on an ephemeral port and would
@@ -115,6 +117,80 @@ exports.start = function (opened, options) {
         console.log('Coin Market dashboard: http://' + config.host + ':' + config.port)
         console.log('Press Ctrl+C to stop.')
     })
+
+    /*
+        A second address, for a reader that is not on this host's loopback.
+
+        MetalHead runs in a container, and a container's "localhost" is its
+        own, not the machine's. Proved rather than assumed: from inside that
+        container the bridge gateway answers on ports that are bound to the
+        host's LAN address and REFUSES 34260 - same bridge, same instant,
+        different bind. So the network path is already open and the only
+        thing missing is that this process is not listening where the
+        container can see it.
+
+        A SECOND listener rather than moving the first, because the first one
+        is how the owner reaches this today over an SSH forward. Widening to
+        0.0.0.0 would have done both in one line and is exactly what not to
+        do: this app has no login of its own and its POST routes write, so it
+        must not appear on the LAN.
+
+        Failure here is deliberately NOT fatal. The bridge address does not
+        exist on a laptop, and it changes if the docker network is recreated.
+        The loopback listener is the one that must always come up, so a
+        missing extra address is a warning and nothing more - the dashboard
+        that works today keeps working even if this part is misconfigured.
+    */
+    const extras = []
+    /*  Bound AFTER the primary is listening, and to the port it actually
+        got. config.port is 0 in the tests, which means "any free port" - so
+        binding the extras to config.port directly gave each of them a
+        DIFFERENT random port, and the second address answered on a port
+        nobody could have guessed. Live it would have worked by luck, because
+        the port is fixed there. */
+    server.once('listening', () => {
+        const port = server.address().port
+        for (const host of (config.alsoHosts || [])) {
+            if (!host || host === config.host) { continue }
+            const extra = HTTP.createServer(handler)
+            extra.on('error', (err) => {
+                /*  Dispose it. A server that failed to bind still holds a
+                    handle, which keeps the process alive - harmless for a
+                    daemon, but it stops `npm test` ever exiting and turns a
+                    green suite into one that appears to hang. */
+                try { extra.close() } catch (closeErr) { /* nothing to close */ }
+                if (config.quiet) { return }
+                console.log('  (not listening on ' + host + ': ' + err.code + ')')
+            })
+            extra.listen(port, host, () => {
+                if (config.quiet) { return }
+                console.log('  also on http://' + host + ':' + port)
+            })
+            /*  Never let an extra listener be the reason this process stays
+                alive. The primary always holds the event loop, so an extra
+                one serves for exactly as long as the service runs and not a
+                moment longer - and a bind that neither succeeds nor fails
+                (an unroutable address just sits there) cannot wedge a
+                shutdown. That is what made `npm test` hang rather than
+                finish, on a suite where every test had already passed. */
+            extra.unref()
+            extras.push(extra)
+        }
+    })
+
+    /*  One close() shuts all of them. The caller is handed the primary
+        server and reasonably expects closing it to stop the service; an
+        extra listener left holding the port would make a restart fail with
+        EADDRINUSE and look like something else entirely. */
+    if (extras.length > 0) {
+        const closePrimary = server.close.bind(server)
+        server.close = (callback) => {
+            for (const extra of extras) {
+                try { extra.close() } catch (err) { /* already down */ }
+            }
+            return closePrimary(callback)
+        }
+    }
 
     return server
 }

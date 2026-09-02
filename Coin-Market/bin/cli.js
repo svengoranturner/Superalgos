@@ -272,7 +272,12 @@ COMMANDS.dashboard = {
         const settings = safeSettings()
         const port = (settings && settings.dashboard && settings.dashboard.port) || 34260
         const host = (settings && settings.dashboard && settings.dashboard.host) || '127.0.0.1'
-        require('../src/web/server.js').start(opened, { port, host })
+        /*  Extra addresses to answer on, beyond the loopback one. Settings
+            rather than code because the only current reader - MetalHead's
+            container - reaches this over a docker bridge whose gateway
+            address belongs to the deployment, not to the app. */
+        const alsoHosts = (settings && settings.dashboard && settings.dashboard.alsoHosts) || []
+        require('../src/web/server.js').start(opened, { port, host, alsoHosts })
     }
 }
 

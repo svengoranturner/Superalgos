@@ -1157,3 +1157,68 @@ test('no page is cacheable', async () => {
     }
     opened.db.close()
 })
+
+/*
+    A second listener, because a container cannot see this host's loopback.
+
+    MetalHead runs in Docker and reaches the Pi over a bridge gateway, so a
+    dashboard bound to 127.0.0.1 alone is invisible to it however close the
+    two apps sit on disk. This is the whole of the network change.
+
+    Both halves matter and only one is obvious. The extra address must SERVE
+    - the same pages, not a stub. And a bad extra address must NOT take the
+    dashboard down: the bridge gateway does not exist on a laptop and moves
+    if the docker network is recreated, so the loopback listener has to come
+    up regardless. That second property is the one that keeps a misconfigured
+    deploy from looking like a dead Pi.
+*/
+test('a second address serves the same pages', async () => {
+    const opened = twoSeriesStore()
+
+    /*  127.0.0.2 is loopback too, so this exercises a genuinely separate
+        listener without touching any real network interface. */
+    const server = SERVER.start(opened, {
+        port: 0, host: '127.0.0.1', quiet: true, alsoHosts: ['127.0.0.2']
+    })
+    await new Promise(resolve => server.once('listening', resolve))
+    const port = server.address().port
+
+    /*  try/finally, because a listener left running by a failed assertion
+        keeps the whole test process alive - the runner then never prints
+        WHY it failed, which turns a one-line fix into an afternoon. */
+    try {
+        await new Promise(resolve => setTimeout(resolve, 250))
+
+        const primary = await fetch('http://127.0.0.1:' + port + '/review')
+        assert.strictEqual(primary.status, 200, 'the primary address does not serve')
+
+        const second = await fetch('http://127.0.0.2:' + port + '/review',
+            { signal: AbortSignal.timeout(5000) })
+        assert.strictEqual(second.status, 200, 'the extra address does not serve')
+        assert.ok((await second.text()).includes('Needs review'),
+            'the extra address served something else')
+    } finally {
+        await new Promise(resolve => server.close(resolve))
+        opened.db.close()
+    }
+})
+
+test('an unusable extra address does not stop the dashboard', async () => {
+    const opened = twoSeriesStore()
+
+    /*  An address this machine does not have. listen() fails asynchronously
+        with EADDRNOTAVAIL, and if that were unhandled it would take the
+        process down - so this is really a test that the error handler exists. */
+    const server = SERVER.start(opened, {
+        port: 0, host: '127.0.0.1', quiet: true, alsoHosts: ['203.0.113.1']
+    })
+    await new Promise(resolve => server.once('listening', resolve))
+    await new Promise(resolve => setTimeout(resolve, 250))
+
+    const response = await fetch('http://127.0.0.1:' + server.address().port + '/review')
+    assert.strictEqual(response.status, 200,
+        'a bad extra address took the working listener with it')
+
+    await new Promise(resolve => server.close(resolve))
+    opened.db.close()
+})
