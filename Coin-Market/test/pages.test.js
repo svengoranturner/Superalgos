@@ -1428,3 +1428,50 @@ test('the sold table prints a silver premium, not a gold one', async () => {
 
     db.close()
 })
+
+/*
+    Judging a Morgan through the page records a Morgan decision.
+
+    The repository test pins the derivation; this pins the PATH. Both /apply
+    and /label passed no series at all, and neither had to change for this to
+    work - which is the point of deriving it in the store rather than asking
+    every caller to remember. A third caller added later cannot get it wrong.
+
+    Why it matters more than the label row itself: a rule induced from a
+    decision inherits that decision's series (server.js passes label.series
+    into the proposal), and `learned.compile` only fires a rule against the
+    pack that claimed the listing. So a Morgan decision recorded as GB.SOV
+    produces a rule that can never fire on a Morgan - it would look accepted,
+    appear on /rules, and do nothing at all.
+*/
+test('a verdict on a Morgan is stored against Morgans, and so is its rule', async () => {
+    const opened = twoSeriesStore()
+    const morgan = opened.repository.reviewQueue(50, 'US.MORGAN')[0]
+    assert.ok(morgan, 'the fixture has no Morgan in the review queue')
+
+    const server = SERVER.start(opened, { port: 0, host: '127.0.0.1', quiet: true })
+    await new Promise(resolve => server.once('listening', resolve))
+    const port = server.address().port
+    try {
+        const response = await fetch('http://127.0.0.1:' + port + '/label', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                legacyId: morgan.legacyId,
+                verdict: 'NOT_TRACKED',
+                back: '/review'
+            }).toString(),
+            redirect: 'manual'
+        })
+        assert.strictEqual(response.status, 303)
+    } finally {
+        server.close()
+    }
+
+    const stored = opened.repository.labels().find(l => l.legacyId === morgan.legacyId)
+    assert.ok(stored, 'the verdict was not recorded at all')
+    assert.strictEqual(stored.series, 'US.MORGAN',
+        'a decision made on a Morgan was recorded against sovereigns')
+
+    opened.db.close()
+})

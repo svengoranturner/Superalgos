@@ -545,6 +545,25 @@ exports.newRepository = function (db, options) {
             relist. Re-labelling overwrites: a person changing their mind is
             a correction, not a second opinion to be averaged with the first.
         */
+        /*
+            Which coin a listing is, according to the listings themselves.
+
+            `listing.series` is set from SERIES.recognise BEFORE classification
+            runs (discover.js, reclassify.js) and is never written by the label
+            path, so it is an independent witness to what a decision was about.
+            NULL means no pack claimed the title.
+
+            MIN over the group for the same reason titleCorpus uses it: one
+            legacy_id can hold rows that disagree, and a deterministic answer
+            beats an arbitrary one.
+        */
+        seriesFor (legacyId) {
+            const row = db.prepare(
+                'SELECT MIN(series) AS series FROM listing WHERE legacy_id = ? AND series IS NOT NULL'
+            ).get(legacyId)
+            return row === undefined || !row.series ? null : row.series
+        },
+
         label (entry) {
             const now = entry.labelledAt || new Date().toISOString()
             const quantity = Number.isFinite(entry.quantity) && entry.quantity >= 1
@@ -561,10 +580,30 @@ exports.newRepository = function (db, options) {
                     quantity = excluded.quantity, series = excluded.series
             `), [entry.legacyId, entry.title, entry.verdict, entry.denomination,
                 entry.note, now, entry.source || 'human', quantity,
-                /*  Which coin the decision was about. Defaults to the series
-                    the tool started with, so a caller that has not been
-                    taught about series records what it always did. */
-                entry.series || SERIES.DEFAULT_ID])
+                /*
+                    Which coin the decision was about - DERIVED, not defaulted.
+
+                    This used to fall back to SERIES.DEFAULT_ID, and neither
+                    caller passed a series, so every human decision was
+                    recorded as a sovereign one whatever coin it was actually
+                    about. Nothing had been mis-stamped yet when this was
+                    found (247 labels, all genuinely sovereigns, checked
+                    against listing.series) - the queue defaults to sovereigns
+                    and no Morgan had been judged. It would have landed on the
+                    first one, and the damage is not the label itself but what
+                    grows from it: a rule induced from a Morgan would be
+                    scoped GB.SOV and could then never fire on a Morgan.
+
+                    Derived HERE rather than passed in, because a caller that
+                    has to remember is a caller that will forget - and the two
+                    that existed both had the series to hand and neither used
+                    it. A third added next year cannot get it wrong.
+
+                    NULL when no pack claimed the listing, which is the honest
+                    answer and the one listing.series already gives. A caller
+                    may still override explicitly; nothing does today.
+                */
+                entry.series !== undefined ? entry.series : this.seriesFor(entry.legacyId)])
         },
 
         /*  The title a decision should be recorded against. Looked up rather

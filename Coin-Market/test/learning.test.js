@@ -445,15 +445,46 @@ test('a decision records which coin it was about, and says so when it bites', ()
     const db = newDatabase(':memory:')
     const repository = newRepository(db, { sellerSalt: 'test' })
 
+    /*  THE SERIES IS DERIVED FROM THE LISTING, not defaulted.
+
+        This assertion used to read "a caller that says nothing means the
+        series the tool started with", and that expectation was the bug: both
+        real callers said nothing, so every decision was recorded as a
+        sovereign one whatever coin it was about. Nothing had actually been
+        mis-stamped when it was found - 247 labels, all genuinely sovereigns -
+        because the review queue defaults to sovereigns and no Morgan had been
+        judged yet. It would have landed on the first one.
+
+        `listing.series` is the witness: set from SERIES.recognise before
+        classification, never written by the label path. */
+    const file = (browseId, legacyId, series) => {
+        repository.saveListing({ browseId, legacyId, title: 't', buyingOptions: 'AUCTION' })
+        if (series !== null) { repository.setListingSeries(browseId, series) }
+    }
+    file('v1|a1|0', 'a1', 'GB.SOV')
+    file('v1|b2|0', 'b2', 'US.MORGAN')
+    file('v1|c3|0', 'c3', null)
+
     repository.label({ legacyId: 'a1', title: '1912 Sovereign', verdict: LEARNED.VERDICT.NOT_TRACKED })
-    repository.label({
-        legacyId: 'b2', title: '1889 CC Morgan Dollar',
-        verdict: LEARNED.VERDICT.NOT_TRACKED, series: 'US.MORGAN'
-    })
+    repository.label({ legacyId: 'b2', title: '1889 CC Morgan Dollar', verdict: LEARNED.VERDICT.NOT_TRACKED })
+    repository.label({ legacyId: 'c3', title: 'Something unrecognised', verdict: LEARNED.VERDICT.NOT_TRACKED })
+
     const stored = repository.labels()
     assert.strictEqual(stored.find(l => l.legacyId === 'a1').series, 'GB.SOV',
-        'a caller that says nothing means the series the tool started with')
-    assert.strictEqual(stored.find(l => l.legacyId === 'b2').series, 'US.MORGAN')
+        'a sovereign listing did not yield a sovereign decision')
+    assert.strictEqual(stored.find(l => l.legacyId === 'b2').series, 'US.MORGAN',
+        'a decision on a Morgan was recorded against the wrong coin - the bug this pins')
+    assert.strictEqual(stored.find(l => l.legacyId === 'c3').series, null,
+        'a listing no pack claimed must record NULL, not a guess')
+
+    /*  An explicit series still wins, for a caller that genuinely knows
+        better. Nothing in the app does today. */
+    repository.label({
+        legacyId: 'b2', title: '1889 CC Morgan Dollar',
+        verdict: LEARNED.VERDICT.NOT_TRACKED, series: 'GB.SOV'
+    })
+    assert.strictEqual(repository.labels().find(l => l.legacyId === 'b2').series, 'GB.SOV',
+        'an explicit series was ignored')
 
     /*  And the rejection reads back in that series' own words, because the
         review queue is where you find out WHICH coin you rejected it as. */
