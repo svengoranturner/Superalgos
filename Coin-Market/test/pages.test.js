@@ -1475,3 +1475,106 @@ test('a verdict on a Morgan is stored against Morgans, and so is its rule', asyn
 
     opened.db.close()
 })
+
+/*
+    A Morgan page never calls a Morgan a sovereign.
+
+    Straight from the owner's screenshot: a review queue full of Morgan and
+    Peace dollars, under a bar reading "Not a sovereign - selected", each row
+    ending in "Not a sov", each with a "denomination?" dropdown offering five
+    sizes of sovereign and no dollar.
+
+    The last of those was not cosmetic. Without a denomination the tool has no
+    fine weight for the coin and so no premium, ever - the dropdown asked a
+    question it would not accept the answer to.
+*/
+test('a Morgan queue is worded and offered in Morgan terms', async () => {
+    const opened = twoSeriesStore()
+    const path = '/review?coin=US.MORGAN&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.ok(body.includes('name="pick"'), 'no Morgan rows rendered, so nothing below is tested')
+
+    /*  Everything except the coin-tab strip, which NAMES the other series on
+        purpose - that is how you switch to them, and a page that hid the word
+        there would be hiding the way out. */
+    const withoutTabs = body.replace(/<div class="tabs">[\s\S]*?<\/div>/g, '')
+    assert.ok(!/sovereign/i.test(withoutTabs),
+        'a Morgan page still says sovereign: ' +
+        (withoutTabs.match(/.{0,50}sovereign.{0,50}/i) || [''])[0])
+
+    assert.ok(body.includes('Not a silver dollar &mdash; selected'),
+        'the bulk bar does not name the coin it acts on')
+    assert.ok(body.includes('>Not a silver dollar</button>'),
+        'the per-row reject button does not name the coin')
+
+    /*  The dropdown must offer the one denomination this coin has, and none
+        of the five it does not. */
+    assert.ok(body.includes('<option value="DOLLAR"'),
+        'a Morgan row cannot be told it is a dollar')
+    for (const sovereignOnly of ['FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE']) {
+        assert.ok(!body.includes('<option value="' + sovereignOnly + '"'),
+            'a Morgan row offers the sovereign denomination ' + sovereignOnly)
+    }
+
+    opened.db.close()
+})
+
+test('a sovereign queue still reads exactly as it did', async () => {
+    const opened = twoSeriesStore()
+    const path = '/review?coin=GB.SOV&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.ok(body.includes('Not a sovereign &mdash; selected'),
+        'the sovereign wording regressed')
+    assert.ok(body.includes('>Not a sovereign</button>'),
+        'the per-row button lost its wording')
+    /*  Order matters as much as membership: this is the order the dropdown
+        has always had, and a change would be a diff the owner would notice
+        without it being an improvement. */
+    const options = [...body.matchAll(/<option value="([A-Z]*)"/g)].map(m => m[1])
+    const distinct = options.filter((d, i) => d !== '' && options.indexOf(d) === i)
+    assert.deepStrictEqual(distinct, ['FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE'],
+        'the sovereign denominations changed or reordered: ' + JSON.stringify(distinct))
+
+    opened.db.close()
+})
+
+test('a mixed panel names no single coin', async () => {
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+
+    /*  The front-page panels draw across every series by construction, so
+        there is no coin name that is true of the button. Naming one would be
+        a lie rather than a default - and the verdict it records is still
+        correct per row, because the series is derived from each listing. */
+    const panel = body.split('id="auctions"')[1] || ''
+    if (panel.includes('name="bulk"')) {
+        assert.ok(panel.includes('Not what it says it is &mdash; selected'),
+            'a mixed-series panel named one coin')
+    }
+
+    opened.db.close()
+})
+
+/*
+    The list of your own decisions names the coin each one was about.
+
+    An aggregate cannot - "N genuine, M rejected" spans every series and
+    naming one would be false - but a ROW is not an aggregate: each label
+    carries its own series, so this is exactly where the coin's own word
+    belongs and where reading "not a sovereign" against a dollar is wrong.
+*/
+test('each recorded decision reads in its own coin terms', async () => {
+    const opened = dealerStore()
+    const body = (await fetchAll(opened, ['/rules']))['/rules'].body
+
+    assert.ok(body.includes('>not a silver dollar</span>'),
+        'a Morgan decision is badged in sovereign words')
+
+    /*  And the aggregate above it stays neutral, because it counts both. */
+    assert.ok(!/\d+ genuine, \d+ not a/.test(body),
+        'the hero tile names a coin it cannot name')
+
+    opened.db.close()
+})

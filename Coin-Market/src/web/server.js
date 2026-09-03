@@ -502,13 +502,9 @@ function marketPage (opened, url) {
           ' tracked types do today &mdash; and the ask is no more than a quarter above it.</p>'
         : '<form method="post" action="/apply">' +
           '<input type="hidden" name="back" value="/">' +
-          '<div class="bulkbar">' +
-          '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
-          'Not a sovereign &mdash; selected</button>' +
-          '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
-          'Genuine &mdash; selected</button>' +
-          '<span class="thin">A wrong coin here is worth more than a dismissal: it is setting ' +
-          'the clearing price these offers are measured against.</span></div>' +
+          bulkBar(offers.map(e => e.row),
+              'A wrong coin here is worth more than a dismissal: it is setting ' +
+              'the clearing price these offers are measured against.') +
           cappedQueue(offers, entry => {
               const a = entry.alert
               /*  Shaped for queueRow so the picture, the checkbox and the
@@ -566,13 +562,8 @@ function marketPage (opened, url) {
           considered + ' were checked.</p>'
         : '<form method="post" action="/apply">' +
           '<input type="hidden" name="back" value="/">' +
-          '<div class="bulkbar">' +
-          '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
-          'Not a sovereign &mdash; selected</button>' +
-          '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
-          'Genuine &mdash; selected</button>' +
-          '<span class="thin">Tick anything that is not what it says it is; it leaves this ' +
-          'panel and every statistic at once.</span></div>' +
+          bulkBar(shown, 'Tick anything that is not what it says it is; it leaves this ' +
+              'panel and every statistic at once.') +
           cappedQueue(shown, row => queueRow(row, opportunityVerdict(row)), 10,
               n => 'Show the other ' + n + ' auction' + (n === 1 ? '' : 's')) +
           '</form>'
@@ -945,6 +936,36 @@ function saleFrom (url) {
 }
 
 /*
+    The two buttons that act on a ticked batch, named after the coin they act on.
+
+    FOUR COPIES OF THIS EXISTED - the offers panel, the auctions panel, the
+    review queue and the drill-down - identical but for a trailing sentence,
+    and all four said "Not a sovereign" over whatever coin was actually on
+    screen. Collapsing them is not tidiness: it is what makes the wording a
+    property of the ROWS rather than of whoever wrote the fourth copy.
+
+    The two front-page panels draw across every series by construction, so
+    they get the mixed wording and that is the honest answer rather than a
+    fallback. The review queue and the drill-down are each narrowed to one
+    coin already, so both get better wording than they had, not merely
+    non-sovereign wording.
+
+    The VALUES are untouched and must stay untouched: they are TRACKED and
+    NOT_TRACKED on the wire and in the store, and were migrated to those
+    spellings long ago. Only the label a person reads is series-specific.
+*/
+function bulkBar (rows, hint) {
+    const words = SERIES.words(rows)
+    return '<div class="bulkbar">' +
+        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_TRACKED + '">' +
+        escapeHtml(words.notOne) + ' &mdash; selected</button>' +
+        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.TRACKED + '">' +
+        'Genuine &mdash; selected</button>' +
+        (hint ? '<span class="thin">' + hint + '</span>' : '') +
+        '</div>'
+}
+
+/*
     Ending soonest first, which is the only order a bid can act on.
 
     Re-sorted HERE and never in the SQL, and the reason is the row limit.
@@ -1002,8 +1023,8 @@ function reviewPage (opened, url) {
     const applied = Number.isFinite(appliedCount) && appliedCount > 0
         ? '<div class="card" style="border-color:var(--good)"><p style="margin:0">' +
           '<strong>' + appliedCount + '</strong> listing' + (appliedCount === 1 ? '' : 's') +
-          ' marked ' + (appliedVerdict === LEARNED.VERDICT.SOVEREIGN
-              ? 'genuine' : 'not a sovereign') +
+          ' marked ' + (appliedVerdict === LEARNED.VERDICT.TRACKED
+              ? 'genuine' : SERIES.words(chosen).notOne.toLowerCase()) +
           '. <span class="thin">Each one is undoable from its own row.</span></p></div>'
         : ''
 
@@ -1123,16 +1144,13 @@ function reviewPage (opened, url) {
         still work for one-offs, and the bar is repeated at the foot so a long
         section does not mean scrolling back up to act on it.
     */
-    const bar = (where) => '<div class="bulkbar">' +
-        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
-        'Not a sovereign &mdash; selected</button>' +
-        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
-        'Genuine &mdash; selected</button>' +
-        (where === 'top'
-            ? '<span class="thin">Tick down the left, then one click. ' +
-              'Anything you have not ticked is untouched.</span>'
-            : '') +
-        '</div>'
+    /*  The queue is already narrowed to one coin by the tab above it, so
+        this names that coin rather than the mixed wording the front page
+        needs. `chosen` is the series id, or null on the unattributed tab -
+        where the mixed wording is exactly right. */
+    const bar = (where) => bulkBar(chosen, where === 'top'
+        ? 'Tick down the left, then one click. Anything you have not ticked is untouched.'
+        : '')
 
     const list = (items, empty, cap) => {
         if (items.length === 0) { return '<p class="thin">' + empty + '</p>' }
@@ -1178,8 +1196,9 @@ ${applied}
   good &mdash; the decision is stored against the coin, survives a relist, outranks every rule in
   the classifier, and the collector applies it to listings it finds tomorrow. Reject one and you
   are then offered a rule that generalises it, with the count of what it would catch and what it
-  would break &mdash; scoped to this coin, so a good reason to reject a sovereign can never empty
-  another series.${seriesTabs === '' ? '' : ' One coin at a time: the tabs above carry the size of ' +
+  would break &mdash; scoped to this coin, so a good reason to reject
+  ${escapeHtml(SERIES.words(chosen).one === SERIES.MIXED_WORDS.one
+      ? 'one coin' : 'a ' + SERIES.words(chosen).one)} can never empty another series.${seriesTabs === '' ? '' : ' One coin at a time: the tabs above carry the size of ' +
   'every queue' + (sale === 'all' ? '' : ' on this tab') + ', so working through one never ' +
   'hides another.'}
   ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
@@ -1296,7 +1315,6 @@ function countryPicker (repository) {
     sideways.
 */
 
-const DENOMINATION_OPTIONS = ['', 'FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE']
 
 /*  eBay serves the same photo at several widths off one URL. We store the
     225px thumbnail; 500px is 40KB and is plenty to tell a coin from a
@@ -1337,10 +1355,43 @@ function leafCategory (path) {
     What the classifier decided this coin is, read back off the instrument
     key it was filed under.
 */
+/*
+    The denominations THIS coin can be, from its own pack.
+
+    A module constant held the five sovereign denominations - FULL, HALF,
+    QUARTER, DOUBLE, QUINTUPLE - and every row of every series got them. So a
+    Morgan row offered five sizes of sovereign and never `DOLLAR`, which is
+    not merely wrong wording: without a denomination the tool has no fine
+    weight for the coin and therefore no premium, ever. The dropdown asked a
+    question it would not accept the answer to.
+
+    Ordered by the pack so an existing series keeps the order it had; a pack
+    that says nothing gets its own declaration order.
+*/
+function denominationsFor (hint) {
+    const pack = SERIES.get(hint) ||
+        (typeof hint === 'string' ? (SERIES.forKey(hint) || {}).pack : null) || null
+    if (pack === null || !pack.denominations) { return [''] }
+    const order = pack.denominationOrder || Object.keys(pack.denominations)
+    return [''].concat(order.filter(d => pack.denominations[d]))
+}
+
+/*
+    Which denomination the classifier already worked out, read off the key.
+
+    Positional rather than by matching against a list of names: the key IS
+    `<series>.<pool>.<denomination>...`, so `forKey().rest[1]` is the answer
+    for any series without anyone maintaining a vocabulary of every coin size
+    the tool has ever known.
+*/
 function detectedDenomination (row) {
     const key = row.bestGuess || row.instrumentKey || null
     if (typeof key !== 'string') { return null }
-    return key.split('.').find(part => DENOMINATION_OPTIONS.includes(part)) || null
+    const found = SERIES.forKey(key)
+    if (found === null) { return null }
+    const denomination = found.rest[1]
+    return denomination && found.pack.denominations &&
+        found.pack.denominations[denomination] ? denomination : null
 }
 
 function callControls (row) {
@@ -1353,7 +1404,7 @@ function callControls (row) {
                 (row.labelledQuantity > 1 ? ' ×' + row.labelledQuantity : '') +
                 (row.labelledDenomination
                     ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
-            : 'You said: not a sovereign'
+            : 'You said: ' + escapeHtml(SERIES.words(row).notOne.toLowerCase())
         return '<span class="settled">' + said + '</span> ' +
             '<button class="plain" name="undo" value="' + id + '" title="Forget this decision">undo</button>'
     }
@@ -1363,9 +1414,9 @@ function callControls (row) {
         denomination it already had. The dropdown only asks a question when it
         reads "denomination?", which is exactly when there is one to answer. */
     const detected = detectedDenomination(row)
-    const options = DENOMINATION_OPTIONS
+    const options = denominationsFor(row.series || row.instrumentKey || row.bestGuess)
         .map(d => '<option value="' + d + '"' + (d === (detected || '') ? ' selected' : '') + '>' +
-            (d === '' ? 'denomination?' : d.toLowerCase()) + '</option>')
+            (d === '' ? 'denomination?' : escapeHtml(d.toLowerCase())) + '</option>')
         .join('')
 
     /*  Field names carry the listing id, because one form now covers the
@@ -1376,7 +1427,12 @@ function callControls (row) {
         '<input class="qty" type="number" name="q_' + id + '" min="1" max="99" value="1" ' +
         'title="How many of the same coin are in this lot. Leave at 1 unless it is a multiple.">' +
         '<button class="yes" name="genuine" value="' + id + '">Genuine</button>' +
-        '<button class="no" name="reject" value="' + id + '">Not a sov</button>'
+        /*  The short form. "Not a sov" was the only abbreviation in the app
+            and it named one coin; the pack's own `notOne` is the right length
+            already for both series that exist ("Not a sovereign", "Not a
+            silver dollar") and reads properly for any that follow. */
+        '<button class="no" name="reject" value="' + id + '">' +
+        escapeHtml(SERIES.words(row).notOne) + '</button>'
 }
 
 /*  A <details> rather than a hover, because hovering opened the preview
@@ -1669,11 +1725,8 @@ function listingsPage (opened, url) {
         the top. What the cap drops is what the SECTION is ordered by, so the
         note has to name that ordering rather than assume one. */
     const CAP = 200
-    const bar = '<div class="bulkbar">' +
-        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_SOVEREIGN + '">' +
-        'Not a sovereign &mdash; selected</button>' +
-        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.SOVEREIGN + '">' +
-        'Genuine &mdash; selected</button></div>'
+    /*  One coin type by definition - the key IS the coin. */
+    const bar = bulkBar(key, '')
 
     const list = (items, ordering) => '<form method="post" action="/apply">' +
         '<input type="hidden" name="back" value="' +
@@ -2011,7 +2064,7 @@ function proposalCard (p, back, legacyId, seriesId) {
     const risky = p.breaks > 0 || p.conflicts.length > 0
     const consequence = p.breaks === 0
         ? ', <strong>none</strong> of which are currently priced as ' +
-          escapeHtml(pack.label.toLowerCase()) + '.'
+          escapeHtml(SERIES.words(pack).plural) + '.'
         : ', and would stop pricing <strong class="warn">' + p.breaks +
           '</strong> that count towards the market statistics today.'
 
@@ -2325,7 +2378,7 @@ function rulesPage (opened, url) {
           'are offered the rule that generalises it.</p>'
         : '<div class="card scroll"><table><thead><tr><th>Rule</th>' +
           '<th title="Which coin this rule was learned about. A rule scoped to one series ' +
-          'never touches another - which is what stops a good reason to reject a sovereign ' +
+          'never touches another - which is what stops a good reason to reject one coin ' +
           'from quietly emptying a series you add later.">Applies to</th>' +
           '<th>Matches now</th>' +
           '<th>When accepted</th><th></th></tr></thead><tbody>' +
@@ -2396,7 +2449,7 @@ reversible and nothing here is a black box — each rule is the phrase you accep
 
 <div class="card hero">
   <div><div class="n">${labels.length}</div><div class="l">coins you have judged
-    — ${byVerdict.genuine} genuine, ${byVerdict.not} not a sovereign</div></div>
+    — ${byVerdict.genuine} genuine, ${byVerdict.not} rejected</div></div>
   <div><div class="n">${rules.length}</div><div class="l">rules generalised from them</div></div>
   <div><div class="n">${decided.length === 0 ? '—' : Math.round(100 * agreed / decided.length) + '%'}</div>
     <div class="l">of your calls the classifier now reaches on its own, with your labels withheld</div></div>
@@ -2415,7 +2468,8 @@ ${labels.length === 0
   <td>${escapeHtml(l.title)}</td>
   <td>${l.verdict === LEARNED.VERDICT.SOVEREIGN
       ? '<span class="badge good">genuine' + (l.denomination ? ' · ' + escapeHtml(String(l.denomination).toLowerCase()) : '') + '</span>'
-      : '<span class="badge critical">not a sovereign</span>'}</td>
+      : '<span class="badge critical">' +
+        escapeHtml(SERIES.words(l.series).notOne.toLowerCase()) + '</span>'}</td>
   <td class="mono thin">${escapeHtml(String(l.labelledAt).slice(0, 10))}</td>
 </tr>`).join('') + '</tbody></table></div>'}
 

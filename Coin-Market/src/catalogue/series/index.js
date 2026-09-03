@@ -171,6 +171,83 @@ exports.resolve = function (packOrId) {
     return packOrId
 }
 
+/*
+    What to CALL a coin, for anything a person reads.
+
+    Every pack has declared a `vocabulary` since the packs were written, and
+    until now exactly one line in the codebase read it. Twenty-odd others
+    spelled "sovereign" into the page instead, so a Morgan dollar sat under a
+    button saying "Not a sovereign" and a per-row control saying "Not a sov".
+
+    IT TAKES WHAT THE CALLER ACTUALLY HAS. That is the whole reason the field
+    went unused: a bulk bar has an array of rows, a review row has a series, a
+    drill-down has an instrument key, and a proposal has a pack. Asking each
+    of those to resolve a pack first is the friction that made hard-coding the
+    word easier, so this resolves all four.
+
+    THREE OUTCOMES, AND NONE OF THEM IS "SOVEREIGN". One pack, its words;
+    several packs, the mixed words; nothing recognisable, the mixed words.
+    That last is the important one - the front page's panels draw across every
+    series by construction, so there is no single right coin name for the
+    button above them, and inventing one would be a lie rather than a
+    default. `mixed` is exposed so a caller can tell the two apart.
+*/
+const MIXED = {
+    one: 'this coin',
+    /*  Deliberately not "Not a coin": these buttons reject a listing for
+        being something other than what it claims, which includes perfectly
+        real coins of the wrong type. */
+    notOne: 'Not what it says it is',
+    plural: 'these coins',
+    label: 'Coins',
+    mixed: true
+}
+
+function packFrom (hint) {
+    if (hint === null || hint === undefined) { return null }
+    if (typeof hint === 'object' && typeof hint.id === 'string' && hint.vocabulary) { return hint }
+    if (typeof hint === 'string') {
+        /*  A series id, or an instrument key that begins with one. `get`
+            first, because an id is also a valid prefix of itself and
+            forKey's scan is the slower answer to the same question. */
+        const direct = exports.get(hint)
+        if (direct !== null) { return direct }
+        const found = exports.forKey(hint)
+        return found === null ? null : found.pack
+    }
+    if (typeof hint === 'object') {
+        /*  A row. The same chain the plausibility cell already walks: what
+            the listing was attributed to, then what it was filed under, then
+            what the classifier guessed. */
+        return packFrom(hint.series) || packFrom(hint.instrumentKey) || packFrom(hint.bestGuess)
+    }
+    return null
+}
+
+exports.words = function (hint) {
+    const hints = Array.isArray(hint) ? hint : [hint]
+    const found = new Set()
+    for (const one of hints) {
+        const pack = packFrom(one)
+        if (pack !== null) { found.add(pack) }
+    }
+    if (found.size !== 1) { return MIXED }
+    const pack = [...found][0]
+    const vocabulary = pack.vocabulary || {}
+    /*  A pack missing a word gets the mixed one rather than a sovereign one.
+        The pack contract will make this unreachable; until then it must not
+        fail back to the series the tool started with. */
+    return {
+        one: vocabulary.one || MIXED.one,
+        notOne: vocabulary.notOne || MIXED.notOne,
+        plural: vocabulary.plural || MIXED.plural,
+        label: pack.label || MIXED.label,
+        mixed: false
+    }
+}
+
+exports.MIXED_WORDS = MIXED
+
 /*  Registered here rather than by each caller, so requiring the registry is
     enough to have the tool's series available and there is no order-of-
     require hazard. New packs are added to this list. */

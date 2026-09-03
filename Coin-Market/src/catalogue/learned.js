@@ -110,8 +110,22 @@ exports.compile = function (rules) {
                 if (entry.test.test(title)) {
                     return {
                         code: 'LEARNED',
-                        reason: 'You marked listings containing "' + entry.rule.phrase +
-                            '" as not sovereigns',
+                        /*  Named in the words of the coin the rule is
+                            scoped to - and an UNSCOPED rule has no coin to
+                            name. A rule widened to every coin is a deliberate
+                            choice the confirmation page makes you tick, so
+                            the reason says so rather than reaching for a word
+                            that would be wrong on most of what it catches.
+
+                            Lazily required for the same reason as `apply`
+                            below: the registry's packs reach back into this
+                            module. */
+                        reason: entry.rule.series === null || entry.rule.series === undefined
+                            ? 'You marked listings containing "' + entry.rule.phrase +
+                              '" as not worth tracking, on every coin'
+                            : 'You marked listings containing "' + entry.rule.phrase +
+                              '" as not ' + require('./series/index.js')
+                                  .words(entry.rule.series).plural,
                         phrase: entry.rule.phrase
                     }
                 }
@@ -346,7 +360,11 @@ exports.apply = function (classification, label) {
             attributes,
             confidence: priceable ? 1 : 0.5,
             needsReview: !priceable,
-            reasons: priceable ? [] : ['You confirmed this is a sovereign - which denomination?'],
+            reasons: priceable
+                ? []
+                : ['You confirmed this is a ' +
+                   require('./series/index.js').words(label.series).one +
+                   ' - which denomination?'],
             labelled: true
         }
     }

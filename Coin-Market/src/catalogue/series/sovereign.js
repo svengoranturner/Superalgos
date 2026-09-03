@@ -25,6 +25,14 @@ module.exports = {
     /*  Referenced, never copied. Two tables that must agree is a bug
         waiting for someone to edit one of them. */
     denominations: COINS.DENOMINATIONS,
+    /*  The order the picker offers them in, which is NOT the order they are
+        declared in. COINS.DENOMINATIONS runs smallest-first (QUARTER, HALF,
+        FULL, ...) because that is how the weights build; the picker has
+        always led with FULL because that is what most listings are, so the
+        common answer needs no scrolling. Naming it here keeps that intact now
+        the list comes from the pack instead of a hard-coded array - the first
+        version of that change silently reordered every sovereign dropdown. */
+    denominationOrder: ['FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE'],
     portraits: COINS.PORTRAITS,
     portraitByCode: COINS.PORTRAIT_BY_CODE,
     mints: COINS.MINTS,
