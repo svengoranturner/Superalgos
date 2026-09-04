@@ -272,7 +272,6 @@ td a:hover { text-decoration-color:var(--ink) }
 .alert .t { font-weight:560 }
 .badge { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11.5px; border:1px solid var(--border); color:var(--ink-2) }
 .warn { color:var(--critical) }
-nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
 /*  The section jump bar. The market page carries eight sections and the two
     worth acting on were below the fold, so the owner was using the browser's
     text search to reach them. Sticky, because the page is long enough that
@@ -312,8 +311,6 @@ details.fold h2:first-of-type { margin-top:4px }
 details.more > summary { cursor:pointer; font-size:13px; color:var(--ink-2); padding:10px 2px }
 details.more > summary:hover { color:var(--ink) }
 h2[id] { scroll-margin-top:56px }
-nav a { color:var(--ink-2); text-decoration:none; padding-bottom:3px; border-bottom:2px solid transparent }
-nav a.on { color:var(--ink); border-bottom-color:var(--ink) }
 .badge.good { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }
 .badge.critical { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
 /*  The verdict controls. Deliberately plain buttons in a plain form: the
@@ -446,6 +443,347 @@ a.confirm:hover { background:color-mix(in srgb, var(--critical) 10%, transparent
 .proposal ul { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12px }
 .phrase { font-variant-numeric:tabular-nums; background:color-mix(in srgb, var(--ink) 7%, transparent);
   padding:1px 6px; border-radius:4px }
+
+/*  The three rules that styled the old three-link nav are gone: nav.bar
+    below replaces them, and `nav a.on` in particular would have drawn an ink
+    underline through every highlighted row inside a menu panel. */
+
+/* ── The menu bar ───────────────────────────────────────────────────────────
+
+   Four menus as <details>, because `script-src 'none'` leaves no other way to
+   open one. A <summary> is focusable, toggles on Enter and Space, and
+   announces its own state, so what is actually lost against the mock is
+   closing on an outside click or on Escape - and no amount of CSS brings
+   those back.
+   ───────────────────────────────────────────────────────────────────────── */
+
+nav.bar {
+  display: flex; align-items: center; gap: var(--space-6);
+  position: relative; margin: 0 0 var(--space-5); padding: 0 0 var(--space-3);
+  border-bottom: 1px solid var(--color-divider);
+}
+nav.bar .brand {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 18px; color: var(--color-text); text-decoration: none;
+}
+nav.bar .menus { display: flex; align-items: center; gap: var(--space-5); font-size: 13px }
+nav.bar .bar-right {
+  margin-left: auto; display: flex; align-items: center; gap: var(--space-3);
+}
+nav.bar .rates {
+  font-size: 12px; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+.menu { position: relative }
+.menu > summary {
+  display: flex; align-items: center; gap: 5px; cursor: pointer; list-style: none;
+  color: color-mix(in srgb, var(--color-text) 75%, transparent);
+  padding-bottom: 3px; margin-bottom: -5px;
+  border-bottom: 2px solid transparent;
+}
+.menu > summary::-webkit-details-marker { display: none }
+.menu > summary::marker { content: "" }
+.menu > summary:hover { color: var(--color-text) }
+/*  The menu holding the page you are on keeps the accent underline whether or
+    not it is open - it says where you are, not what is expanded. */
+.menu.current > summary { color: var(--color-accent); border-bottom-color: var(--color-accent) }
+.menu[open] > summary { color: var(--color-accent) }
+.menu > summary svg { transition: transform 140ms }
+.menu[open] > summary svg { transform: rotate(180deg) }
+
+.menu-panel {
+  position: absolute; top: calc(100% + 1px); left: 0; width: 250px; z-index: 5;
+  background: var(--color-bg); padding: var(--space-2) 0; box-shadow: var(--shadow-md);
+}
+.menu-label {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  padding: var(--space-2) var(--space-4) 4px;
+}
+.menu-label + .menu-label { border-top: 1px solid var(--color-divider); margin-top: var(--space-2) }
+.menu-row {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  padding: 6px var(--space-4); font-size: 13px;
+  color: var(--color-text); text-decoration: none;
+}
+.menu-row:hover { background: color-mix(in srgb, var(--color-text) 7%, transparent) }
+.menu-row.on { background: var(--color-accent-200) }
+.menu-row .n {
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+
+/*  Square, 28px, and the pair is mutually exclusive: whichever theme is
+    active hides its own link and shows the other. Decided in the cascade
+    because the server cannot know - a first visit has no cookie, and the
+    answer then depends on an operating system setting it never sees. */
+.icon-btn { width: 28px; height: 28px; padding: 0; color: var(--color-text) }
+.to-dark { display: none }
+.to-light { display: inline-flex }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .to-dark { display: inline-flex }
+  :root:not([data-theme="light"]) .to-light { display: none }
+}
+:root[data-theme="dark"] .to-dark { display: inline-flex }
+:root[data-theme="dark"] .to-light { display: none }
+:root[data-theme="light"] .to-dark { display: none }
+:root[data-theme="light"] .to-light { display: inline-flex }
+
+/*  A phone has no room for four menus and a set of rates. The bar keeps the
+    brand and the toggle; the menus wrap under them. */
+@media (max-width: 760px) {
+  nav.bar { flex-wrap: wrap; column-gap: var(--space-4); row-gap: var(--space-2) }
+  nav.bar .menus { order: 3; width: 100%; gap: var(--space-4); flex-wrap: wrap }
+  nav.bar .rates { display: none }
+  /*  The panel is positioned against the BAR here, not against its own menu.
+
+      Anchored to the menu it belongs to, a 250px panel hanging off the
+      rightmost item ran 54px past the viewport - and because it is absolutely
+      positioned it widened the document rather than being clipped, so the
+      whole page scrolled sideways and every `margin-left:auto` in it stretched
+      to the new width. The row of verdict buttons looked like the fault; it
+      was only the symptom.
+
+      Spanning the bar also gives the panel room for a count on a phone, which
+      250px does not. */
+  .menu { position: static }
+  .menu-panel { left: 0; right: 0; width: auto }
+}
+
+/* ── The scanner ────────────────────────────────────────────────────────── */
+
+.page-head {
+  display: flex; align-items: flex-end; justify-content: space-between;
+  gap: var(--space-6); margin-bottom: var(--space-4);
+}
+.page-head h3 { margin: 0 }
+.kicker { color: var(--color-accent); margin: 0 0 2px }
+.page-head-right { display: flex; gap: var(--space-2); align-items: center }
+.stamp {
+  font-size: 11px; letter-spacing: .06em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+}
+.btn.small { font-size: 12px; padding: 4px 10px }
+
+/*  Five figures separated by hairlines rather than boxed: the grid's own gap
+    shows the divider colour through, which is how the design draws a table of
+    numbers without drawing a table. */
+.summary {
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  gap: 1px; background: var(--color-divider);
+  border: 1px solid var(--color-divider); margin-bottom: var(--space-6);
+}
+.summary .cell { background: var(--color-bg); padding: var(--space-3) var(--space-4) }
+.cell-label {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 55%, transparent);
+}
+.cell-figure {
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight);
+  font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums;
+}
+.cell-figure.accent { color: var(--color-accent) }
+.cell-figure-row { display: flex; align-items: baseline; gap: 8px }
+.cell-figure-row a { font-size: 12px }
+
+.filters {
+  display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
+  padding-bottom: var(--space-3); border-bottom: 1px solid var(--color-divider);
+  margin-bottom: var(--space-4);
+}
+.filter-label {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  margin-right: var(--space-2);
+}
+.filter-label.right { margin-left: auto; margin-right: 0; text-transform: none; font-size: 12px }
+.filter-divider { width: 1px; height: 20px; background: var(--color-divider); margin: 0 var(--space-2) }
+.btn.pill { font-size: 12px; padding: 4px 10px; text-decoration: none }
+.btn.pill .n { font-variant-numeric: tabular-nums; opacity: .75 }
+
+/*  Silver and gold are links wearing the system's radio dot: the row is
+    otherwise navigation, and a checkbox here would need a form and a submit
+    button in the middle of it. */
+.filters .radio { font-size: 12px; text-decoration: none; color: inherit }
+.filters .radio .dot {
+  width: 14px; height: 14px; border: 1.5px solid var(--color-divider); border-radius: 50%;
+}
+.filters .radio.on .dot {
+  border-color: var(--color-accent); background: var(--color-accent);
+  box-shadow: inset 0 0 0 3px var(--color-bg);
+}
+.filters .radio:hover .dot { border-color: var(--color-accent) }
+
+.view-heading { font-size: 19px; margin: var(--space-6) 0 var(--space-2) }
+.view-blurb { margin-top: 0 }
+
+/* ── The dense row ──────────────────────────────────────────────────────────
+
+   Its own rules, because the global `table { min-width: 720px }` and
+   `td { white-space: nowrap }` are what the .q-* list was built to escape -
+   the queue stopped being a table precisely so a phone would not scroll
+   sideways. This one wraps instead, and drops columns as the width goes.
+   ───────────────────────────────────────────────────────────────────────── */
+
+.scan-card { padding: 0; overflow: visible }
+table.scan { width: 100%; min-width: 0; border-collapse: collapse; font-size: 13px }
+table.scan th {
+  text-align: left; font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  font-weight: 400; color: color-mix(in srgb, var(--color-text) 60%, transparent);
+  padding: var(--space-3) var(--space-2) var(--space-2); white-space: nowrap;
+  border-bottom: 1px solid var(--color-divider);
+}
+table.scan td {
+  padding: var(--space-2); white-space: normal; vertical-align: middle;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
+}
+table.scan tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent) }
+
+table.scan th.pick-cell, table.scan td.pick-cell { width: 28px; padding-right: 0 }
+table.scan td.pick-cell .pick { margin: 0 }
+table.scan th.lot { width: 40% }
+table.scan th.ident, table.scan td.ident {
+  width: 14%; color: color-mix(in srgb, var(--color-text) 70%, transparent);
+}
+table.scan th.figure, table.scan td.figure { width: 9%; text-align: right }
+table.scan td.figure { font-variant-numeric: tabular-nums }
+table.scan td.bid { font-family: var(--font-heading); font-size: 16px }
+table.scan td.spot { color: color-mix(in srgb, var(--color-text) 60%, transparent) }
+table.scan td.ends { color: color-mix(in srgb, var(--color-text) 70%, transparent) }
+table.scan th.verdict-cell, table.scan td.verdict-cell { width: 10%; text-align: right }
+table.scan td.verdict-cell {
+  display: table-cell; white-space: nowrap;
+}
+table.scan td.verdict-cell .icon-btn { width: 26px; height: 26px; margin-left: 4px }
+table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
+.icon-btn.yes:hover { color: var(--good); border-color: var(--good) }
+.icon-btn.no:hover { color: var(--critical); border-color: var(--critical) }
+
+.lot-row { display: flex; align-items: center; gap: var(--space-3) }
+/*  Square and hairline-framed, never round, never clipped - the system is
+    explicit that figures are line drawings. */
+.lot-row .q-shot {
+  width: 44px; height: 44px; flex: none;
+  border: 1px solid var(--color-divider); border-radius: 0;
+}
+.lot-row .q-shot img { width: 44px; height: 44px; border-radius: 0 }
+.lot-text { min-width: 0 }
+.lot-title {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 16px;
+}
+.lot-title a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; max-width: 400px }
+.lot-title a:hover { color: var(--color-accent) }
+.ticked { flex: none; display: flex; color: var(--color-accent) }
+.lot-meta {
+  font-size: 11px; margin-top: 2px;
+  color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 410px;
+}
+
+.chip {
+  display: inline-block; padding: 2px 7px; font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text) 62%, transparent);
+}
+/*  Filled only at five per cent under or better: the design's way of marking
+    the lots worth acting on rather than merely worth watching. */
+.chip.hot { background: var(--color-accent-200); color: var(--color-accent-800) }
+
+.scan-note {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: var(--space-3); font-size: 11px;
+}
+.scan-note .ticked { display: inline-flex }
+
+/*  A phone. The design's own mobile board drops to a title, a bid over its
+    spot figure, the chip and two 44px targets - so the columns that carry the
+    least go first, and the verdict buttons grow rather than shrink. */
+/*  A tablet keeps the table and loses the column that carries least: the
+    identified type is the one figure repeated on the badge inside the row. */
+@media (max-width: 860px) {
+  table.scan th.ident, table.scan td.ident { display: none }
+  .lot-title a, .lot-meta { max-width: none; white-space: normal }
+}
+/*  A phone stops being a table.
+
+    The design's own mobile board (3c) is not one - it is a stacked card per
+    lot, and this is why: measured at 390px, the seven columns collapse to
+    five and still want 436px inside 350px of content. Hiding more columns
+    would mean dropping the bid or the verdict, which are the two reasons to
+    look at the list at all.
+
+    So the rows stack instead. Thumbnail and title on the first line, then the
+    bid with its spot figure beneath it, the chip, and the two verdict buttons
+    pushed right at 44px for a thumb. Same markup, same form, same field
+    names - only the box model changes, which is the whole reason this is
+    done in CSS rather than as a second template.
+
+    This is the answer to the one thing the redesign reversed. The queue
+    became a list years ago precisely because a table scrolled sideways on a
+    phone; the table comes back on a desktop, where there is room for it, and
+    gets out of the way here. */
+@media (max-width: 620px) {
+  table.scan, table.scan tbody { display: block }
+  table.scan thead { display: none }
+  table.scan tr {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: var(--space-2) var(--space-3); padding: var(--space-3) 0;
+    border-top: 1px solid color-mix(in srgb, var(--color-text) 14%, transparent);
+  }
+  table.scan tr:first-child { border-top: 0 }
+  /*  `width: auto` has to beat the desktop percentages, which are still in
+      play here and become the flex BASIS once these are flex items - the
+      verdict column's `width: 10%` resolved to 35px and its two 44px buttons
+      hung out of it. Stated on each cell rather than only on the shorthand
+      above, because the per-column rules below are more specific than it. */
+  table.scan td {
+    display: block; width: auto; padding: 0; border: 0; text-align: left;
+  }
+  table.scan td.lot, table.scan td.bid, table.scan td.delta,
+  table.scan td.verdict-cell, table.scan td.figure { width: auto }
+
+  /*  Everything on the second line sizes to its own content.
+
+      Without `flex: none` these shrink: the verdict cell came out 35px wide
+      holding two 44px buttons, which then hung 60px past the row and took the
+      whole document with them. The row measured as fitting; the buttons
+      inside it did not. */
+  table.scan td.pick-cell { order: 1; width: 18px; flex: none }
+  table.scan td.lot { order: 2; flex: 1 1 calc(100% - 34px); min-width: 0 }
+  table.scan td.bid { order: 3; flex: none; font-size: 19px; text-align: left }
+  table.scan td.delta { order: 4; flex: none }
+  table.scan td.verdict-cell { order: 5; flex: none; margin-left: auto; white-space: nowrap }
+  table.scan td.ident, table.scan td.spot, table.scan td.ends { display: none }
+
+  /*  The spot figure rides under the bid rather than being dropped: it is
+      what the bid is being judged against, so a price with nothing to measure
+      it by would be half a row. */
+  table.scan td.bid::after {
+    content: "spot " attr(data-spot); display: block;
+    font-family: var(--font-body); font-size: 10px; letter-spacing: .06em;
+    text-transform: uppercase; font-variant-numeric: normal; line-height: 1.4;
+    color: color-mix(in srgb, var(--color-text) 50%, transparent);
+  }
+  table.scan td.bid[data-spot=""]::after { content: none }
+
+  /*  Thumb-sized, per the design. */
+  table.scan td.verdict-cell .icon-btn { width: 44px; height: 44px; margin-left: 4px }
+
+  .lot-title { font-size: 14px }
+  .lot-title a {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; white-space: normal; max-width: none;
+  }
+  .lot-meta { white-space: normal; max-width: none }
+
+  .summary { grid-template-columns: repeat(3, 1fr) }
+  .summary .cell:nth-child(n+4) { display: none }
+  .cell-figure { font-size: 20px }
+  .cell-label { font-size: 9px }
+  .page-head { flex-wrap: wrap; gap: var(--space-3) }
+}
 
 /* ── Type ───────────────────────────────────────────────────────────────────
 

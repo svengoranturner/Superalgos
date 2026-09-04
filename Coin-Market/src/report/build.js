@@ -100,7 +100,12 @@ excluded entirely, because eBay never publishes what was actually paid for them.
     RENDER.useStylesheet(null)
 
     const html = RENDER.page('Sovereign market report', body)
-        .replace(/<nav>[\s\S]*?<\/nav>/, '')     /* a shared report has no navigation */
+        /*  A shared report has no navigation. The pattern allows attributes
+            on the tag, which it did not have to before the bar gained a
+            class - and the day it gained one this regex silently stopped
+            matching, leaving the whole menu in a file meant to be sent to
+            somebody. */
+        .replace(/<nav\b[^>]*>[\s\S]*?<\/nav>/, '')
 
     const target = outputPath || PATH.join(process.cwd(), 'report.html')
     FS.mkdirSync(PATH.dirname(target), { recursive: true })

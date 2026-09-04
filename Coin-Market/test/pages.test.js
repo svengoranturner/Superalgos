@@ -145,13 +145,16 @@ test('both series appear on the market page, neither crowded out', async () => {
     activeListings, and the review queue's own rows come from elsewhere, so
     checking there would have passed while the bug was live. */
 test('a lot you can see is a lot you can judge', async () => {
+    /*  One list at a time now: near-spot, offers and sold sit behind view
+        pills where they used to be stacked, so the offers panel is asked for
+        by name and is the whole page rather than a slice of it. */
     const opened = twoSeriesStore()
-    const { '/': market } = await fetchAll(opened, ['/'])
+    const path = '/?view=offers'
+    const { [path]: market } = await fetchAll(opened, [path])
 
-    const offers = market.body.split('id="offers"')[1]
-    assert.ok(offers !== undefined, 'the offers panel is missing entirely')
+    const section = market.body.split('id="offers"')[1]
+    assert.ok(section !== undefined, 'the offers panel is missing entirely')
 
-    const section = offers.split('id="sold"')[0]
     const rows = (section.match(/class="q"/g) || []).length
     assert.ok(rows > 0, 'the fixture should produce offers, or this proves nothing')
     assert.ok(section.includes('name="pick"'),
@@ -525,8 +528,13 @@ test('the nav underlines the page you are on, and only that one', async () => {
     const pages = await fetchAll(opened,
         ['/', '/review', '/rules', '/listings?key=GB.SOV.BULLION.FULL'])
 
-    const lit = body => (body.match(/<nav>[\s\S]*?<\/nav>/) || [''])[0]
-        .split('<a ').filter(a => /class="on"/.test(a))
+    /*  Matching a nav that carries attributes, which it does now that it is
+        a menu bar. The old pattern was anchored on a bare <nav> and stopped
+        matching the moment it gained a class - and report/build.js used the
+        same pattern to strip it, so the failure was not cosmetic: the whole
+        bar would have travelled inside a shared report. */
+    const lit = body => (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+        .split('<a ').filter(a => /class="[^"]*\bon\b[^"]*"/.test(a))
         .map(a => (a.match(/href="([^"]*)"/) || [])[1])
 
     assert.deepStrictEqual(lit(pages['/'].body), ['/'])
@@ -539,7 +547,7 @@ test('the nav underlines the page you are on, and only that one', async () => {
     /*  One <nav>, because report/build.js strips it with a non-greedy regex
         and a second would survive into a shared report. */
     for (const page of Object.values(pages)) {
-        assert.strictEqual((page.body.match(/<nav>/g) || []).length, 1)
+        assert.strictEqual((page.body.match(/<nav\b/g) || []).length, 1)
     }
     opened.db.close()
 })
@@ -1414,7 +1422,11 @@ test('the sold table prints a silver premium, not a gold one', async () => {
     const spotAt = SPOT.newSpotLookup(db, {})
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
 
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
     const table = body.split('id="sold"')[1] || ''
     assert.ok(table.length > 0, 'the sold table did not render, so nothing below is tested')
 
@@ -1617,7 +1629,11 @@ test('a wrong sale can be rejected from the table it appears in', async () => {
     assert.ok(before.length > 0, 'the fixture has no completed sales')
     const target = before[0]
 
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
     const table = body.split('id="sold"')[1] || ''
     assert.ok(table.length > 0, 'the sold table did not render')
 
@@ -1654,7 +1670,7 @@ test('a wrong sale can be rejected from the table it appears in', async () => {
         every clearing figure built on it, which is exactly what the bar above
         it promises. Not merely greyed out: the point of the control is to
         stop a wrong sale counting. */
-    const after = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const after = (await fetchAll(opened, [path]))[path].body
     const afterTable = after.split('id="sold"')[1] || ''
     assert.ok(!afterTable.includes('value="' + target.legacyId + '"'),
         'a rejected sale is still in the table, so it is still in the numbers')
@@ -1668,7 +1684,7 @@ test('a wrong sale can be rejected from the table it appears in', async () => {
         opened.repository.label({
             legacyId: keeper.legacyId, title: keeper.title, verdict: 'TRACKED'
         })
-        const kept = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+        const kept = (await fetchAll(opened, [path]))[path].body
         const keptTable = kept.split('id="sold"')[1] || ''
         assert.ok(keptTable.includes('name="undo" value="' + keeper.legacyId + '"'),
             'a sale confirmed genuine offers no way to change your mind')
@@ -1716,7 +1732,11 @@ test('the sold heading counts the sales, not the fetch', async () => {
 
     const spotAt = SPOT.newSpotLookup(db, {})
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
 
     assert.ok(body.includes('What has actually sold (105)'),
         'the heading reports the fetch limit rather than the real number of sales')
@@ -1874,7 +1894,11 @@ test('a sold row says how it sold, and a Buy-It-Now says so', async () => {
 
     const spotAt = SPOT.newSpotLookup(db, {})
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
     /*  Bounded at the next heading. Splitting on the anchor alone runs to the
         end of the document, so "Buy-It-Now" from a sale tab further down
         satisfied the assertion and the test passed with the feature reverted. */
@@ -1896,7 +1920,11 @@ test('a sold row says how it sold, and a Buy-It-Now says so', async () => {
 
 test('a page with only auction sales says so plainly', async () => {
     const opened = twoSeriesStore()
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
     assert.ok(body.includes('Every one of these is an auction'),
         'the page does not disclose that it holds no Buy-It-Now sales')
     assert.ok(body.includes('clearing prices on this page are auction prices'),
@@ -1956,7 +1984,11 @@ test('a Best Offer sale is never reported as a price somebody paid', async () =>
 
     const spotAt = SPOT.newSpotLookup(db, {})
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
-    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  One list at a time now: the front page shows near-spot, offers or sold
+        behind view pills, where all three used to be stacked. The section this
+        test is about is asked for by name. */
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
     const table = (body.split('id="sold"')[1] || '').split('<h2')[0]
 
     assert.ok(table.includes('at most'),
@@ -2461,25 +2493,49 @@ test('the drill-down carries the same strip', async () => {
     about a table. Typing "proof" should narrow all three rather than making
     you ask three times.
 */
-test('one search on the front page narrows every table on it', async () => {
-    const opened = twoSeriesStore()
-    const all = '/?min=1'
-    const hunt = '/?min=1&q=' + encodeURIComponent('US.MORGAN')
-    const pages = await fetchAll(opened, [all, hunt])
+test('a search follows you from one view to the next', async () => {
+    /*
+        The front page used to stack three tables and one search narrowed all
+        of them at once. It shows one at a time now, behind view pills - so
+        the claim worth making is that the search is a property of the page
+        rather than of the table: type it once, switch view, and it is still
+        applied.
 
-    assert.ok(pages[all].body.includes('GB.SOV.BULLION.FULL example'),
-        'the unfiltered page is missing the sovereign rows')
-    assert.ok(!pages[hunt].body.includes('GB.SOV.BULLION.FULL example'),
-        'searching for dollars still shows sovereign rows')
-    assert.ok(pages[hunt].body.includes('across every table on this page'),
-        'the page does not say the search covers all of it')
+        That is also what stops the pills from quietly widening a filtered
+        page back out, which would be the same lost-parameter fault the coin
+        tabs were written to avoid.
+    */
+    const opened = twoSeriesStore()
+    const nearSpot = '/?min=1&q=' + encodeURIComponent('US.MORGAN')
+    const sold = '/?min=1&view=sold&q=' + encodeURIComponent('US.MORGAN')
+    const soldAll = '/?min=1&view=sold'
+    const pages = await fetchAll(opened, [nearSpot, sold, soldAll])
+
+    assert.ok(pages[soldAll].body.includes('GB.SOV.BULLION.FULL example'),
+        'the unfiltered sold view is missing the sovereign rows')
+    assert.ok(!pages[sold].body.includes('GB.SOV.BULLION.FULL example'),
+        'searching for dollars still shows sovereign rows in the sold view')
+
+    for (const path of [nearSpot, sold]) {
+        assert.ok(pages[path].body.includes('Showing rows matching'),
+            'the page does not say it is filtered: ' + path)
+        /*  And the box keeps what was typed, on every view, or switching
+            would silently throw the search away. */
+        assert.ok(pages[path].body.includes('value="US.MORGAN"'),
+            'the search box forgot the term on ' + path)
+    }
+
+    /*  And the form carries the view, or pressing Apply from the sold list
+        would submit you back to near-spot with your search intact and your
+        place gone. */
+    assert.ok(pages[sold].body.includes('name="view" value="sold"'),
+        'the search form drops the view it was used on')
     opened.db.close()
 })
-
 test('the sold table can be ordered without disturbing the other panels', async () => {
     const opened = twoSeriesStore()
-    const dear = '/?min=1&order=dearest'
-    const cheap = '/?min=1&order=cheapest'
+    const dear = '/?min=1&view=sold&order=dearest'
+    const cheap = '/?min=1&view=sold&order=cheapest'
     const pages = await fetchAll(opened, [dear, cheap])
 
     /*  The price CELL only. Every row carries three figures - what went to
@@ -2567,8 +2623,10 @@ test('the search narrows the opportunities panel too, not only the tables below 
     const hunt = '/?min=1&q=morgan'
     const pages = await fetchAll(opened, [all, hunt])
 
+    /*  The heading is the view's own title now - "Auctions at or near spot" -
+        rather than a panel heading among three. */
     const countIn = (body) => {
-        const m = body.match(/Live auctions at or near spot \((\d+)\)/)
+        const m = body.match(/Auctions at or near spot \((\d+)\)/)
         return m === null ? -1 : Number(m[1])
     }
     assert.strictEqual(countIn(pages[all].body), 2, 'the fixture does not fill the panel')
@@ -2619,8 +2677,8 @@ test('the sold table orders by when a sale closed, not when the lot appeared', a
 
     const spotAt = SPOT.newSpotLookup(db, {})
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
-    const newest = '/?min=1&order=newest'
-    const oldest = '/?min=1&order=oldest'
+    const newest = '/?min=1&view=sold&order=newest'
+    const oldest = '/?min=1&view=sold&order=oldest'
     const pages = await fetchAll(opened, [newest, oldest])
 
     const closingIn = (body) => {
@@ -2632,4 +2690,157 @@ test('the sold table orders by when a sale closed, not when the lot appeared', a
     assert.deepStrictEqual(closingIn(pages[oldest].body), [4, 3, 2, 1],
         'oldest-first is not ordering by when the sale closed')
     db.close()
+})
+
+test('the review figure counts the work, not the exclusions', async () => {
+    /*
+        The scanner's summary strip says "Needs review". On the live store the
+        whole queue is 25,560 rows, of which 20,872 are listings outside the
+        chosen countries and most of the rest jewellery categories - all
+        deliberately excluded and none of them work. A figure that size beside
+        that label reads as a backlog nobody could clear, when the actual job
+        is three orders of magnitude smaller.
+
+        What counts is a coin the tool is still PRICING while unsure of it:
+        queued, not excluded, and feeding a statistic. Those are the only rows
+        whose being wrong changes a number on the page.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    const queue = (id, reason, priced) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: 'Gold Sovereign ' + id,
+            buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 900, shipping: 0, observedAt: now })
+        repository.setListingSeries(browseId, 'GB.SOV')
+        if (priced) {
+            repository.saveClassification(browseId,
+                [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.5, 'title', 0.2354, {})
+        }
+        repository.queueForReview(browseId, reason, null, 0.5)
+    }
+
+    queue('work1', 'Portrait type ambiguous for that year', true)
+    queue('work2', 'No tracked series recognises this', true)
+    /*  Excluded, and priced - still not work: it feeds no statistic because
+        the exclusion took it out of one. */
+    queue('gone1', 'EXCLUDED: Listed outside your chosen countries (US)', true)
+    queue('gone2', 'EXCLUDED: Not listed in a coin category (Rings)', false)
+    /*  Uncertain but unpriced: a real question, but it is making no number
+        wrong today. */
+    queue('idle1', 'Portrait type ambiguous for that year', false)
+
+    assert.strictEqual(repository.reviewAffectingCount(), 2,
+        'the count includes exclusions or unpriced rows')
+    db.close()
+})
+
+/*  A store with two lots priced at and under the metal in them, so the
+    scanner table has something to draw. Gold is 0.2354oz at £3290 - about
+    £775 - so £740 is a shade under and £700 is nearly ten per cent under. */
+function scannerStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const lot = (id, price, title) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title, buyingOptions: 'AUCTION', endTime: soon,
+            itemWebUrl: 'https://www.ebay.co.uk/itm/' + id,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, bidCount: 3, observedAt: now })
+        repository.setListingSeries(browseId, 'GB.SOV')
+        repository.saveClassification(browseId,
+            [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+    lot('near', 770, 'Gold Sovereign 1912 near spot')
+    lot('under', 690, 'Gold Sovereign 1913 well under spot')
+
+    /*  One endless lot to set the sweep clock, without which the freshness
+        gate empties the panel for a reason unrelated to the test. */
+    const anchor = 'v1|anchor|0'
+    repository.saveListing({
+        browseId: anchor, legacyId: 'anchor', title: 'Gold Sovereign shop stock',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot(anchor, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(anchor, 'GB.SOV')
+    repository.saveClassification(anchor,
+        [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the scanner draws a dense table, not the tall queue cards', async () => {
+    /*  The design's whole first move: a 44px picture, one title line and one
+        meta line, where the queue card ran four lines and a full set of
+        verdict controls. The queue row is untouched and still used by
+        /review and the drill-down, where the taller shape is right. */
+    const opened = scannerStore()
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+
+    assert.ok(body.includes('<table class="scan">'), 'the scanner is not a table')
+    assert.ok(body.includes('Gold Sovereign 1912 near spot'), 'the rows are missing')
+    /*  Seven columns, and the fourth says Spot rather than Melt - the design
+        is explicit about the word. */
+    assert.ok(body.includes('>Spot</th>'), 'the spot column is missing or renamed')
+    assert.ok(!body.includes('>Melt</th>'), 'the column is called Melt')
+    assert.ok(body.includes('>Verdict</th>'))
+    opened.db.close()
+})
+
+test('a lot well under spot is marked, one merely near it is not', async () => {
+    /*  The chip is filled at five per cent under or better. That threshold is
+        the design saying which lots are worth acting on rather than merely
+        worth watching, so a chip that never fills makes the column decorative.
+        £690 against £775 of gold is about eleven per cent under; £770 is one. */
+    const opened = scannerStore()
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+
+    const rowFor = (title) => {
+        const at = body.indexOf(title)
+        assert.ok(at > -1, 'row missing: ' + title)
+        return body.slice(body.lastIndexOf('<tr>', at), body.indexOf('</tr>', at))
+    }
+    assert.match(rowFor('well under spot'), /class="chip hot"/,
+        'a lot eleven per cent under spot is not marked')
+    assert.ok(!/class="chip hot"/.test(rowFor('near spot')),
+        'a lot one per cent under spot is marked as a bargain')
+    opened.db.close()
+})
+
+test('a view nobody offers falls back rather than falling over', async () => {
+    /*  ?view= is in the URL, so it is whatever somebody typed or whatever a
+        stale link carries. An unrecognised value used to index a table of
+        titles and destructure undefined, which is a 500 on the front page -
+        the one page that must always render. */
+    const opened = scannerStore()
+    const bad = ['/?view=nonsense', '/?view=', '/?view=__proto__', '/?view=constructor']
+    /*  A repeated parameter is not malformed: URLSearchParams hands back the
+        first value, so this asks for the sold list and gets it. Worth stating,
+        because it is the one of these that should NOT fall back. */
+    const repeated = '/?view=sold&view=nope'
+    const pages = await fetchAll(opened, bad.concat([repeated]))
+
+    for (const path of bad) {
+        assert.strictEqual(pages[path].status, 200, path + ' did not render')
+        assert.ok(!/TypeError|ReferenceError|is not a function/.test(pages[path].body),
+            path + ' rendered an error')
+        assert.ok(pages[path].body.includes('Auctions at or near spot'),
+            path + ' did not fall back to the near-spot list')
+    }
+    assert.strictEqual(pages[repeated].status, 200)
+    assert.ok(pages[repeated].body.includes('What has actually sold'),
+        'a repeated parameter should take the first value, not fall back')
+    opened.db.close()
 })

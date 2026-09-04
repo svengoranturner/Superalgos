@@ -45,34 +45,188 @@ let stylesheetHref = null
 exports.useStylesheet = function (href) { stylesheetHref = href || null }
 
 /*
-    The three places worth going, and which one you are on.
+    Lucide, at stroke-width 1.5, inline.
 
-    `class="on"` used to be baked onto the Market link, so Market stayed
-    underlined on every page in the tool. It needs the current path, and only
-    the path: the title is not a usable key, because /listings passes a
-    per-instrument display name and two different call sites both pass
-    'Coin Market'.
+    Inline because there is nowhere else for them to go: `img-src 'self'` would
+    allow a sprite sheet from this origin, but every icon here is eight to
+    thirty bytes of path data and a sprite would be a second request and a
+    second cache to reason about. Inline SVG also inherits `currentColor`,
+    which is what lets the same check render accent in a row badge and
+    foreground in a button without a second copy.
 
-    Matched EXACTLY. On /listings, /teach and /rule-confirm nothing is lit,
-    which is the honest answer - a sub-page-to-parent map would have to decide
-    where /rule-confirm belongs now that it is reachable from both /teach and
-    /rules, and a table that must be right about that goes stale silently.
-    Those pages each carry their own heading and a way back.
-
-    Must stay ONE <nav> element: report/build.js strips it with a non-greedy
-    regex, and a second one would survive into a shared report.
+    Kept in one place so they are drawn once. The design names ten; these are
+    the ones the pages actually use.
 */
-const NAV = [
-    ['/', 'Market'],
-    ['/review', 'Needs review'],
-    ['/rules', "What you've taught it"]
+const ICON = {
+    chevron: 'm6 9 6 6 6-6',
+    check: 'm5 12.5 4.5 4.5L19 7',
+    cross: 'M6 6l12 12M18 6 6 18',
+    menu: 'M4 6h16M4 12h16M4 18h16',
+    sliders: 'M4 6h16M7 12h10M10 18h4',
+    moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z'
+}
+
+/*  A path-only icon. The check-in-circle and the sun need more than one
+    shape, so they are written out where they are used rather than bent into
+    this shape. */
+function icon (name, size) {
+    const px = size || 14
+    return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="' +
+        ICON[name] + '"></path></svg>'
+}
+
+/*  The one icon with a circle round it: "counted in the statistics", which
+    replaces a five-word text badge on every row of the scanner. */
+const TICKED = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="9"></circle><path d="m8.5 12.4 2.6 2.6 4.4-5"></path></svg>'
+
+const SUN = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
+    'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+    '<circle cx="12" cy="12" r="4.5"></circle>' +
+    '<path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4">' +
+    '</path></svg>'
+
+exports.icon = icon
+exports.TICKED = TICKED
+
+/*
+    What the menu bar needs that a page shell cannot know.
+
+    The bar carries live spot rates and a count beside every menu item, and
+    render.js has no store to read them from. Rather than thread them through
+    eleven page() calls that do not care, the server registers a function once
+    and it is called per render.
+
+    Nothing registers it in `report build`, which is correct twice over: that
+    output has no navigation at all (build.js strips it) and no server behind
+    it to make the links work.
+*/
+let chromeSource = null
+
+exports.useChrome = function (fn) { chromeSource = typeof fn === 'function' ? fn : null }
+
+function chrome () {
+    if (chromeSource === null) { return { rates: null, counts: {} } }
+    try {
+        const value = chromeSource() || {}
+        return { rates: value.rates || null, counts: value.counts || {} }
+    } catch (err) {
+        /*  A menu that cannot count is still a menu worth showing. The bar is
+            on every page, so a failure here would take down every page at
+            once - and the thing it would take them down for is a subtitle. */
+        return { rates: null, counts: {} }
+    }
+}
+
+/*
+    The four menus, and what is under each.
+
+    The groupings came from the designer, who inferred them from the old
+    three-link tab row and asked for them to be confirmed - so they are
+    written here as data rather than markup, where changing one is changing a
+    list. `count` names a key in the chrome counts; absent means no number.
+
+    "Saved searches" appears in the mock's Scanner menu and is NOT here: this
+    app has no such feature, and a menu item that goes nowhere is worse than
+    one that is missing.
+*/
+const MENUS = [
+    ['Scanner', [
+        ['Live', [
+            ['/', 'Auctions near spot', 'nearSpot'],
+            /*  No count, deliberately. The honest number here is the size
+                of the offers panel itself - lots whose ask is within reach of
+                your ceiling - and that costs the whole market computation,
+                which every other page would then pay for to render a
+                subtitle. A cheap count of "Buy-It-Now lots allowing offers"
+                would be a different quantity wearing the same label, and
+                would disagree with the page it opens. */
+            ['/?view=offers', 'Open to an offer', null],
+            ['/?view=ending', 'Ending within the hour', 'endingHour']
+        ]]
+    ]],
+    ['Sold prices', [
+        [null, [
+            ['/?view=sold', 'What has actually sold', 'sold'],
+            ['/#evidence', 'The evidence behind these', null]
+        ]]
+    ]],
+    ['Identification', [
+        [null, [
+            ['/review', 'Needs review', 'review'],
+            ['/rules', "What you've taught it", null]
+        ]]
+    ]],
+    ['Reference', [
+        [null, [
+            ['/rules#why', 'Why this and not a model', null],
+            ['/#countries', 'Where you will buy from', null]
+        ]]
+    ]]
 ]
 
-exports.page = function (title, body, pathname) {
-    const nav = NAV.map(([href, label]) =>
-        '<a href="' + href + '"' + (href === pathname ? ' class="on"' : '') + '>' +
-        escapeHtml(label) + '</a>').join('')
+/*
+    The bar.
 
+    ONE <nav>, and that is not a style preference: report/build.js strips
+    navigation with a non-greedy regex and a test asserts there is exactly
+    one, so a second element or a wrapper leaks the whole bar into a report
+    meant to be shared.
+
+    The menus are <details>. With `script-src 'none'` there is no other way
+    to open one, and it is a fair trade: a <summary> is focusable, toggles on
+    Enter and Space, and announces its state. What is lost is closing on an
+    outside click or on Escape, which no amount of CSS restores.
+*/
+function menuBar (pathname, view) {
+    const { rates, counts } = chrome()
+    const here = (href) => href === pathname ||
+        (href.startsWith('/?view=') && pathname === '/' && href === '/?view=' + view)
+
+    const menus = MENUS.map(([label, groups]) => {
+        const contains = groups.some(([, rows]) => rows.some(([href]) => here(href)))
+        const panel = groups.map(([groupLabel, rows]) =>
+            (groupLabel === null ? '' : '<div class="menu-label">' + escapeHtml(groupLabel) + '</div>') +
+            rows.map(([href, text, countKey]) => {
+                const n = countKey === null ? null : counts[countKey]
+                return '<a class="menu-row' + (here(href) ? ' on' : '') + '" href="' +
+                    escapeHtml(href) + '">' + escapeHtml(text) +
+                    (Number.isFinite(n) ? '<span class="n">' + n + '</span>' : '') + '</a>'
+            }).join('')
+        ).join('')
+
+        return '<details class="menu' + (contains ? ' current' : '') + '">' +
+            '<summary>' + escapeHtml(label) + icon('chevron', 12) + '</summary>' +
+            '<div class="menu-panel blueprint">' +
+            '<i class="corner tl"></i><i class="corner tr"></i>' +
+            '<i class="corner bl"></i><i class="corner br"></i>' +
+            panel + '</div></details>'
+    }).join('')
+
+    /*  Both toggles are rendered and CSS shows the right one. The theme is
+        stamped onto <html> after this string is built - and even if it were
+        not, a first visit has no cookie at all and the answer depends on the
+        reader's operating system, which the server never sees. Letting the
+        cascade decide is the only version of this that is right in every
+        case. */
+    const back = encodeURIComponent(pathname || '/')
+    const toggle =
+        '<a class="btn btn-secondary icon-btn to-dark" href="/theme?to=dark&amp;back=' + back +
+        '" title="Dark mode" aria-label="Switch to dark mode">' + icon('moon', 15) + '</a>' +
+        '<a class="btn btn-secondary icon-btn to-light" href="/theme?to=light&amp;back=' + back +
+        '" title="Light mode" aria-label="Switch to light mode">' + SUN + '</a>'
+
+    return '<nav class="bar">' +
+        '<a class="brand" href="/">Coin&nbsp;Market</a>' +
+        '<div class="menus">' + menus + '</div>' +
+        '<div class="bar-right">' +
+        (rates === null ? '' : '<span class="rates">' + escapeHtml(rates) + '</span>') +
+        toggle + '</div></nav>'
+}
+
+exports.page = function (title, body, pathname, view) {
     const style = stylesheetHref === null
         ? '<style>' + STATIC.css() + '</style>'
         : '<link rel="stylesheet" href="' + escapeHtml(stylesheetHref) + '">'
@@ -81,7 +235,7 @@ exports.page = function (title, body, pathname) {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${escapeHtml(title)}</title>${style}</head>
 <body><div class="wrap">
-<nav>${nav}</nav>
+${menuBar(pathname, view)}
 ${body}
 </div></body></html>`
 }

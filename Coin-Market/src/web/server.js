@@ -91,6 +91,140 @@ function setTheme (url, response) {
     response.end()
 }
 
+/*
+    The numbers the menu bar carries.
+
+    The bar is on every page, and three of its five figures are the ones the
+    scanner itself computes - so they are worked out here once and both
+    callers read the same answer. A menu that disagreed with the list it opens
+    would be worse than a menu with no numbers at all.
+
+    MEMOISED, briefly. Counting lots at or near spot means pricing every live
+    auction against its own metal, which is the front page's own work; doing
+    it again on /review and /rules would make every page pay for a subtitle.
+    Thirty seconds is far fresher than the data behind it - the collector
+    sweeps hourly - and the pages themselves stay `no-store`, because a stale
+    count in a menu is a different thing from a stale price in a table.
+*/
+/*  Within five per cent of the metal in it. Shared by the scanner and by the
+    count in the menu that opens it, so the two cannot drift apart. */
+const NEAR_SPOT = 1.05
+
+const SCAN_TTL_MS = 30000
+let scanCache = null
+
+function scanCounts (opened, nowMs) {
+    const at = nowMs === undefined ? Date.now() : nowMs
+    if (scanCache !== null && at - scanCache.at < SCAN_TTL_MS) { return scanCache.value }
+
+    const value = { nearSpot: null, offers: null, endingHour: null, sold: null, review: null }
+    try {
+        const { repository } = opened
+        const now = new Date(at).toISOString()
+        const sweepAt = repository.lastSweepAt()
+
+        const live = repository.liveAuctions(500)
+            .map(row => {
+                const spot = opened.spotAt(now, row.metal)
+                const metalValue = spot === null ? null : row.fineOz * spot.gbpPerOz
+                const total = PREMIUM.totalCost(row.price, row.shipping)
+                return { row, ratio: metalValue > 0 ? total / metalValue : null }
+            })
+            .filter(entry => Number.isFinite(entry.ratio))
+            .filter(entry => FRESHNESS.isActionable(entry.row.lastSeen, sweepAt))
+
+        value.nearSpot = live.filter(entry => entry.ratio <= NEAR_SPOT).length
+
+        /*  Within the hour, off the same rows: an auction carries a real end
+            time, so this needs no second query. */
+        const hour = at + 3600000
+        value.endingHour = live.filter(entry => {
+            const ends = Date.parse(entry.row.endTime)
+            return Number.isFinite(ends) && ends > at && ends <= hour
+        }).length
+
+        value.sold = repository.soldCount()
+        value.review = repository.reviewAffectingCount()
+    } catch (err) {
+        /*  A bar that cannot count is still a bar. This runs on every page,
+            so a failure here would take every page down for the sake of a
+            number beside a menu item. */
+    }
+
+    scanCache = { at, value }
+    return value
+}
+
+/*  The spot rates the bar shows, per gram rather than per ounce: a coin's
+    weight is quoted in grams everywhere except the metal markets, and the
+    figure is there to be compared against a listing. */
+const GRAMS_PER_TROY_OUNCE = 31.1034768
+
+function spotRates (opened) {
+    const now = new Date().toISOString()
+    const parts = []
+    for (const [metal, label] of [['XAG', 'Ag'], ['XAU', 'Au']]) {
+        const spot = opened.spotAt(now, metal)
+        if (spot === null) { continue }
+        parts.push(label + ' ' + RENDER.gbp(spot.gbpPerOz / GRAMS_PER_TROY_OUNCE) + '/g')
+    }
+    return parts.length === 0 ? null : parts.join(' · ')
+}
+
+/*
+    Which list the scanner is showing.
+
+    The mock replaces three stacked panels with one table and a row of pills,
+    which is a real change to how the page works: near-spot lots, lots open to
+    an offer and completed sales used to be visible at once and are now one at
+    a time. The owner chose it deliberately - each list gets the width and the
+    density the dense-row design was drawn for, instead of three panels each
+    apologising for the other two.
+
+    A bare `/` is the near-spot list, so the URL people already have keeps
+    meaning what it meant.
+*/
+const VIEWS = ['nearSpot', 'offers', 'sold', 'ending']
+
+function viewFrom (url) {
+    const asked = url === undefined ? null : url.searchParams.get('view')
+    return VIEWS.includes(asked) ? asked : 'nearSpot'
+}
+
+/*  Which metals to show. Both by default; the pair is a filter, not a choice,
+    so turning both off shows both rather than nothing - an empty page is
+    never what somebody meant by unticking a box. */
+function metalsFrom (url) {
+    const raw = url === undefined ? null : url.searchParams.get('metal')
+    const asked = (raw || '').split(',').filter(m => m === 'XAU' || m === 'XAG')
+    return asked.length === 0 ? ['XAU', 'XAG'] : asked
+}
+
+/*  "Updated 2 min ago", rendered once.
+
+    The mock has this ticking. Without script it is accurate at load and
+    honest afterwards, which is the better half of the trade: it is measured
+    off the last completed sweep, so it says when the DATA was refreshed
+    rather than when the page was opened. */
+function agoLabel (iso, nowMs) {
+    const at = Date.parse(iso)
+    if (!Number.isFinite(at)) { return 'never scanned' }
+    const minutes = Math.max(0, Math.round(((nowMs === undefined ? Date.now() : nowMs) - at) / 60000))
+    if (minutes < 1) { return 'updated just now' }
+    if (minutes < 60) { return 'updated ' + minutes + ' min ago' }
+    const hours = Math.round(minutes / 60)
+    return 'updated ' + hours + (hours === 1 ? ' hour ago' : ' hours ago')
+}
+
+/*  The middle value of a list, without pulling in the analytics module for
+    one figure. Sorted copy, so the caller's array keeps its own order. */
+function medianOf (values) {
+    const sorted = values.filter(Number.isFinite).slice().sort((a, b) => a - b)
+    if (sorted.length === 0) { return null }
+    const mid = Math.floor(sorted.length / 2)
+    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
 const HTML_HEADERS = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store, must-revalidate'
@@ -194,6 +328,14 @@ exports.start = function (opened, options) {
         in its own process without one, still inlines the sheet into the file
         it produces. */
     RENDER.useStylesheet('/style.css?v=' + STATIC.version())
+
+    /*  What the bar needs and a page shell cannot know. Registered on the
+        server only: `report build` has no navigation and no server behind
+        the links it would contain. */
+    RENDER.useChrome(() => ({
+        rates: spotRates(opened),
+        counts: scanCounts(opened)
+    }))
 
     const server = HTTP.createServer(handler)
 
@@ -415,6 +557,14 @@ function marketPage (opened, url) {
         no more to load than it did.
     */
     const SOLD_SHOWN = 25
+    /*  Which list, and which metals, decided before anything is filtered so
+        every count on the page describes the same set the table is drawn
+        from. */
+    const scanView = viewFrom(url)
+    const metals = metalsFrom(url)
+    const inMetals = (row) => row.metal === undefined || row.metal === null ||
+        metals.includes(row.metal)
+
     const SOLD_FETCHED = 100
     const allSales = repository.recentSales(SOLD_FETCHED)
 
@@ -437,15 +587,25 @@ function marketPage (opened, url) {
     const sales = soldControlled.rows
 
     const pageSearch = controlStrip('/', url, {
-        carry: url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {},
+        /*  The view rides along, or searching from the sold list would submit
+            you back to near-spot - the same lost-parameter fault the coin
+            tabs and the back link were both written to avoid. `min` too,
+            since it decides how much of the page the search is filtering. */
+        carry: Object.assign(
+            scanView === 'nearSpot' ? {} : { view: scanView },
+            url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {}),
         allowed: SOLD_SORTS,
         fallback: 'newest'
     })
     const pageNarrowed = pageTerms.length === 0
         ? ''
+        /*  It used to say "across every table on this page", which was true
+            when there were three of them stacked. There is one now, behind
+            the pills, so the sentence would have been describing a page that
+            no longer exists. */
         : '<p class="thin">Showing rows matching ' +
           pageTerms.map(t => '<code>' + escapeHtml(t) + '</code>').join(' ') +
-          ' across every table on this page.</p>'
+          '. The other views are searched too.</p>'
     /*  The real total, not the fetch. See soldCount. */
     const soldTotal = repository.soldCount()
 
@@ -615,7 +775,7 @@ function marketPage (opened, url) {
         a definition that needs a history is a definition that does nothing
         for months.
     */
-    const NEAR_SPOT = 1.05
+
     /*  Judged against the last completed sweep, never the wall clock: 88.6%
         of all long gaps in this store begin at one collector outage, and a
         clock rule would have blanked these panels because of it. */
@@ -683,7 +843,21 @@ function marketPage (opened, url) {
             : (a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     }
 
-    const shown = opportunities.filter(row => matchesSearch(row, pageTerms)).slice(0, 40)
+    const scanned = opportunities.filter(row => matchesSearch(row, pageTerms)).filter(inMetals)
+    const shown = scanned.slice(0, 40)
+
+    /*  Under spot by five per cent or more - the lots the design paints in
+        the accent, because they are the ones worth acting on rather than
+        merely worth watching. */
+    const underSpot = scanned.filter(row => Number.isFinite(row.ratio) && row.ratio <= 0.95).length
+
+    /*  Closing within the hour. Off the same rows, because an auction carries
+        a real end time and needs no second query. */
+    const inAnHour = Date.now() + 3600000
+    const endingSoon = scanned.filter(row => {
+        const ends = Date.parse(row.endTime)
+        return Number.isFinite(ends) && ends > Date.now() && ends <= inAnHour
+    })
     for (const row of shown) { row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
@@ -894,78 +1068,185 @@ function marketPage (opened, url) {
             : '')
     ).join('')
 
+    /*
+        Where auctions actually finish, against the metal in the coin.
+
+        The one figure on the strip the tool did not already have. Taken over
+        every sold auction in every tracked coin type rather than per type,
+        because the strip is describing the scan as a whole - and a median of
+        medians would weight a coin type with three sales the same as one
+        with three hundred.
+    */
+    const medianFinish = medianOf(markets.flatMap(entry =>
+        (entry.market.outcomes || [])
+            .filter(o => o.sold && o.saleType === 'AUCTION' && !o.censored)
+            .map(o => o.clearingPremium)))
+
+    const reviewWaiting = repository.reviewAffectingCount()
+
+    /*  Ending soonest or cheapest against spot, as a segmented control
+        rather than the pill tabs it used to be. Same two orderings, same two
+        parameters - only the shape changed. */
+    const sortHref = (value) => {
+        const params = []
+        if (scanView !== 'nearSpot') { params.push('view=' + scanView) }
+        if (value !== null) { params.push('sort=' + value) }
+        if (metals.length === 1) { params.push('metal=' + metals[0]) }
+        return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
+    }
+    const viewSort = '<span class="seg">' +
+        '<a class="seg-opt' + (sort === 'ending' ? ' on' : '') + '" href="' + sortHref(null) +
+        '">Ending soonest</a>' +
+        '<a class="seg-opt' + (sort === 'spot' ? ' on' : '') + '" href="' + sortHref('spot') +
+        '">Cheapest vs spot</a></span>'
+
+    /*  What each list is and why it is worth looking at. The near-spot text
+        is the one that was already here; the others are the blurbs that used
+        to sit above the panels this view replaced. */
+    const VIEW_BLURBS = {
+        nearSpot: 'Auctions on coins the tool can identify, whose current bid is within 5% of ' +
+            'the spot value of the metal in them. Worth watching even if you do not bid: where ' +
+            'one of these finishes is how fair value gets measured.' +
+            (considered > 0 ? ' ' + considered + ' live auctions were checked.' : ''),
+        offers: 'Lots with a Best Offer button, asking no more than a quarter above where their ' +
+            'coin type actually clears. The button says a seller will listen, not that the price ' +
+            'is keener &mdash; measured here, these lots ask a shade MORE than rigid ' +
+            'Buy-It-Nows &mdash; so the suggested figure comes from your own ceiling rather than ' +
+            'from their asking price.',
+        sold: 'Completed sales with a price. Every clearing figure on this page is built from ' +
+            'these and nothing else &mdash; an asking price is an opinion, and this is what ' +
+            'somebody paid.' + (soldTotal < 30
+                ? ' There are not many yet: they only arrive as lots this tool was already ' +
+                  'watching come to a close.' : '') +
+            (soldTotal > sales.length ? ' Showing the ' + sales.length + ' most recent.' : ''),
+        ending: 'The auctions above that close within the hour. This is the last chance to act ' +
+            'on one, and the only list here where waiting costs you the lot.'
+    }
+    const viewBlurb = VIEW_BLURBS[scanView]
+
+    const VIEW_BODIES = {
+        nearSpot: shown.length === 0
+            ? opportunityHtml
+            : scanTable(shown, opportunityVerdict, sweepAt),
+        /*  The offers panel keeps its own row renderer: its whole point is
+            the suggested figure and what it is measured against, which is a
+            second price column the scanner table does not have. */
+        offers: offerHtml,
+        sold: (noBuyItNowSales
+            ? '<p class="thin costnote"><strong>Every one of these is an auction.</strong> No ' +
+              'Buy-It-Now sale has been resolved yet, so the clearing prices on this page are ' +
+              'auction prices &mdash; the honest measure of what a coin fetches, but not the ' +
+              'whole market.</p>'
+            : '') + (noBuyItNowPrices
+            ? '<p class="thin costnote"><strong>The Buy-It-Now sales here have no exact ' +
+              'price.</strong> Every one of them allowed offers, and eBay never says whether an ' +
+              'offer was taken &mdash; so each of those lots sold at its asking price or below ' +
+              'it, with no way to tell which. They are marked <em>at most</em>. A plain ' +
+              'Buy-It-Now, with no offers allowed, does carry an exact price and will appear ' +
+              'here as one.</p>'
+            : '') + salesHtml,
+        ending: endingSoon.length === 0
+            ? '<p class="thin">Nothing closes in the next hour. The soonest is in the near-spot ' +
+              'list, ordered by how long you have left.</p>'
+            : scanTable(endingSoon, opportunityVerdict, sweepAt)
+    }
+    const viewBody = VIEW_BODIES[scanView]
+
+    /*
+        THE SCANNER.
+
+        One table behind four pills, replacing three stacked panels. Each
+        view has its own title, its own blurb and its own rows, and only one
+        is on the page at a time - which is what lets the rows be as dense as
+        the design draws them instead of three panels each apologising for
+        the other two.
+    */
+    const VIEW_TITLES = {
+        nearSpot: ['Auctions at or near spot', shown.length],
+        offers: ['Buy-It-Now, open to an offer', offers.length],
+        sold: ['What has actually sold', soldTotal],
+        ending: ['Auctions ending within the hour', endingSoon.length]
+    }
+    const [viewTitle, viewCount] = VIEW_TITLES[scanView]
+
+    const pill = (id, label, count) =>
+        '<a class="btn ' + (id === scanView ? 'btn-primary' : 'btn-secondary') + ' pill" href="' +
+        (id === 'nearSpot' ? '/' : '/?view=' + id) + '">' + escapeHtml(label) +
+        (Number.isFinite(count) ? ' <span class="n">' + count + '</span>' : '') + '</a>'
+
+    /*  Silver and gold are links rather than checkboxes: a checkbox needs a
+        form and a submit, and the whole row is otherwise navigation. They
+        wear the design system's radio dot so the row reads as one set of
+        controls. Clicking one toggles it in the URL. */
+    const metalToggle = (code, label) => {
+        const on = metals.includes(code)
+        const next = on ? metals.filter(m => m !== code) : metals.concat([code])
+        const query = next.length === 0 || next.length === 2
+            ? '' : '&amp;metal=' + next.join(',')
+        return '<a class="radio' + (on ? ' on' : '') + '" href="' +
+            (scanView === 'nearSpot' ? '/?' : '/?view=' + scanView) + query.replace(/^&amp;/, '') +
+            '"><span class="dot"></span>' + escapeHtml(label) + '</a>'
+    }
+
     const body = `
-<h1>Coin Market</h1>
-<p class="sub">What sovereigns actually sell for, measured against their gold content.</p>
-${countryPicker(repository)}
-
-<div class="card hero">
+<div class="page-head">
   <div>
-    <div class="n">${overpay === null ? '—' : gbp(overpay)}</div>
-    <div class="l">what paying the asking price costs you, per coin, versus where auctions clear
-      — ${escapeHtml(INSTRUMENTS.displayName(headline.entry.row.key))}</div>
+    <h6 class="kicker">Coin market &middot; live scan</h6>
+    <h3>${escapeHtml(viewTitle)}</h3>
   </div>
-  <div>
-    <div class="n">${pct(hm.fairValue.p50)}</div>
-    <div class="l">auctions clear at this premium over spot
-      ${hm.fairValue.sufficient ? '(n=' + hm.fairValue.n + (hm.fairValue.band && hm.fairValue.band.wide ? ', thin sample' : '') + ')' : ''}</div>
-  </div>
-  <div>
-    <div class="n">${pct(hm.liquidity.medianAskPremium)}</div>
-    <div class="l">buy-it-now sellers ask this</div>
-  </div>
-  <div>
-    <div class="n">${hm.spot === null ? '—' : gbp(hm.spot.gbpPerOz)}</div>
-    <div class="l">${METAL_NAMES[headline.metal] || headline.metal}, £/oz, from your metals.dev feed</div>
+  <div class="page-head-right">
+    <span class="stamp">${escapeHtml(agoLabel(sweepAt))}</span>
+    <a class="btn btn-secondary small" href="${scanView === 'nearSpot' ? '/' : '/?view=' + scanView}"
+       title="Reload this list. The collector sweeps eBay on its own every hour; this re-reads
+what it has already found.">Rescan</a>
   </div>
 </div>
 
-
-<div class="jump">
-  <a href="#auctions">Auctions near spot <span class="n">${shown.length}</span></a>
-  <a href="#offers">Open to an offer <span class="n">${offers.length}</span></a>
-  <a href="#sold">Actually sold <span class="n">${sales.length}</span></a>
-  <a href="#evidence">The evidence behind these</a>
-  <a href="/review">Needs review</a>
+<div class="summary">
+  <div class="cell">
+    <div class="cell-label">Auctions checked</div>
+    <div class="cell-figure">${considered}</div>
+  </div>
+  <div class="cell">
+    <div class="cell-label">At or near spot</div>
+    <div class="cell-figure accent">${shown.length}</div>
+  </div>
+  <div class="cell">
+    <div class="cell-label">Under spot by 5%+</div>
+    <div class="cell-figure accent">${underSpot}</div>
+  </div>
+  <div class="cell">
+    <div class="cell-label">Median finish vs spot</div>
+    <div class="cell-figure">${medianFinish === null ? '—' : pct(medianFinish)}</div>
+  </div>
+  <div class="cell">
+    <div class="cell-label">Needs review</div>
+    <div class="cell-figure-row">
+      <div class="cell-figure">${reviewWaiting}</div>
+      <a href="/review">open</a>
+    </div>
+  </div>
 </div>
 
-<h2 id="auctions">Live auctions at or near spot (${shown.length})</h2>
-<p class="thin">Auctions on coins the tool can identify, whose current bid is within 5% of the
-spot value of the metal in them. Worth watching even if you do not bid: where one of these
-finishes is how fair value gets measured.
-${considered > 0 ? considered + ' live auctions were checked.' : ''}</p>
-${opportunitySort}
-${opportunityHtml}
+<div class="filters">
+  <span class="filter-label">View</span>
+  ${pill('nearSpot', 'Near spot', shown.length)}
+  ${pill('offers', 'Open to an offer', offers.length)}
+  ${pill('sold', 'Actually sold', soldTotal)}
+  ${pill('ending', 'Ending within the hour', endingSoon.length)}
+  <span class="filter-divider"></span>
+  ${metalToggle('XAG', 'Silver')}
+  ${metalToggle('XAU', 'Gold')}
+  <span class="filter-label right">Sort</span>
+  ${viewSort}
+</div>
 
-<h2 id="offers">Buy-It-Now, open to an offer (${offers.length})</h2>
-<p class="thin">Lots with a Best Offer button, asking no more than a quarter above where their coin
-type actually clears. The Best Offer button says a seller will listen, not that the price is
-keener &mdash; measured here, these lots ask a shade MORE than rigid Buy-It-Nows &mdash; so the
-suggested figure comes from your own ceiling rather than from their asking price.</p>
-${offerHtml}
-
-<h2 id="sold">What has actually sold (${soldTotal})</h2>
-<p class="thin">Completed auctions with a hammer price. Every clearing figure on this page is
-built from these and nothing else &mdash; an asking price is an opinion, and this is what somebody
-paid. ${soldTotal < 30
-    ? 'There are not many yet: they only arrive as lots this tool was already watching come to a close.'
-    : ''}${soldTotal > sales.length
-    ? ' Showing the ' + sales.length + ' most recent.'
-    : ''}</p>
-${noBuyItNowSales
-    ? '<p class="thin costnote"><strong>Every one of these is an auction.</strong> No Buy-It-Now ' +
-      'sale has been resolved yet, so the clearing prices on this page are auction prices ' +
-      '&mdash; the honest measure of what a coin fetches, but not the whole market.</p>'
-    : ''}${noBuyItNowPrices
-    ? '<p class="thin costnote"><strong>The Buy-It-Now sales here have no exact price.</strong> ' +
-      'Every one of them allowed offers, and eBay never says whether an offer was taken &mdash; ' +
-      'so each of those lots sold at its asking price or below it, with no way to tell which. ' +
-      'They are marked <em>at most</em>. A plain Buy-It-Now, with no offers allowed, does carry ' +
-      'an exact price and will appear here as one.</p>'
-    : ''}
+<h2 id="${scanView === 'nearSpot' ? 'auctions' : escapeHtml(scanView)}" class="view-heading">${
+    escapeHtml(viewTitle)} (${viewCount})</h2>
+<p class="thin view-blurb">${viewBlurb}</p>
 ${pageSearch}
 ${pageNarrowed}
-${salesHtml}
+${viewBody}
 
 <h2 id="evidence" class="sub" style="margin:34px 0 4px">The evidence behind these</h2>
 
@@ -1009,7 +1290,7 @@ ${salesHtml}
   </div>
 </details>`
 
-    return RENDER.page('Coin Market', body, url.pathname)
+    return RENDER.page('Coin Market', body, url.pathname, scanView)
 }
 
 /*
@@ -2083,6 +2364,163 @@ function shot (imageUrl, caption) {
         '<summary title="Click for a larger picture">' + thumb + '</summary>' +
         '<div class="q-big">' + (caption ? '<div class="cap">' + caption + '</div>' : '') + '</div>' +
         '</details>'
+}
+
+/*  How long is left, in the fewest characters that still mean something.
+
+    The same three bands the queue row has always used - minutes under an
+    hour, hours under a day and a half, days beyond that - pulled out so the
+    dense row and the tall one cannot drift apart on the one figure that
+    decides whether a lot is worth opening. Returns null past the end, which
+    a caller renders as a dash rather than as "ends in -3 min". */
+function endsIn (iso) {
+    const minutes = Math.round((Date.parse(iso) - Date.now()) / 60000)
+    if (!Number.isFinite(minutes) || minutes <= 0) { return null }
+    if (minutes < 60) { return minutes + ' min' }
+    if (minutes < 60 * 36) { return Math.round(minutes / 60) + 'h' }
+    return Math.round(minutes / 1440) + 'd'
+}
+
+/*
+    THE SCANNER TABLE.
+
+    A row per lot, seven columns, 44px picture, one title line and one meta
+    line. It replaces the tall card the queue has used everywhere - and it is
+    deliberately NOT queueRow, which stays exactly as it is for the review
+    queue and the drill-down where a taller row and the full verdict controls
+    are the right shape.
+
+    A TABLE, WHICH THIS APP DELIBERATELY STOPPED USING. `table { min-width:
+    720px }` and `td { white-space: nowrap }` are global here, and the whole
+    .q-* namespace exists to escape them: the queue was made a list precisely
+    because a table scrolled sideways on a phone. So this one carries its own
+    scoped rules, wraps where the old one could not, and is checked at 390px.
+    Reversing that decision is the one thing in the redesign that undoes
+    something measured, and it is done with its eyes open.
+*/
+function scanRow (row, verdictCell, sweepAt) {
+    const id = escapeHtml(String(row.legacyId))
+    const total = PREMIUM.totalCost(row.price, row.shipping)
+    const metalValue = Number.isFinite(row.metalValue) ? row.metalValue : null
+    const ratio = Number.isFinite(row.ratio) ? row.ratio : null
+
+    /*  Signed, and against spot rather than against the ask: "−4%" means the
+        metal in it is worth more than the current bid. Filled with the accent
+        only at −5% or better, which is the design's way of saying this one is
+        worth acting on rather than merely worth watching. */
+    const delta = ratio === null ? null : ratio - 1
+    const chip = delta === null
+        ? '<span class="chip">—</span>'
+        : '<span class="chip' + (delta <= -0.05 ? ' hot' : '') + '">' +
+          (delta > 0 ? '+' : '') + (delta * 100).toFixed(1) + '%</span>'
+
+    /*  The tick that replaces five words. "Counted in the statistics" was a
+        text badge on every row; at this density it was most of the meta line,
+        and it says the same thing as one 14px mark. */
+    const counted = row.priced
+        ? '<span class="ticked" title="Counted in the statistics">' + RENDER.TICKED + '</span>'
+        : ''
+
+    const meta = []
+    if (Number.isFinite(row.bidCount)) {
+        meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
+    }
+    const left = row.endTime ? endsIn(row.endTime) : null
+    if (left !== null) { meta.push('ends in ' + left) }
+    if (Number.isFinite(row.sellerFeedbackPct)) {
+        meta.push(row.sellerFeedbackPct.toFixed(1) + '% seller')
+    }
+    if (row.lastSeen && !FRESHNESS.isActionable(row.lastSeen, sweepAt)) {
+        meta.push('not seen this sweep')
+    }
+
+    const name = row.instrumentKey ? INSTRUMENTS.displayName(row.instrumentKey) : null
+
+    return '<tr>' +
+        '<td class="pick-cell"><input class="pick" type="checkbox" name="pick" value="' + id +
+        '" title="Select this lot for a bulk decision"></td>' +
+        '<td class="lot">' +
+        '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.title || '')) +
+        '<div class="lot-text">' +
+        '<div class="lot-title">' + counted +
+        (row.itemWebUrl
+            ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
+              escapeHtml(row.title || '') + '</a>'
+            : escapeHtml(row.title || '')) +
+        '</div>' +
+        '<div class="lot-meta">' + escapeHtml(meta.join(' · ')) + '</div>' +
+        '</div></div></td>' +
+        '<td class="ident">' + (name === null ? '—' : escapeHtml(name)) + '</td>' +
+        '<td class="figure bid" data-spot="' +
+            (metalValue === null ? '' : escapeHtml(gbp(metalValue))) + '">' + gbp(total) + '</td>' +
+        '<td class="figure spot">' + (metalValue === null ? '—' : gbp(metalValue)) + '</td>' +
+        '<td class="figure delta">' + chip + '</td>' +
+        '<td class="figure ends">' + (left === null ? '—' : escapeHtml(left)) + '</td>' +
+        '<td class="verdict-cell">' + scanVerdict(row) + '</td>' +
+        '</tr>'
+}
+
+/*  Two 26px buttons where there were two wide worded ones.
+
+    Same form, same field names, same POST - only the presentation changes, so
+    a decision made here is the decision made anywhere else in the app. The
+    noun in the reject button's title comes from the pack, so a Morgan row
+    says "Not a silver dollar" and a sovereign says "Not a sovereign"; the
+    label moved from the face of the button into its tooltip, which is the one
+    thing this trades away for the density.
+*/
+function scanVerdict (row) {
+    const id = escapeHtml(String(row.legacyId))
+    if (row.verdict === LEARNED.VERDICT.TRACKED || row.verdict === LEARNED.VERDICT.NOT_TRACKED) {
+        const said = row.verdict === LEARNED.VERDICT.TRACKED
+            ? 'genuine' : SERIES.words(row).notOne.toLowerCase()
+        return '<span class="settled thin" title="You said: ' + escapeHtml(said) + '">' +
+            escapeHtml(said) + '</span>' +
+            '<button class="btn btn-secondary icon-btn undo" name="undo" value="' + id +
+            '" title="Undo that">' + RENDER.icon('cross', 13) + '</button>'
+    }
+    return '<button class="btn btn-secondary icon-btn yes" name="genuine" value="' + id +
+        '" title="Genuine">' + RENDER.icon('check') + '</button>' +
+        '<button class="btn btn-secondary icon-btn no" name="reject" value="' + id +
+        '" title="' + escapeHtml(SERIES.words(row).notOne) + '">' +
+        RENDER.icon('cross') + '</button>'
+}
+
+const SCAN_HEAD = '<thead><tr>' +
+    '<th class="pick-cell"></th>' +
+    '<th class="lot">Lot</th>' +
+    '<th class="ident">Identified as</th>' +
+    /*  Each header carries its own column's class, not just `figure`.
+
+        Without them `th.spot` and `th.ends` matched nothing, so the narrow
+        breakpoints hid the CELLS and left the HEADERS - a table whose columns
+        no longer lined up with their titles, and 562px of it in a 390px
+        phone. */
+    '<th class="figure bid">Bid</th>' +
+    /*  "Spot", not "Melt" - the design is explicit about it, and the rest of
+        this app has always said spot. */
+    '<th class="figure spot">Spot</th>' +
+    '<th class="figure delta">vs spot</th>' +
+    '<th class="figure ends">Ends</th>' +
+    '<th class="verdict-cell">Verdict</th>' +
+    '</tr></thead>'
+
+function scanTable (rows, verdictCell, sweepAt) {
+    if (rows.length === 0) {
+        return '<p class="thin">Nothing here right now.</p>'
+    }
+    return '<form method="post" action="/apply">' +
+        '<input type="hidden" name="back" value="/">' +
+        bulkBar(rows, 'A wrong coin here is worth more than a dismissal: it is setting the ' +
+            'clearing price every figure above is measured against.') +
+        '<div class="card scan-card"><table class="scan">' + SCAN_HEAD + '<tbody>' +
+        rows.map(row => scanRow(row, verdictCell, sweepAt)).join('') +
+        '</tbody></table></div>' +
+        '<p class="thin scan-note"><span class="ticked">' + RENDER.TICKED +
+        '</span> counted in the statistics &nbsp; ' +
+        'Tick anything that is not what it says it is; it leaves this panel and every ' +
+        'statistic at once.</p>' +
+        '</form>'
 }
 
 function queueRow (row, verdictCell) {

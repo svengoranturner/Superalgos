@@ -876,6 +876,30 @@ exports.newRepository = function (db, options) {
                 .run(whenIso || new Date().toISOString(), browseId)
         },
 
+        /*
+            How many queued coins are actually making a number wrong.
+
+            NOT the size of the review queue, which on the live store is
+            25,560 rows and almost all of it deliberate exclusions - 20,872
+            listings outside the chosen countries alone. A figure that large
+            beside the word "review" reads as a backlog nobody could ever
+            clear, when the work is three orders of magnitude smaller.
+
+            The ones that matter are the coins the tool is still pricing while
+            unsure about them: queued, not excluded, and counted in a
+            statistic. Those are the only rows whose being wrong changes a
+            number on the front page.
+        */
+        reviewAffectingCount () {
+            const row = db.prepare(`
+                SELECT COUNT(*) AS n
+                FROM review_queue r
+                WHERE COALESCE(r.reason, '') NOT LIKE 'EXCLUDED%'
+                  AND EXISTS (SELECT 1 FROM listing_instrument li WHERE li.browse_id = r.browse_id)
+            `).get()
+            return row === undefined ? 0 : row.n
+        },
+
         lastSweepAt () {
             const row = db.prepare(
                 'SELECT MAX(last_seen) AS at FROM listing WHERE end_time IS NULL'
