@@ -1679,6 +1679,46 @@ function queueRow (row, verdictCell) {
         : (row.price || 0) + (row.shipping || 0)
 
     const meta = []
+
+    /*
+        WHICH COIN THE TOOL THINKS THIS IS, which is the question nobody was
+        being shown.
+
+        The owner has been working these rows answering one question - "is
+        this a real sovereign?" - while the tool was quietly answering a
+        second: which KIND. That second answer decides which pile of clearing
+        prices the coin joins, and therefore the ceiling every offer on it is
+        measured against, and it was nowhere on the row.
+
+        It is not a small difference. Measured on this store's own sold
+        auctions, a full sovereign filed as bullion clears at +9.6% and one
+        filed as a proof at +40.6% - so a coin in the wrong pile is a thirty
+        point error in what the tool believes it is worth, in whichever
+        direction is least helpful. 3,400 lots are filed this way, almost all
+        of them off the title alone.
+
+        Confidence is shown when it is poor rather than always: a number
+        beside every row is noise, and 0.97 tells a reader nothing they need
+        to act on. Below 0.7 it is a coin the classifier was guessing at, and
+        those are the ones worth a second look - 43 of 239 in GRADED.FULL, 38
+        of 411 in BULLION.FULL.
+    */
+    const filedAs = row.instrumentKey || row.bestGuess || null
+    if (filedAs !== null) {
+        const name = INSTRUMENTS.displayName(filedAs)
+        const shaky = Number.isFinite(row.confidence) && row.confidence < 0.7
+        meta.push('<span class="badge' + (shaky ? ' critical' : '') +
+            '" title="The tool has filed this as ' + escapeHtml(name) + ' (' +
+            escapeHtml(filedAs) + '), and that is the group whose clearing prices ' +
+            'its premium and any offer on it are measured against. If the group is ' +
+            'wrong, both numbers are wrong.' +
+            (shaky
+                ? ' It is only ' + Math.round(row.confidence * 100) + '% sure of that, ' +
+                  'which is low - worth a look.'
+                : '') +
+            '">' + escapeHtml(name) + (shaky ? ' &middot; unsure' : '') + '</span>')
+    }
+
     const reason = compactReason(row.reason)
     if (reason !== null) {
         meta.push('<span class="badge" title="' + escapeHtml(reason.full) + '">' +

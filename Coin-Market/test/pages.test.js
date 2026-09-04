@@ -1961,3 +1961,84 @@ test('a Best Offer sale is never reported as a price somebody paid', async () =>
 
     db.close()
 })
+
+
+/*
+    Every judged row says which coin group the tool filed it under.
+
+    The owner, working the review queue: "I can't see what category the coin
+    has been placed in. all i've been looking for is 'is it a real x or not?'
+    I haven't been checking the categorisation, so that's potential room for
+    error."
+
+    Exactly right, and the room for error is large. The group decides which
+    pile of clearing prices the coin joins, and so the premium shown against
+    it and the ceiling of any offer on it. Measured on the live store's own
+    sold auctions, a full sovereign filed as bullion clears at +9.6% and one
+    filed as a proof at +40.6%: a coin in the wrong pile is a thirty point
+    error in what the tool thinks it is worth. 3,400 lots are filed this way,
+    almost all off the title alone, and the row never said so.
+*/
+test('a review row says which coin group it was filed under', async () => {
+    const opened = twoSeriesStore()
+    /*  The queue defaults to one series and to the auction tab, so each coin
+        is asked for where it actually lives. */
+    const pages = await fetchAll(opened, ['/review', '/review?coin=US.MORGAN'])
+    const body = pages['/review'].body
+    const dollars = pages['/review?coin=US.MORGAN'].body
+
+    assert.ok(body.includes('Sovereign (bullion)'),
+        'the queue never says which group a sovereign was filed under')
+    assert.ok(dollars.includes('Silver Dollar (common date)'),
+        'the queue never says which group a dollar was filed under')
+
+    /*  Per row, not a page-level heading: the queue mixes series, so one
+        label at the top would be worse than none. */
+    const badges = (body.match(/has filed this as/g) || []).length
+    assert.ok(badges >= 2,
+        'the group is stated once for the page, not on each row (found ' + badges + ')')
+    assert.ok(!dollars.includes('Sovereign (bullion)'),
+        'a sovereign group leaked onto the dollar queue')
+
+    opened.db.close()
+})
+
+test('a group the classifier was guessing at is flagged, not stated flatly', async () => {
+    /*  These rows are queued at 0.5. A category badge that looked equally
+        confident at 0.5 and at 0.97 would invite exactly the trust the
+        owner has been giving it. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+    assert.ok(body.includes('unsure'), 'a 50%-confidence guess is presented as settled')
+    assert.ok(body.includes('50% sure'), 'the row does not say how unsure it is')
+    opened.db.close()
+})
+
+test('a confident group is stated without hedging', async () => {
+    /*  The other half of the same rule: a number beside every row is noise,
+        and hedging on a 0.9 call would train the eye to ignore the hedge. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|sure|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'sure', title: 'Gold Proof Sovereign 1980',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString(),
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: 'GB.SOV.PROOF.FULL', level: 0 }], 0.95, 'title', 0.2354, {})
+    repository.queueForReview(id, 'worth a look', 'GB.SOV.PROOF.FULL', 0.95)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    assert.ok(body.includes('Sovereign (proof)'), 'the group is missing')
+    assert.ok(!body.includes('unsure'), 'a confident call was hedged anyway')
+    db.close()
+})
