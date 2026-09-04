@@ -116,9 +116,15 @@ exports.newScheduler = function (parts, options) {
                 if (resolver === null) { return }
                 const report = await resolver.resolvePending(60)
                 if (report.attempted > 0) {
+                    /*  stillLive is the quiet Buy-It-Now trigger's error rate,
+                        and the only place it can be read. The threshold was
+                        measured once against snapshot history; this is how it
+                        stays honest as the corpus changes. */
                     log('resolve', report.resolved + '/' + report.attempted + ' outcomes resolved' +
                         (report.censored > 0 ? ', ' + report.censored + ' censored (Best Offer)' : '') +
-                        (report.gone > 0 ? ', ' + report.gone + ' past the 90-day window' : ''))
+                        (report.gone > 0 ? ', ' + report.gone + ' past the 90-day window' : '') +
+                        (report.stillLive > 0 ? ', ' + report.stillLive + ' still live (asked too early)' : '') +
+                        (report.budgetStopped ? ', stopped on Trading budget' : ''))
                 }
             })
 

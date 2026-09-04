@@ -266,6 +266,118 @@ test('separate listings are still resolved separately', () => {
     db.close()
 })
 
+/* ------------------------------------------- quiet Buy-It-Now lots (COL-01)
+
+    A Good-'Til-Cancelled listing never announces that it is over, so for as
+    long as pendingOutcomes gated on `end_time IS NOT NULL` no Buy-It-Now lot
+    could ever be resolved - 25,241 of them, and the fixed-price branch of
+    parseItem had never run once. The trigger is an absence, and the tests
+    that matter are the ones about when an absence means nothing.
+*/
+const HOUR_MS = 60 * 60 * 1000
+
+/*  A store with a sweep clock and one quiet priced Buy-It-Now lot.
+    sweepAgeHours is how long ago the last sweep completed; quietHours is how
+    long before that sweep the lot was last seen. */
+function quietFixture (sweepAgeHours, quietHours, options) {
+    const opts = options || {}
+    const { db, repository } = fixture()
+    const now = Date.now()
+    const sweepAt = now - sweepAgeHours * HOUR_MS
+    const lastSeen = new Date(sweepAt - quietHours * HOUR_MS).toISOString()
+
+    /*  Something seen by the most recent sweep, which is what sets the sweep
+        clock. Without it the store has no clock and offers nothing. */
+    repository.saveListing({
+        browseId: 'v1|fresh|0', legacyId: 'fresh', marketplace: 'EBAY_GB',
+        title: 'Gold Sovereign 1912', buyingOptions: 'FIXED_PRICE', currency: 'GBP', endTime: null
+    }, new Date(sweepAt).toISOString())
+
+    repository.saveListing({
+        browseId: 'v1|quiet|0', legacyId: 'quiet', marketplace: 'EBAY_GB',
+        title: 'Gold Sovereign 1911', buyingOptions: opts.buyingOptions || 'FIXED_PRICE',
+        currency: 'GBP', endTime: null
+    }, lastSeen)
+    repository.saveSnapshot('v1|quiet|0', { observedAt: lastSeen, price: 640, shipping: 0 })
+    if (opts.priced !== false) {
+        repository.saveClassification('v1|quiet|0', [{ key: 'GB.SOV.FULL', level: 1 }], 0.9, 'test', 0.2354, {})
+    }
+    return { db, repository }
+}
+
+const offered = repo => repo.pendingOutcomes(50).map(r => r.legacyId)
+
+test('a Buy-It-Now lot that has gone quiet for three sweeping days is offered up', () => {
+    const { db, repository } = quietFixture(0, 73)
+    assert.deepStrictEqual(offered(repository), ['quiet'])
+    assert.strictEqual(repository.pendingOutcomes(50)[0].quiet, 1, 'not flagged as a guess')
+    db.close()
+})
+
+test('a Buy-It-Now lot only briefly out of sight is left alone', () => {
+    const { db, repository } = quietFixture(0, 48)
+    assert.deepStrictEqual(offered(repository), [], 'asked about a lot that was probably still live')
+    db.close()
+})
+
+test('a collector outage does not make the whole corpus look sold', () => {
+    /*
+        THE test here. On 2026-09-04 the collector spent eight hours unable
+        to make a Browse call, having convinced itself its quota was gone.
+        Measured against the wall clock this lot has been missing for 75
+        hours and every other lot in the store would have crossed the
+        threshold with it - thousands of Trading calls about listings that
+        were alive and well. Measured against the sweep clock it has been
+        missing for 67 hours of actual sweeping, which is not yet enough.
+    */
+    const { db, repository } = quietFixture(8, 67)
+    assert.deepStrictEqual(offered(repository), [],
+        'an outage in the collector was read as an event in the market')
+    db.close()
+})
+
+test('an unattributed quiet lot is not worth a Trading call', () => {
+    /*  Its outcome would feed no clearing statistic - and there are 25,241
+        Buy-It-Now lots against 2,914 that are priced. */
+    const { db, repository } = quietFixture(0, 73, { priced: false })
+    assert.deepStrictEqual(offered(repository), [])
+    db.close()
+})
+
+test('ended auctions keep their place at the front of the queue', () => {
+    /*  Auctions carry a hard 90-day deadline and quiet Buy-It-Now lots carry
+        none, so the new work may only ever use capacity an auction did not
+        want. */
+    const { db, repository } = quietFixture(0, 73)
+    repository.saveListing({
+        browseId: 'v1|ended|0', legacyId: 'ended', marketplace: 'EBAY_GB',
+        title: 'Gold Sovereign 1913', buyingOptions: 'AUCTION', currency: 'GBP',
+        endTime: new Date(Date.now() - 2 * HOUR_MS).toISOString()
+    })
+    assert.deepStrictEqual(repository.pendingOutcomes(1).map(r => r.legacyId), ['ended'],
+        'a guess displaced a lot with a deadline')
+    assert.deepStrictEqual(offered(repository).sort(), ['ended', 'quiet'])
+    db.close()
+})
+
+test('a quiet lot already resolved is not asked about again', () => {
+    const { db, repository } = quietFixture(0, 73)
+    repository.saveOutcome('v1|quiet|0', {
+        endTime: new Date().toISOString(), sold: true, finalPrice: 655,
+        saleType: 'FIXED_PRICE', source: 'trading_getitem'
+    })
+    assert.deepStrictEqual(offered(repository), [])
+    db.close()
+})
+
+test('a quiet auction is not swept up by the Buy-It-Now rule', () => {
+    /*  An auction without an end time is a contradiction, but the corpus is
+        full of eBay's edge cases and the two paths must not overlap. */
+    const { db, repository } = quietFixture(0, 73, { buyingOptions: 'AUCTION|FIXED_PRICE' })
+    assert.deepStrictEqual(offered(repository), [])
+    db.close()
+})
+
 /*
     The ask side.
 

@@ -33,6 +33,27 @@ exports.newTradingClient = function (auth, credentials, options) {
             bodyXml +
             '</' + callName + 'Request>'
 
+        /*  Before the call, not after it.
+
+            The check used to sit below the fetch, so an exhausted budget
+            refused to PARSE a response it had already paid for - the request
+            was on the wire before anything looked at the ledger, and a
+            looping caller could still spend the whole day's Trading
+            allowance one refused call at a time. It only stands between a
+            caller and the allowance if it stands in front of the request.
+
+            Counted here too, rather than on success: an attempt eBay never
+            answers has still been charged by them, and this module's whole
+            posture is to fail towards under-spending. */
+        if (config.budget !== null) {
+            if (typeof config.budget.allowsTrading === 'function' && !config.budget.allowsTrading(1)) {
+                const err = new Error('Trading daily call budget exhausted')
+                err.code = 'BUDGET_EXHAUSTED'
+                throw err
+            }
+            config.budget.record('trading')
+        }
+
         const response = await fetch(auth.endpoints.trading, {
             method: 'POST',
             headers: {
@@ -44,18 +65,6 @@ exports.newTradingClient = function (auth, credentials, options) {
             },
             body: envelope
         })
-
-        if (config.budget !== null) {
-            /*  Checked, not merely counted. This was record-only, so nothing
-                stood between a looping caller and the whole day's Trading
-                allowance. */
-            if (typeof config.budget.allowsTrading === 'function' && !config.budget.allowsTrading(1)) {
-                const err = new Error('Trading daily call budget exhausted')
-                err.code = 'BUDGET_EXHAUSTED'
-                throw err
-            }
-            config.budget.record('trading')
-        }
 
         const text = await response.text()
         const parsed = XML.parse(text)

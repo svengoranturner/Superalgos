@@ -146,7 +146,90 @@ exports.newRepository = function (db, options) {
             VALUES (?,?,?,?,?)
         `),
         insertAspect: db.prepare('INSERT OR REPLACE INTO aspect (browse_id, name, value) VALUES (?,?,?)'),
-        markAspectsFetched: db.prepare('UPDATE listing SET aspects_fetched = 1 WHERE browse_id = ?')
+        markAspectsFetched: db.prepare('UPDATE listing SET aspects_fetched = 1 WHERE browse_id = ?'),
+        lastSweep: db.prepare('SELECT MAX(last_seen) AS at FROM listing WHERE end_time IS NULL')
+    }
+
+    /*
+        Buy-It-Now lots that have gone quiet.
+
+        A Good-'Til-Cancelled listing never announces that it is over. It has
+        no end time, so pendingOutcomes' deadline query cannot see it, and
+        the consequence was total: of 25,241 Buy-It-Now lots, not one had
+        ever been resolved, and the fixed-price branch of trading.parseItem
+        had never executed. Every clearing price the tool knows came from an
+        auction, on roughly half the market.
+
+        The only signal such a lot gives is that the sweep stops seeing it,
+        so the trigger is an absence - and an absence has to be measured
+        against the sweep clock, never the wall clock. On 2026-09-04 the
+        collector spent eight hours unable to make a Browse call, having
+        convinced itself its quota was gone; judged against the wall clock
+        every lot in the corpus would have crossed this threshold at once and
+        this query would have offered up thousands of listings that were
+        alive and well. Anchored to the last sweep, an outage freezes the
+        measurement and nothing goes quiet that had not already. That is the
+        same reasoning lastSweepAt() records from the outage of 2026-08-30,
+        which is twice now.
+
+        QUIET_SWEEP_HOURS is measured, not chosen. Reconstructing every gap
+        in the snapshot history of priced Buy-It-Now lots and asking which
+        gaps ended in the lot being seen again:
+
+            absent 24h   13 came back    279 did not    95.5%
+            absent 48h    5 came back    226 did not    97.8%
+            absent 72h    1 came back    170 did not    99.4%
+            absent 96h    0 came back    110 did not   100.0%
+
+        72 hours is where the curve flattens: exactly one lot in the recorded
+        history has ever returned after three days away. The threshold only
+        governs how many Trading calls get spent on lots that turn out to be
+        alive, though - it is NOT what keeps the data honest. That is the
+        resolver's refusal to record an outcome for a listing eBay still
+        calls Active, which makes a wrong guess here cost one call and
+        nothing else.
+
+        Priced lots only. An unattributed listing's outcome feeds no clearing
+        statistic, and there are 2,914 priced against 25,241 in total, so the
+        restriction is most of the difference between a bounded backlog and
+        a pointless one.
+    */
+    const QUIET_SWEEP_HOURS = 72
+
+    function quietBuyItNow (wanted, retentionFloor) {
+        if (wanted <= 0) { return [] }
+
+        /*  The sweep clock: discover.js stamps one seenAt across everything a
+            sweep saw, so the newest last_seen among Good-'Til-Cancelled lots
+            is when the last sweep completed. Falling back to the wall clock
+            would reintroduce exactly the outage behaviour described above,
+            so an empty store yields no candidates instead. */
+        const sweep = statements.lastSweep.get()
+        if (sweep === undefined || !sweep.at) { return [] }
+
+        const quietBefore =
+            new Date(Date.parse(sweep.at) - QUIET_SWEEP_HOURS * 60 * 60 * 1000).toISOString()
+
+        return db.prepare(`
+            SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, MIN(l.last_seen) AS endTime,
+                   1 AS quiet
+            FROM listing l
+            WHERE l.end_time IS NULL
+              AND l.buying_options NOT LIKE '%AUCTION%'
+              AND l.legacy_id IS NOT NULL
+              AND l.last_seen < ?
+              AND l.last_seen > ?
+              AND EXISTS (SELECT 1 FROM listing_instrument li WHERE li.browse_id = l.browse_id)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM listing_outcome o
+                  JOIN listing sibling ON sibling.browse_id = o.browse_id
+                  WHERE sibling.legacy_id = l.legacy_id
+              )
+            GROUP BY l.legacy_id
+            ORDER BY endTime ASC
+            LIMIT ?
+        `).all(quietBefore, retentionFloor, wanted)
     }
 
     return {
@@ -258,8 +341,14 @@ exports.newRepository = function (db, options) {
            offered again. Without it the group would simply nominate an
            unresolved sibling next cycle and resolve the same lot forever. */
         pendingOutcomes (limit) {
-            return db.prepare(`
-                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, MIN(l.end_time) AS endTime
+            const cap = limit || 100
+            const now = new Date().toISOString()
+            /* inside the 90-day window, with margin */
+            const retentionFloor = new Date(Date.now() - 88 * DAY_MS).toISOString()
+
+            const ended = db.prepare(`
+                SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, MIN(l.end_time) AS endTime,
+                       0 AS quiet
                 FROM listing l
                 WHERE l.end_time IS NOT NULL
                   AND l.end_time < ?
@@ -274,11 +363,14 @@ exports.newRepository = function (db, options) {
                 GROUP BY l.legacy_id
                 ORDER BY endTime ASC
                 LIMIT ?
-            `).all(
-                new Date().toISOString(),
-                new Date(Date.now() - 88 * DAY_MS).toISOString(),   /* inside the 90-day window, with margin */
-                limit || 100
-            )
+            `).all(now, retentionFloor, cap)
+
+            /*  Auctions first, always. They carry a hard deadline and the
+                lots below do not, so quiet Buy-It-Now work may only ever use
+                capacity an auction did not want. */
+            if (ended.length >= cap) { return ended }
+
+            return ended.concat(quietBuyItNow(cap - ended.length, retentionFloor))
         },
 
         /* Sold auctions with their premium inputs, for fair value. */
