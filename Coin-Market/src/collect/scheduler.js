@@ -124,6 +124,10 @@ exports.newScheduler = function (parts, options) {
                         (report.censored > 0 ? ', ' + report.censored + ' censored (Best Offer)' : '') +
                         (report.gone > 0 ? ', ' + report.gone + ' past the 90-day window' : '') +
                         (report.stillLive > 0 ? ', ' + report.stillLive + ' still live (asked too early)' : '') +
+                        (report.pricedByOffers > 0
+                            ? ', ' + report.pricedByOffers + ' priced exactly (sold at the ask)' : '') +
+                        (report.acceptedOffer > 0
+                            ? ', ' + report.acceptedOffer + ' went to an accepted offer' : '') +
                         (report.budgetStopped ? ', stopped on Trading budget' : ''))
                 }
             })

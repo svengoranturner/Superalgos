@@ -287,3 +287,234 @@ test('a missing bid count is not read as zero', () => {
     assert.strictEqual(parsed.saleType, 'AUCTION',
         'a null bid count was treated as proof of no bidding')
 })
+
+
+/*
+    Telling a Buy-It-Now sale at the asking price apart from an accepted offer.
+
+    eBay marks the difference on its own sold page with a strikethrough and
+    puts it nowhere in GetItem - a full 114-field diff across three lots of
+    known outcome found only per-listing noise, and BestOfferCount was 4 on
+    one that sold AT the ask against 1 on one that did not.
+
+    GetBestOffers carries it. The three lots, measured live:
+      227494211240  4 offers, all Declined   -> sold at the ask
+      800603093457  1 offer,  Accepted       -> accepted offer
+      188865614674  2 offers, both Declined  -> sold at the ask
+
+    Every test below is about the guard rather than the happy path, because
+    the cost of the two errors is wildly asymmetric. Failing to un-censor a
+    lot loses one data point. Un-censoring one wrongly prints a confident
+    price for a coin that never sold for it - the exact failure the whole
+    censoring apparatus exists to prevent.
+*/
+const soldBin = (over) => Object.assign({
+    sold: true, listingType: 'FixedPriceItem', quantitySold: 1,
+    bestOfferEnabled: true, bestOfferCount: 0, censored: true
+}, over)
+
+const offers = (...statuses) => ({ available: true, offers: statuses.map(status => ({ status })) })
+
+test('a lot whose every offer was declined sold at the asking price', () => {
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 4 }),
+            offers('Declined', 'Declined', 'Declined', 'Declined')),
+        true)
+})
+
+test('one accepted offer among many settles it, whatever the others say', () => {
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 3 }),
+            offers('Declined', 'Accepted', 'Expired')),
+        false)
+    /*  Seller-initiated offers arrive under a different code type and the
+        same status, so the status is what is read. */
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 1 }), offers('SellerAccept')),
+        false)
+})
+
+test('a listing eBay agrees received no offers sold at the asking price', () => {
+    assert.strictEqual(TRADING.soldAtAsk(soldBin({ bestOfferCount: 0 }), offers()), true)
+})
+
+test('no records but a count above zero is a missing answer, not a clean one', () => {
+    /*  THE failure mode. If offer records aged out, an accepted-offer lot
+        would come back empty and this would print the asking price as a real
+        sale. The count is the oracle that catches it. */
+    assert.strictEqual(TRADING.soldAtAsk(soldBin({ bestOfferCount: 2 }), offers()), null)
+})
+
+test('fewer records than eBay counted means some are missing', () => {
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 5 }), offers('Declined', 'Declined')),
+        null,
+        'a partial record set was read as proof that nothing was accepted')
+})
+
+test('more records than eBay counted is fine, and happens', () => {
+    /*  Counter-offers and expired ones the count omits. Measured: 43 of 45
+        lots reconciled and both disagreements were in this direction. */
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 3 }),
+            offers('Declined', 'Declined', 'Countered', 'Expired')),
+        true)
+})
+
+test('a failed call never becomes an answer', () => {
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 2 }),
+            { available: false, reason: 'timeout', offers: [] }),
+        null)
+
+    /*  The dangerous shape, and the one the count check cannot cover: the
+        call failed on a lot eBay counted zero offers for. An empty record
+        set from a call that never happened looks exactly like an empty
+        record set from a lot nobody bid on, and only the availability flag
+        separates them. Reading the first as the second would print the
+        asking price as a real sale on every lot that timed out. */
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ bestOfferCount: 0 }),
+            { available: false, reason: 'timeout', offers: [] }),
+        null,
+        'a call that never completed was read as proof of no offers')
+})
+
+test('auctions are out of scope, because their offer records under-report', () => {
+    /*  Three auctions checked live: counts of 3, 6 and 2 against 0, 0 and 1
+        records returned. Every fixed-price lot reconciled. */
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ listingType: 'Chinese', bestOfferCount: 3 }),
+            offers('Declined', 'Declined', 'Declined')),
+        null)
+})
+
+test('a multi-unit listing gets no single verdict', () => {
+    /*  An accepted offer and sales at the ask coexist on one listing; ten of
+        forty-five lots in the store carry quantity above one. */
+    assert.strictEqual(
+        TRADING.soldAtAsk(soldBin({ quantitySold: 3, bestOfferCount: 1 }), offers('Declined')),
+        null)
+})
+
+test('an unsold lot is not asked about at all', () => {
+    assert.strictEqual(TRADING.soldAtAsk(soldBin({ sold: false }), offers()), null)
+})
+
+/* ------------------------------------------- and through the resolver */
+
+test('a Buy-It-Now that sold at the ask is stored with an exact price', async () => {
+    const { db, repository } = store()
+    const item = {
+        listingStatus: 'Completed', sold: true, finalPrice: 655.5, bidCount: null,
+        saleType: 'BEST_OFFER', censored: true, listingType: 'FixedPriceItem',
+        quantitySold: 1, bestOfferEnabled: true, bestOfferCount: 2,
+        endTime: new Date().toISOString(), aspects: {}
+    }
+    const client = {
+        asked: [],
+        async getItem () { return item },
+        async getBestOffers (id) {
+            this.asked.push(id)
+            return { available: true, offers: [{ status: 'Declined' }, { status: 'Declined' }] }
+        }
+    }
+    const report = await RESOLVE.newResolver(client, repository).resolvePending(10)
+
+    assert.deepStrictEqual(client.asked, ['quiet'], 'the offer question was never asked')
+    assert.strictEqual(report.pricedByOffers, 1)
+    assert.strictEqual(outcomeOf(db, 'v1|quiet|0').censored, 0,
+        'a lot that sold at its asking price is still marked price-unknown')
+    db.close()
+})
+
+test('an accepted offer keeps its ceiling', async () => {
+    const { db, repository } = store()
+    const client = {
+        async getItem () {
+            return {
+                listingStatus: 'Completed', sold: true, finalPrice: 925, bidCount: null,
+                saleType: 'BEST_OFFER', censored: true, listingType: 'FixedPriceItem',
+                quantitySold: 1, bestOfferEnabled: true, bestOfferCount: 1,
+                endTime: new Date().toISOString(), aspects: {}
+            }
+        },
+        async getBestOffers () { return { available: true, offers: [{ status: 'Accepted' }] } }
+    }
+    const report = await RESOLVE.newResolver(client, repository).resolvePending(10)
+
+    assert.strictEqual(report.acceptedOffer, 1)
+    assert.strictEqual(report.pricedByOffers, 0)
+    assert.strictEqual(outcomeOf(db, 'v1|quiet|0').censored, 1,
+        'the asking price was recorded as what somebody paid')
+    db.close()
+})
+
+test('a failing offer call leaves the outcome exactly as it was', async () => {
+    /*  The call is a chance to remove a censor mark, never a dependency. */
+    const { db, repository } = store()
+    const client = {
+        async getItem () {
+            return {
+                listingStatus: 'Completed', sold: true, finalPrice: 700, bidCount: null,
+                saleType: 'BEST_OFFER', censored: true, listingType: 'FixedPriceItem',
+                quantitySold: 1, bestOfferEnabled: true, bestOfferCount: 1,
+                endTime: new Date().toISOString(), aspects: {}
+            }
+        },
+        async getBestOffers () { throw new Error('Trading daily call budget exhausted') }
+    }
+    const report = await RESOLVE.newResolver(client, repository).resolvePending(10)
+
+    assert.strictEqual(report.resolved, 1, 'a failed offer call lost the whole outcome')
+    assert.strictEqual(report.offerUnknown, 1)
+    assert.strictEqual(outcomeOf(db, 'v1|quiet|0').censored, 1)
+    db.close()
+})
+
+test('a plain Buy-It-Now is never asked about - it was already exact', async () => {
+    const { db, repository } = store()
+    let asked = 0
+    const client = {
+        async getItem () {
+            return {
+                listingStatus: 'Completed', sold: true, finalPrice: 655, bidCount: null,
+                saleType: 'FIXED_PRICE', censored: false, listingType: 'FixedPriceItem',
+                quantitySold: 1, bestOfferEnabled: false, bestOfferCount: 0,
+                endTime: new Date().toISOString(), aspects: {}
+            }
+        },
+        async getBestOffers () { asked++; return { available: true, offers: [] } }
+    }
+    await RESOLVE.newResolver(client, repository).resolvePending(10)
+    assert.strictEqual(asked, 0, 'a Trading call was spent on a lot that needed no answer')
+    db.close()
+})
+
+test('only the offer status is kept, never who made it', () => {
+    /*  Responses carry an anonymised buyer id, feedback score and
+        registration date. Storing any of it would widen this account's
+        obligations under eBay's account-deletion notice for no analytical
+        gain. */
+    const parsed = TRADING.parseBestOffers({
+        BestOffer: [{
+            BestOfferID: '123', Status: 'Declined', BestOfferCodeType: 'BuyerBestOffer',
+            Price: '850.00',
+            Buyer: { UserID: 'a***b', FeedbackScore: '401', RegistrationDate: '2011-04-02T00:00:00Z' }
+        }]
+    })
+    assert.deepStrictEqual(parsed, [{ status: 'Declined', codeType: 'BuyerBestOffer' }])
+    const flat = JSON.stringify(parsed)
+    for (const leaked of ['a***b', '401', '2011', '850']) {
+        assert.ok(!flat.includes(leaked), 'buyer or price detail was carried through: ' + leaked)
+    }
+})
+
+test('a single offer object, not an array, still parses', () => {
+    /*  eBay's XML collapses a one-element list to a bare object. */
+    assert.deepStrictEqual(
+        TRADING.parseBestOffers({ BestOffer: { Status: 'Accepted' } }),
+        [{ status: 'Accepted', codeType: null }])
+    assert.deepStrictEqual(TRADING.parseBestOffers({}), [])
+    assert.deepStrictEqual(TRADING.parseBestOffers(null), [])
+})

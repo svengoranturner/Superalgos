@@ -106,6 +106,50 @@ exports.newTradingClient = function (auth, credentials, options) {
         },
 
         /*
+            Which offers a listing received, and what became of them.
+
+            This is what separates a Buy-It-Now lot that sold at its asking
+            price from one that sold via an accepted offer - a distinction
+            eBay marks on its own web page with a strikethrough and puts
+            nowhere in GetItem. Verified against three lots whose real
+            outcomes were known from those pages: four offers all Declined on
+            one that sold at the ask, one Accepted on the one that did not,
+            two Declined on the third. Three for three, where BestOfferCount
+            and a price comparison both fail.
+
+            It answers for listings this account neither owns nor bid on, on
+            the base scope, with the user token. It does NOT return the
+            accepted amount to a non-party: no price field appeared on any of
+            fourteen probed listings, and it only shows up where the caller
+            was party to the offer. So an accepted offer stays price-unknown.
+            The gain is the other direction - the lots that went at the ask
+            stop being thrown away as unpriceable.
+
+            PRIVACY. The response carries a Buyer block with an anonymised
+            user id, feedback score and registration date. None of it is
+            returned here. Storing it would widen this account's obligations
+            under eBay's account-deletion notice for no analytical gain: the
+            status is the whole of what the guard needs.
+        */
+        async getBestOffers (legacyItemId) {
+            try {
+                const root = await call('GetBestOffers',
+                    '<ItemID>' + XML.escape(legacyItemId) + '</ItemID>' +
+                    '<DetailLevel>ReturnAll</DetailLevel>',
+                    'user')
+                return { available: true, offers: exports.parseBestOffers(root) }
+            } catch (err) {
+                /*  20140 is "this listing received no offers", which is an
+                    ANSWER - and one the guard can use. 20138 is "not Best
+                    Offer enabled", the same. Anything else is a failure, and
+                    a failure must never be read as an absence of offers. */
+                if (err.code === '20140') { return { available: true, offers: [] } }
+                if (err.code === '20138') { return { available: true, offers: [], notEnabled: true } }
+                return { available: false, reason: err.code || err.message, offers: [] }
+            }
+        },
+
+        /*
             Mirrors your eBay watch list, plus the bid/won/lost lists.
 
             WonList is the only source of ground truth in the whole system:
@@ -239,10 +283,90 @@ exports.parseItem = function (root) {
         bidCount,
         quantitySold,
         censored,
+        bestOfferEnabled,
+        /*  How many offers eBay says the listing received. Not a
+            discriminator on its own - measured on three lots of known
+            outcome it was 4 on one that sold at the asking price and 1 on
+            one that sold via an accepted offer - but it is the oracle the
+            offer-record guard reconciles against, so it has to come out of
+            the parser. */
+        bestOfferCount: num(item.BestOfferDetails ? item.BestOfferDetails.BestOfferCount : null) || 0,
         saleType: isAuction ? 'AUCTION' : (bestOfferEnabled ? 'BEST_OFFER' : 'FIXED_PRICE'),
         aspects: exports.parseAspects(item),
         conditionDescriptors: exports.parseConditionDescriptors(item)
     }
+}
+
+/*
+    Offer records, reduced to the only field that decides anything.
+
+    Statuses seen in production: Accepted, Declined, Countered, Expired,
+    Retracted. A seller-initiated offer arrives as BestOfferCodeType
+    CustomCode and can also carry Accepted, so the status is read rather than
+    the code type.
+*/
+exports.parseBestOffers = function (root) {
+    const raw = (root || {}).BestOffer
+    const list = raw === undefined || raw === null ? [] : (Array.isArray(raw) ? raw : [raw])
+    return list
+        .filter(entry => entry !== null && typeof entry === 'object')
+        .map(entry => ({ status: entry.Status || null, codeType: entry.BestOfferCodeType || null }))
+}
+
+const ACCEPTED = ['Accepted', 'SellerAccept']
+const FIXED_PRICE_TYPES = ['FixedPriceItem', 'StoresFixedPrice']
+
+/*
+    Did this lot sell at its asking price?
+
+    true  - it did, so the price eBay reports is exact
+    false - an offer was accepted, so the price is a ceiling and nothing more
+    null  - cannot tell, which must be read as "keep censoring it"
+
+    Every condition below exists because of something measured, and the
+    posture throughout is that declining to answer beats answering wrongly:
+    a false 'true' would print a confident price for a coin that never sold
+    for it, which is the failure this whole area of the codebase is written
+    to avoid.
+
+      fixed price only - offer records under-report on AUCTIONS with Best
+        Offer enabled (three lots checked: counts of 3, 6 and 2 against 0, 0
+        and 1 records). Every fixed-price lot reconciled at every age tested.
+
+      one unit only - on a multi-quantity listing an accepted offer and
+        sales at the ask coexist, so no single verdict describes it. Ten of
+        forty-five lots in the store carry quantity above one.
+
+      the count must reconcile - GetItem's BestOfferCount is the oracle.
+        Records fewer than the count means some are missing, and a missing
+        Accepted record is exactly how this would silently start lying. More
+        records than the count is fine and happens (counter-offers and
+        expired ones the count omits): 43 of 45 reconciled, and both
+        disagreements were in that safe direction.
+
+    The untested region is age: no third-party listing older than about five
+    days could be checked, because the store holds five days of history. The
+    resolver normally reaches a lot within hours, but a backlog after an
+    outage could exceed that - and the count reconciliation is what covers
+    it, turning an aged-out record set into "declines to answer" rather than
+    "answers wrongly".
+*/
+exports.soldAtAsk = function (item, result) {
+    if (item === null || item === undefined || result === null || result === undefined) { return null }
+    if (!item.sold) { return null }
+    if (!FIXED_PRICE_TYPES.includes(item.listingType)) { return null }
+    if (item.quantitySold !== 1) { return null }
+    if (!result.available) { return null }
+
+    const offers = result.offers || []
+    if (offers.some(offer => ACCEPTED.includes(offer.status))) { return false }
+
+    /*  No offers at all, on a listing eBay agrees received none: it can only
+        have gone at the asking price. */
+    if (offers.length === 0) { return item.bestOfferCount === 0 ? true : null }
+
+    if (offers.length < item.bestOfferCount) { return null }
+    return true
 }
 
 exports.parseAspects = function (item) {

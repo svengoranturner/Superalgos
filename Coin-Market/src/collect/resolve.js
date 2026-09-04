@@ -1,5 +1,7 @@
 'use strict'
 
+const TRADING = require('../ebay/trading.js')
+
 /*
     Outcome resolution.
 
@@ -19,7 +21,11 @@ exports.newResolver = function (tradingClient, repository) {
             const pending = repository.pendingOutcomes(limit || 60)
             const report = {
                 attempted: 0, resolved: 0, gone: 0, failed: 0, censored: 0,
-                stillLive: 0, budgetStopped: false
+                stillLive: 0, budgetStopped: false,
+                /*  What the offer-record question bought us, so its value and
+                    its error rate are both readable in the journal rather
+                    than assumed. */
+                pricedByOffers: 0, acceptedOffer: 0, offerUnknown: 0
             }
 
             for (const row of pending) {
@@ -83,16 +89,64 @@ exports.newResolver = function (tradingClient, repository) {
                     continue
                 }
 
+                /*
+                    ONE MORE QUESTION, ONLY WHERE IT CAN CHANGE THE ANSWER.
+
+                    A sold fixed-price lot whose seller allowed offers is
+                    stamped censored by parseItem, because eBay reports only
+                    that offers were ALLOWED and never whether one was taken.
+                    That is true as far as GetItem goes, and it throws away
+                    every such lot that simply sold at its asking price -
+                    roughly a quarter to a third of them, on a channel
+                    holding 45% of the Buy-It-Now market.
+
+                    GetBestOffers answers it. The lot's offer records carry a
+                    status each, and an Accepted among them is the whole
+                    distinction: measured on three lots of known outcome it
+                    was right three times out of three, where BestOfferCount
+                    and a price comparison were both blind.
+
+                    Asked only when the answer could move: a sold lot that
+                    parseItem censored. An auction never reaches here (offer
+                    records under-report on those), nor does an unsold lot,
+                    nor a plain Buy-It-Now that was already exact. That is
+                    about nine extra Trading calls a day in this store.
+
+                    A failure leaves the row exactly as parseItem stamped it.
+                    The call is a chance to REMOVE a censor mark, never to
+                    add doubt, so nothing about the existing behaviour depends
+                    on it succeeding.
+                */
+                let censored = item.censored
+                if (item.censored && typeof tradingClient.getBestOffers === 'function') {
+                    try {
+                        const verdict = TRADING.soldAtAsk(item,
+                            await tradingClient.getBestOffers(row.legacyId))
+                        if (verdict === true) {
+                            censored = false
+                            report.pricedByOffers++
+                        } else if (verdict === false) {
+                            report.acceptedOffer++
+                        } else {
+                            report.offerUnknown++
+                        }
+                    } catch (err) {
+                        /*  Including an exhausted budget: the outcome still
+                            gets written, just with its ceiling intact. */
+                        report.offerUnknown++
+                    }
+                }
+
                 repository.saveOutcome(row.browseId, {
                     endTime: item.endTime || row.endTime,
                     sold: item.sold,
                     finalPrice: item.finalPrice,
                     bidCount: item.bidCount,
                     saleType: item.saleType,
-                    censored: item.censored,
+                    censored,
                     source: 'trading_getitem'
                 })
-                if (item.censored) { report.censored++ }
+                if (censored) { report.censored++ }
                 if (item.aspects && Object.keys(item.aspects).length > 0) {
                     repository.saveAspects(row.browseId, item.aspects)
                 }
