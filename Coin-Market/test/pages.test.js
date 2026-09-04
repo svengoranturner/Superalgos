@@ -1796,3 +1796,92 @@ test('thumbnails are served from this origin, not linked to eBay', async () => {
 
     opened.db.close()
 })
+
+/*
+    A sold row says HOW it sold, and the page admits what it cannot contain.
+
+    The owner, looking at the sold table: "I can't tell which are BIN solds
+    (without best offers of course), if indeed there are any (which I think
+    there are because I can see them in the ebay UI)."
+
+    Both halves of that were fair. The column showed a bid count, which is an
+    auction idea - on a Buy-It-Now it is meaningless, and an em dash there
+    reads as missing data rather than as a different kind of sale. And the
+    deeper answer was invisible: there are none, and there can be none yet,
+    because pendingOutcomes only offers the resolver lots with an end time and
+    a Good-'Til-Cancelled Buy-It-Now has none. A table that looks like a table
+    of sales should say which kind it can never hold.
+*/
+test('a sold row says how it sold, and a Buy-It-Now says so', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const sell = (legacyId, saleType, bidCount) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Gold Sovereign ' + legacyId,
+            buyingOptions: saleType === 'AUCTION' ? 'AUCTION' : 'FIXED_PRICE',
+            endTime: now
+        }, now)
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, 'GB.SOV')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: 905, shipping: 0,
+            bidCount, saleType, censored: false, source: 'test'
+        })
+    }
+
+    sell('auction-1', 'AUCTION', 7)
+    sell('bin-1', 'FIXED_PRICE', null)
+
+    /*  A LIVE listing as well, or the coin type has no ask sample and fewer
+        than the three sales a clearing figure needs - so it is dropped from
+        `markets` and the whole page short-circuits to "no market yet". The
+        sold table would not render at all and every assertion below would be
+        testing an empty string. */
+    const liveId = 'v1|live|0'
+    repository.saveListing({
+        browseId: liveId, legacyId: 'live', title: 'Gold Sovereign live',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot(liveId, { price: 1200, shipping: 0, observedAt: now })
+    repository.setListingSeries(liveId, 'GB.SOV')
+    repository.saveClassification(liveId, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    /*  Bounded at the next heading. Splitting on the anchor alone runs to the
+        end of the document, so "Buy-It-Now" from a sale tab further down
+        satisfied the assertion and the test passed with the feature reverted. */
+    const after = body.split('id="sold"')[1] || ''
+    const table = after.split('<h2')[0]
+
+    assert.ok(table.includes('>Buy-It-Now</span>'),
+        'a Buy-It-Now sale is not distinguishable from an auction')
+    assert.ok(table.includes('>7</td>') || table.includes('>7<'),
+        'the auction lost its bid count')
+
+    /*  With a Buy-It-Now sale present, the "we have none" note must be gone -
+        the whole point of deriving it is that it disappears by itself. */
+    assert.ok(!body.includes('Every one of these is an auction'),
+        'the page still claims it has no Buy-It-Now sales while showing one')
+
+    db.close()
+})
+
+test('a page with only auction sales says so plainly', async () => {
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    assert.ok(body.includes('Every one of these is an auction'),
+        'the page does not disclose that it holds no Buy-It-Now sales')
+    assert.ok(body.includes('a Buy-It-Now runs until it is bought or withdrawn'),
+        'the disclosure does not say WHY there are none')
+    opened.db.close()
+})

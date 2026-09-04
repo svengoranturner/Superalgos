@@ -346,6 +346,28 @@ function marketPage (opened, url) {
     /*  The real total, not the fetch. See soldCount. */
     const soldTotal = repository.soldCount()
 
+    /*
+        HOW MANY OF THESE ARE BUY-IT-NOW SALES, and the honest answer today is
+        none - not because none happen, but because none are ever asked about.
+
+        `pendingOutcomes` offers the resolver only lots where `end_time IS NOT
+        NULL`, and a Good-'Til-Cancelled Buy-It-Now has no end time. So 25,241
+        of them, 13,767 with no best offer at all, are invisible to it: the
+        code that would record such a sale exists and has never once run.
+
+        Derived rather than written down. The moment a Buy-It-Now outcome is
+        resolved this note stops appearing on its own, which is the only kind
+        of disclosure worth having - the alternative is a sentence somebody
+        has to remember to delete, and this codebase has been bitten by one of
+        those already.
+
+        Stated at all because the owner asked exactly this question and could
+        not answer it from the page: the table looked like a table of sales,
+        and there was nothing to say which kind it could never contain.
+    */
+    const soldByAuction = sales.filter(s => s.saleType === 'AUCTION').length
+    const noBuyItNowSales = sales.length > 0 && soldByAuction === sales.length
+
     /*  One form over both halves, so a decision can be made on a row inside
         the fold and a bulk tick can span the two. */
     const soldRow = (sale) => {
@@ -404,7 +426,15 @@ function marketPage (opened, url) {
                       ' buyer protection fee to eBay. The premium beside it is measured on ' +
                       'this figure, against the price of its own metal when the lot closed.">' +
                       gbp(paid) + '</strong></td>' +
-                  '<td class="mono">' + (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—') + '</td>' +
+                  /*  HOW it sold, not just how contested it was. A bid count
+                      is an auction idea; on a Buy-It-Now it is meaningless and
+                      an em dash there reads as missing data rather than as a
+                      different kind of sale. The owner could not tell the two
+                      apart, which is the whole reason this cell changed. */
+                  '<td class="mono">' + (sale.saleType === 'AUCTION'
+                      ? (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—')
+                      : '<span class="badge" title="Bought outright at the asking price. ' +
+                        'A Buy-It-Now has no bids.">Buy-It-Now</span>') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
                       : pct(premium)) + '</td>' +
@@ -419,7 +449,9 @@ function marketPage (opened, url) {
 
     const soldTable = (rows) =>
         '<div class="card scroll"><table><thead><tr><th></th><th></th><th>Sold</th>' +
-        '<th>Coin type</th><th>Price</th><th>Bids</th><th>Premium over spot</th><th></th>' +
+        '<th>Coin type</th><th>Price</th><th title="How it sold. A number is an ' +
+        'auction and says how contested it was; a Buy-It-Now was bought outright and has ' +
+        'no bids to count.">How it sold</th><th>Premium over spot</th><th></th>' +
         '</tr></thead><tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
 
     const salesHtml = sales.length === 0
@@ -747,6 +779,13 @@ paid. ${soldTotal < 30
     : ''}${soldTotal > sales.length
     ? ' Showing the ' + sales.length + ' most recent.'
     : ''}</p>
+${noBuyItNowSales
+    ? '<p class="thin costnote"><strong>Every one of these is an auction.</strong> No Buy-It-Now ' +
+      'sale has ever been recorded, and none can be yet: the tool only asks eBay what happened to ' +
+      'a lot that had an end time, and a Buy-It-Now runs until it is bought or withdrawn. So the ' +
+      'clearing prices on this page are auction prices &mdash; which is the honest measure of what ' +
+      'a coin fetches, but it is not the whole market.</p>'
+    : ''}
 ${salesHtml}
 
 <h2 id="evidence" class="sub" style="margin:34px 0 4px">The evidence behind these</h2>
