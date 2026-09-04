@@ -25,10 +25,22 @@ const DEFAULTS = {
 
 /*
     observations: [{ premium, soldAt, censored }]
-    Censored observations - accepted Best Offers, where eBay never
-    publishes the real price - are excluded from the quantiles and
-    reported separately. Including them at list price would bias every
-    clearing estimate upward.
+
+    A censored observation is one whose price is a CEILING rather than a
+    figure somebody paid - a Buy-It-Now lot whose seller allowed offers (eBay
+    never says whether one was taken), or an outcome reconstructed from our
+    own last snapshot after the 90-day window closed.
+
+    By default they are excluded and counted separately, because the headline
+    fair value feeds the bid ceiling and must not drift upward on prices
+    nobody paid.
+
+    With `includeCensored` they are kept, and the result comes back marked
+    `bound: 'upper'` or `'mixed'`. That is for the per-channel view, where the
+    question is not "what is this coin worth" but "what did lots in THIS
+    channel go for", and a ceiling answers it honestly: a coin that sold at or
+    below +12% did not sell at +40%. Discarding those rows was throwing away
+    45% of the Buy-It-Now market to avoid saying the word "at most".
 */
 exports.fairValue = function (observations, options) {
 
@@ -38,13 +50,18 @@ exports.fairValue = function (observations, options) {
 
     const usable = []
     let censoredCount = 0
+    let censoredUsed = 0
 
     for (const observation of observations) {
         if (observation.premium === null || observation.premium === undefined) { continue }
         if (!Number.isFinite(observation.premium)) { continue }
         const soldAt = new Date(observation.soldAt).getTime()
         if (!Number.isFinite(soldAt) || soldAt < cutoff) { continue }
-        if (observation.censored) { censoredCount++; continue }
+        if (observation.censored) {
+            censoredCount++
+            if (!config.includeCensored) { continue }
+            censoredUsed++
+        }
 
         const ageDays = (now - soldAt) / DAY_MS
         usable.push({
@@ -53,11 +70,18 @@ exports.fairValue = function (observations, options) {
         })
     }
 
+    /*  Read off what actually went in, never off the caller's intent: asking
+        for censored rows and receiving none must still say 'exact'. */
+    const bound = censoredUsed === 0
+        ? 'exact'
+        : (censoredUsed === usable.length ? 'upper' : 'mixed')
+
     if (usable.length < config.minObservations) {
         return {
             sufficient: false,
             n: usable.length,
             censored: censoredCount,
+            bound,
             p25: null, p50: null, p75: null, band: null, dispersion: null
         }
     }
@@ -68,6 +92,7 @@ exports.fairValue = function (observations, options) {
         sufficient: true,
         n: usable.length,
         censored: censoredCount,
+        bound,
         p25: STATS.weightedQuantile(usable, 0.25),
         p50: STATS.weightedQuantile(usable, 0.50),
         p75: STATS.weightedQuantile(usable, 0.75),

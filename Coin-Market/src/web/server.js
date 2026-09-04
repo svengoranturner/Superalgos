@@ -604,7 +604,12 @@ function marketPage (opened, url) {
                 level: entry.row.level,
                 key: entry.row.key,
                 name: INSTRUMENTS.displayName(entry.row.key),
-                liquidity: entry.market.liquidity
+                liquidity: entry.market.liquidity,
+                /*  So the row can state the offer in the same currency of
+                    meaning as every other percentage on the site: premium
+                    over the coin's own metal. */
+                fineOz: entry.market.fineOz,
+                spot: entry.market.spot
             })
         }
     }
@@ -656,6 +661,35 @@ function marketPage (opened, url) {
                   the one you can check by dividing them.
               */
               const postage = a.shipping || 0
+
+              /*
+                  THE PERCENTAGE HAD NO STATED BASIS, and the basis it used
+                  was not the one the rest of the site uses.
+
+                  Everywhere else a percentage on this site is premium over
+                  spot. Here it was a discount off the seller's ask, rendered
+                  in the same grey monospace with the bare word "under". The
+                  owner read "0.5% under" as advice to lowball by half a
+                  percent and reasonably asked why that number.
+
+                  It was never advice. The offer is YOUR CEILING for this coin
+                  type - the most it is worth paying given where the type
+                  actually clears - so the gap to their ask is a by-product,
+                  not a negotiating stance. A small gap does not mean make a
+                  small offer; it means this lot is already priced near your
+                  limit and there is little room in it. Leading with that
+                  by-product buried the only figure that decides anything.
+
+                  So the premium comes first, on the same basis as the ask
+                  beside it and as every other percentage on the site, and the
+                  gap follows saying plainly what it is measured against.
+              */
+              const offerAllIn = PREMIUM.totalCost(a.suggestedOffer, postage)
+              const offerPremium = (entry.spot === null || entry.spot === undefined ||
+                                    !Number.isFinite(entry.fineOz) || entry.fineOz <= 0)
+                  ? null
+                  : PREMIUM.premium(offerAllIn, entry.fineOz, entry.spot.gbpPerOz)
+
               const cell = '<span class="badge good" title="What to type into the offer box: ' +
                   'your ceiling for a ' + escapeHtml(entry.name) + ', less postage, with the ' +
                   'buyer protection fee eBay adds on top already taken out. ' +
@@ -665,8 +699,17 @@ function marketPage (opened, url) {
                   (evidence.length ? ' ' + evidence.join('; ') + '.' : '') +
                   '">offer ' + gbp(a.suggestedOffer) + '</span> ' +
                   '<span class="thin mono">' +
-                  (postage > 0 ? '+ ' + gbp(postage) + ' post &mdash; ' : '') +
-                  pct(a.discount) + ' under</span>'
+                  (postage > 0 ? '+ ' + gbp(postage) + ' post &middot; ' : '') +
+                  (offerPremium === null
+                      ? ''
+                      : '<span title="What this offer would cost you over the value of the gold ' +
+                        'in the coin, postage and buyer protection fee included - the same measure ' +
+                        'as every other percentage on this site.">' + pct(offerPremium) +
+                        ' over spot</span> &middot; ') +
+                  '<span title="How far your ceiling happens to sit below what they are asking. ' +
+                  'This is a by-product of the offer, not the reason for it: the offer is your ' +
+                  'ceiling for this coin type, so a small gap means the lot is already priced ' +
+                  'near your limit.">' + pct(a.discount) + ' below their ask</span></span>'
               return queueRow(row, cell)
           }, 8, n => 'Show the other ' + n + ' offer' + (n === 1 ? '' : 's')) +
           '</form>'

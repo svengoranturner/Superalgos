@@ -4,6 +4,7 @@ const PREMIUM = require('./premium.js')
 const FAIRVALUE = require('./fairvalue.js')
 const LIQUIDITY = require('./liquidity.js')
 const UPLIFT = require('./uplift.js')
+const CHANNELS = require('./channels.js')
 const SERIES = require('../catalogue/series/index.js')
 
 const DAY_MS = 24 * 60 * 60 * 1000
@@ -113,12 +114,39 @@ exports.newMarketView = function (repository, spotAt, options) {
                sale says what one buyer would pay on demand; an auction
                says where the market clears. Mixing them inflates the
                estimate, which is the very error the tool exists to fix. */
-            const clearingObservations = outcomes
-                .filter(o => o.sold && o.saleType === 'AUCTION')
+            const observationsIn = (saleType) => outcomes
+                .filter(o => o.sold && o.saleType === saleType)
                 .map(o => ({ premium: o.clearingPremium, soldAt: o.endedAt, censored: o.censored }))
 
-            const fair = FAIRVALUE.fairValue(clearingObservations, {
+            const fairOptions = {
                 now: asOf, halfLifeDays: config.halfLifeDays, windowDays: config.windowDays
+            }
+            const fair = FAIRVALUE.fairValue(observationsIn('AUCTION'), fairOptions)
+
+            /*
+                And the other channels, kept apart rather than discarded.
+
+                Not mixing them was right; implementing that by filtering them
+                out of every statistic was not. A Buy-It-Now sale was resolved,
+                stored, rendered - and then fed nothing, so the question "what
+                does a coin fetch on a Buy-It-Now" had no answer anywhere in
+                the tool despite the data sitting in the table.
+
+                The offers-allowed channel is computed WITH its censored rows,
+                because there its ceiling is the whole point: eBay will not say
+                whether an offer was taken, so every one of those prices is an
+                upper bound and the result is marked as one. `fair` above is
+                untouched - the bid ceiling still rests on auctions alone.
+            */
+            const fairByChannel = {
+                AUCTION: fair,
+                FIXED_PRICE: FAIRVALUE.fairValue(observationsIn('FIXED_PRICE'), fairOptions),
+                BEST_OFFER: FAIRVALUE.fairValue(observationsIn('BEST_OFFER'),
+                    Object.assign({ includeCensored: true }, fairOptions))
+            }
+
+            const premiums = CHANNELS.premiumsByChannel(outcomes, {
+                now: asOf, windowDays: config.liquidityWindowDays
             })
 
             const liquidity = LIQUIDITY.metrics(
@@ -183,6 +211,11 @@ exports.newMarketView = function (repository, spotAt, options) {
                 spot: spotNow,
                 spotGaps,
                 fairValue: fair,
+                /*  The same question asked per sale channel, so a Buy-It-Now
+                    premium and an auction premium can be read side by side and
+                    never averaged together. */
+                fairByChannel,
+                premiums,
                 liquidity,
                 bidCeiling: ceiling,
                 active,
