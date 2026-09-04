@@ -148,6 +148,13 @@ button.plain { color:var(--ink-2) }
 input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critical); cursor:pointer }
 .pick-spacer { display:block; width:16px }
 .bulkbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 12px }
+/*  Search, group and order. Wraps rather than scrolls, because on a phone a
+    control that has scrolled off the side is a control that is not there. */
+.strip { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0 0 }
+.strip input[type=search] { flex:1 1 220px; min-width:160px; padding:5px 10px;
+  border:1px solid var(--border); border-radius:6px; background:var(--surface); color:inherit }
+.strip select { padding:5px 8px }
+.strip button { font-size:13px; padding:5px 12px }
 .bulkbar button { font-size:13px; padding:5px 12px }
 /*  Composition bars. Plain flex rather than SVG: the quantity is a share of
     a whole, a rectangle divided by percentage says exactly that, and it

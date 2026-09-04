@@ -1308,7 +1308,65 @@ function reviewPage (opened, url) {
     const rows = truncated ? fetched.slice(0, QUEUE_LIMIT) : fetched
     const verdictCell = newPlausibilityCell(opened.spotAt)
 
-    const filtered = rows.filter(r => matchesSale(r, sale))
+    /*
+        Search, order and group, applied after the sale filter and before the
+        split into excluded and uncertain - so both sections describe the
+        same set, and the counts under them keep meaning what they say.
+    */
+    const QUEUE_SORTS = ['unsure', 'newest', 'oldest', 'dearest', 'cheapest', 'title']
+    const beforeControls = rows.filter(r => matchesSale(r, sale))
+    const controls = applyRowControls(beforeControls, url, QUEUE_SORTS, 'unsure')
+    const filtered = controls.rows
+
+    /*  Only the groups actually present, with their counts. Offering the
+        pack's whole vocabulary would list groups that select nothing, and a
+        filter that can only ever empty the page is a filter nobody trusts
+        twice. */
+    const groupCounts = new Map()
+    const groupNames = new Map()
+    for (const row of beforeControls) {
+        const key = row.instrumentKey || row.bestGuess || null
+        const found = typeof key === 'string' ? SERIES.forKey(key) : null
+        if (found === null) { continue }
+        const pool = found.rest[0]
+        if (!pool) { continue }
+        groupCounts.set(pool, (groupCounts.get(pool) || 0) + 1)
+        /*  The pack's own name for the pool, not the key lowercased: BRANCH
+            reads "branch mint" and EARLY reads "pre-1871", and a filter that
+            calls them something else is a filter that does not match the
+            badge on the row it is filtering. */
+        if (found.pack.pools && found.pack.pools[pool]) { groupNames.set(pool, found.pack.pools[pool]) }
+    }
+    const groupOptions = [...groupCounts.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([pool, n]) => ({
+            value: pool,
+            label: (groupNames.get(pool) || String(pool).toLowerCase().replace(/_/g, ' ')) +
+                ' (' + n + ')'
+        }))
+
+    const queueControls = controlStrip('/review', url, {
+        carry: { coin: chosen, sale },
+        allowed: QUEUE_SORTS,
+        fallback: 'unsure',
+        groups: groupOptions
+    })
+
+    /*  Say what the strip did, in rows. A search that matches nothing looks
+        identical to a queue that is empty, and the two want opposite next
+        actions. */
+    const narrowed = (controls.terms.length > 0 || controls.group !== null)
+        ? '<p class="thin">Showing <strong>' + filtered.length + '</strong> of ' +
+          beforeControls.length + ' ' +
+          (controls.terms.length > 0
+              ? 'matching ' + controls.terms.map(t => '<code>' + escapeHtml(t) + '</code>').join(' ')
+              : '') +
+          (controls.group !== null
+              ? (controls.terms.length > 0 ? ', ' : '') + 'in ' +
+                escapeHtml(String(controls.group).toLowerCase().replace(/_/g, ' '))
+              : '') +
+          '.' + (filtered.length === 0 ? ' Nothing matches - try fewer words.' : '') + '</p>'
+        : ''
 
     /*  Free here, unlike on the drill-down: this page fetches the queue
         unfiltered and narrows it in JS, so the other tabs' sizes are already
@@ -1331,6 +1389,14 @@ function reviewPage (opened, url) {
         after every verdict - the same lost-parameter bug the tabs had, one
         click later. */
     backParams.push('sale=' + encodeURIComponent(sale))
+    /*  And the strip. Landing back on an unfiltered queue after every verdict
+        is the same lost-parameter bug the tabs were written to avoid: you
+        search for "shield", judge one row, and are returned to all 6,000. */
+    if (controls.terms.length > 0) {
+        backParams.push('q=' + encodeURIComponent(url.searchParams.get('q') || ''))
+    }
+    if (controls.group !== null) { backParams.push('group=' + encodeURIComponent(controls.group)) }
+    if (controls.order !== 'unsure') { backParams.push('order=' + encodeURIComponent(controls.order)) }
     const back = '/review' + (backParams.length === 0 ? '' : '?' + backParams.join('&'))
 
     const excluded = filtered.filter(r => (r.reason || '').startsWith('EXCLUDED'))
@@ -1412,6 +1478,8 @@ ${applied}
 
 <div class="card">
   ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen }, queueSaleCounts)}
+  ${queueControls}
+  ${narrowed}
   <p class="thin" style="margin:10px 0 0">A live lot is filtered on how it is offered, a
   completed one on how it actually sold. The queue opens on auctions because that is where the
   tool has outcomes to learn from &mdash; every resolved sale it holds is one. ${sale === 'bin'
@@ -1580,6 +1648,189 @@ function denominationsFor (hint) {
     if (pack === null || !pack.denominations) { return [''] }
     const order = pack.denominationOrder || Object.keys(pack.denominations)
     return [''].concat(order.filter(d => pack.denominations[d]))
+}
+
+/*
+    Search, sort and filter, for any table of listings.
+
+    Both working surfaces already hold their rows in memory - the review
+    queue fetches the whole queue and narrows it in JS, the drill-down fetches
+    500 - so this needs no SQL and no client script. Everything is a query
+    parameter, which means a filtered view is a URL: it can be bookmarked,
+    reopened, and handed back to you unchanged after a verdict, which the tabs
+    already rely on.
+
+    Searching the TITLE and nothing else, on purpose. A coin's title is the
+    only field a person reads to decide anything here, and matching against
+    prices or ids as well would make "1887" find both a date and a price and
+    give no way to say which was meant. Every word must match, so terms
+    narrow rather than widen - "victoria shield" is the two together, which
+    is what anyone typing it expects.
+*/
+function searchTerms (url) {
+    const raw = url === undefined ? null : (url.searchParams.get('q') || '').trim()
+    if (!raw) { return [] }
+    return raw.toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8)
+}
+
+function matchesSearch (row, terms) {
+    if (terms.length === 0) { return true }
+    const hay = String(row.title || '').toLowerCase()
+    return terms.every(term => hay.includes(term))
+}
+
+/*
+    Sorts shared by both tables.
+
+    Each is a comparator over the row shape both pages already use. Nulls sort
+    last in every one of them rather than first: a lot with no premium is not
+    the cheapest lot, and a queue that opens on rows it knows nothing about
+    is a queue that buries the ones it does.
+*/
+const NULLS_LAST = (value) => (value === null || value === undefined || !Number.isFinite(value))
+
+const ROW_SORTS = {
+    newest: {
+        label: 'Newest first',
+        compare: (a, b) => String(b.firstSeen || '').localeCompare(String(a.firstSeen || ''))
+    },
+    oldest: {
+        label: 'Oldest first',
+        compare: (a, b) => String(a.firstSeen || '').localeCompare(String(b.firstSeen || ''))
+    },
+    dearest: {
+        label: 'Dearest first',
+        compare: (a, b) => (rowTotal(b) || 0) - (rowTotal(a) || 0)
+    },
+    cheapest: {
+        label: 'Cheapest first',
+        compare: (a, b) => (rowTotal(a) || 0) - (rowTotal(b) || 0)
+    },
+    premium: {
+        label: 'Highest premium',
+        compare: (a, b) => {
+            if (NULLS_LAST(a.askPremium) && NULLS_LAST(b.askPremium)) { return 0 }
+            if (NULLS_LAST(a.askPremium)) { return 1 }
+            if (NULLS_LAST(b.askPremium)) { return -1 }
+            return b.askPremium - a.askPremium
+        }
+    },
+    bargain: {
+        label: 'Lowest premium',
+        compare: (a, b) => {
+            if (NULLS_LAST(a.askPremium) && NULLS_LAST(b.askPremium)) { return 0 }
+            if (NULLS_LAST(a.askPremium)) { return 1 }
+            if (NULLS_LAST(b.askPremium)) { return -1 }
+            return a.askPremium - b.askPremium
+        }
+    },
+    unsure: {
+        label: 'Least certain first',
+        compare: (a, b) => {
+            const av = Number.isFinite(a.filedConfidence) ? a.filedConfidence
+                : (Number.isFinite(a.confidence) ? a.confidence : 2)
+            const bv = Number.isFinite(b.filedConfidence) ? b.filedConfidence
+                : (Number.isFinite(b.confidence) ? b.confidence : 2)
+            return av - bv
+        }
+    },
+    title: {
+        label: 'By title',
+        compare: (a, b) => String(a.title || '').localeCompare(String(b.title || ''))
+    }
+}
+
+function rowTotal (row) {
+    if (row.sold === 1 && Number.isFinite(row.finalPrice)) {
+        return row.finalPrice + (row.finalShipping || 0)
+    }
+    return (row.price || 0) + (row.shipping || 0)
+}
+
+/*  The sort asked for, or the page's own default - never a silent fallback
+    to something else, because a sort that quietly ignores you reads as a
+    broken control rather than an unsupported one. */
+function sortFrom (url, allowed, fallback) {
+    const asked = url === undefined ? null : url.searchParams.get('order')
+    return allowed.includes(asked) ? asked : fallback
+}
+
+function applyRowControls (rows, url, allowed, fallback) {
+    const terms = searchTerms(url)
+    const order = sortFrom(url, allowed, fallback)
+    const group = url === undefined ? null : (url.searchParams.get('group') || null)
+
+    let out = rows.filter(row => matchesSearch(row, terms))
+    if (group) {
+        out = out.filter(row => {
+            const key = row.instrumentKey || row.bestGuess || null
+            const found = typeof key === 'string' ? SERIES.forKey(key) : null
+            return found !== null && found.rest[0] === group
+        })
+    }
+    /*  A copy, sorted. Sorting in place would reorder the array the caller
+        also uses for its tab counts, which is how a count and its section
+        come to disagree. */
+    return { rows: out.slice().sort(ROW_SORTS[order].compare), order, terms, group }
+}
+
+/*
+    The strip itself.
+
+    One <form method="get">, so every control submits together and the
+    parameters this page already depends on - the coin, the sale filter -
+    ride along as hidden fields rather than being dropped. Losing them on
+    search would be the same lost-parameter bug the tabs were written to
+    avoid, one control further along.
+*/
+function controlStrip (basePath, url, options) {
+    const opts = options || {}
+    const terms = url === undefined ? '' : (url.searchParams.get('q') || '')
+    const order = sortFrom(url, opts.allowed || Object.keys(ROW_SORTS), opts.fallback)
+    const group = url === undefined ? null : (url.searchParams.get('group') || '')
+
+    const hidden = Object.entries(opts.carry || {})
+        .filter(([, value]) => value !== null && value !== undefined && value !== '')
+        .map(([name, value]) => '<input type="hidden" name="' + escapeHtml(name) +
+            '" value="' + escapeHtml(String(value)) + '">')
+        .join('')
+
+    const sortOptions = (opts.allowed || Object.keys(ROW_SORTS))
+        .map(id => '<option value="' + id + '"' + (id === order ? ' selected' : '') + '>' +
+            escapeHtml(ROW_SORTS[id].label) + '</option>')
+        .join('')
+
+    const groupPicker = !opts.groups || opts.groups.length === 0
+        ? ''
+        : '<select name="group" title="Show only coins filed under one group.">' +
+          '<option value="">every group</option>' +
+          opts.groups.map(g => '<option value="' + escapeHtml(g.value) + '"' +
+              (g.value === group ? ' selected' : '') + '>' +
+              escapeHtml(g.label) + '</option>').join('') +
+          '</select>'
+
+    /*  A reset that is a plain link, not a button, so it is obvious it throws
+        the whole strip away rather than submitting it. Shown only when there
+        is something to throw away. */
+    const active = (terms !== '' || group !== '' || order !== opts.fallback)
+    const reset = !active ? '' :
+        ' <a class="thin" href="' + escapeHtml(basePath +
+            (Object.keys(opts.carry || {}).length === 0 ? '' : '?' +
+                Object.entries(opts.carry)
+                    .filter(([, v]) => v !== null && v !== undefined && v !== '')
+                    .map(([k, v]) => k + '=' + encodeURIComponent(String(v))).join('&'))) +
+        '">clear</a>'
+
+    return '<form class="strip" method="get" action="' + escapeHtml(basePath) + '">' +
+        hidden +
+        '<input type="search" name="q" value="' + escapeHtml(terms) + '" ' +
+        'placeholder="search titles" title="Every word must appear in the title. ' +
+        'Two words narrow rather than widen.">' +
+        groupPicker +
+        '<select name="order" title="How to order these rows.">' + sortOptions + '</select>' +
+        '<button type="submit">Apply</button>' +
+        reset +
+        '</form>'
 }
 
 /*
@@ -1907,7 +2158,22 @@ function listingsPage (opened, url) {
 
     const sale = saleFrom(url)
     const FETCH = 500
-    const rows = repository.listingsForInstrument(key, FETCH, sale)
+    const fetchedRows = repository.listingsForInstrument(key, FETCH, sale)
+    /*  Same strip as the review queue, minus the group picker: every row on
+        this page is already one group by definition, so offering to filter
+        by it would be a control with one option. */
+    const DRILL_SORTS = ['dearest', 'cheapest', 'premium', 'bargain', 'newest', 'oldest', 'title']
+    const drill = applyRowControls(fetchedRows, url, DRILL_SORTS, 'dearest')
+    const rows = drill.rows
+    const drillControls = controlStrip('/listings', url, {
+        carry: { key, sale }, allowed: DRILL_SORTS, fallback: 'dearest'
+    })
+    const drillNarrowed = drill.terms.length === 0
+        ? ''
+        : '<p class="thin">Showing <strong>' + rows.length + '</strong> of ' +
+          fetchedRows.length + ' matching ' +
+          drill.terms.map(t => '<code>' + escapeHtml(t) + '</code>').join(' ') + '.' +
+          (rows.length === 0 ? ' Nothing matches - try fewer words.' : '') + '</p>'
     const verdictCell = newPlausibilityCell(opened.spotAt)
     /*  This page deliberately shows everything, including lots the sweep has
         stopped seeing - it is the route to a listing that classified wrongly
@@ -2092,6 +2358,8 @@ moving the numbers on the front page.${sale === 'all' ? '' :
 
 <div class="card">
   ${saleTabs('/listings', sale, { key }, saleCounts)}
+  ${drillControls}
+  ${drillNarrowed}
   <p class="thin" style="margin:10px 0 0">A completed lot is filtered on how it actually sold, a
   live one on how it is offered. Note that no Buy-It-Now lot has a recorded outcome &mdash; they
   carry no end time, so the tool never learns whether they sold.</p>

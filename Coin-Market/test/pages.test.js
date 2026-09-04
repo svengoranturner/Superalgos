@@ -2172,7 +2172,10 @@ test('a confident group is stated without hedging', async () => {
     const body = (await fetchAll(opened, ['/review']))['/review'].body
 
     assert.ok(body.includes('Sovereign (proof)'), 'the group is missing')
-    assert.ok(!body.includes('unsure'), 'a confident call was hedged anyway')
+    /*  Scoped to the badge marker. A bare substring test now also matches
+        the sort control's own value, which is a different feature entirely -
+        the assertion was reading a control it was never about. */
+    assert.ok(!body.includes('&middot; unsure</span>'), 'a confident call was hedged anyway')
     db.close()
 })
 
@@ -2329,4 +2332,122 @@ test('the classifier is handed the pool a human chose', async () => {
     assert.strictEqual(repository.labels()[0].pool, 'GRADED',
         'the classifier is never told which pool a human chose')
     db.close()
+})
+
+
+/*
+    Search, order and group, on every table of listings.
+
+    The owner: "on set of data it needs to be filterable, searchable,
+    sortable!" - and both working surfaces already held their rows in memory,
+    so this is query parameters rather than SQL or client script. Which means
+    a filtered view is a URL: bookmarkable, and returnable-to after a verdict,
+    which is the half that is easy to get wrong.
+*/
+test('searching narrows the queue to titles holding every word', async () => {
+    const opened = twoSeriesStore()
+    const path = '/review?coin=GB.SOV&sale=all&q=' + encodeURIComponent('example 1')
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.ok(body.includes('Showing <strong>1</strong> of'),
+        'the page does not say how much the search narrowed it to')
+    assert.ok(body.includes('GB.SOV.BULLION.FULL example 1'), 'the matching row is missing')
+    assert.ok(!body.includes('GB.SOV.BULLION.FULL example 2'),
+        'a row matching only one of the two words survived')
+    opened.db.close()
+})
+
+test('a search that matches nothing says so, rather than looking empty', async () => {
+    /*  An empty queue and a search with no hits render identically otherwise,
+        and they want opposite next actions. */
+    const opened = twoSeriesStore()
+    const path = '/review?coin=GB.SOV&sale=all&q=zzzznothing'
+    const body = (await fetchAll(opened, [path]))[path].body
+    assert.ok(body.includes('Nothing matches'), 'a fruitless search looks like an empty queue')
+    opened.db.close()
+})
+
+test('a verdict returns you to the queue you were searching, not to all of it', async () => {
+    /*  The same lost-parameter bug the coin tabs were written to avoid, one
+        control further along: search, judge a row, and land back among 6,000. */
+    const opened = twoSeriesStore()
+    const path = '/review?coin=GB.SOV&sale=all&q=example&order=title'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const back = body.match(/name="back" value="([^"]*)"/)
+    assert.ok(back !== null, 'no back field on the form')
+    const value = back[1].replace(/&amp;/g, '&')
+    assert.ok(value.includes('q=example'), 'the search is dropped on the way back: ' + value)
+    assert.ok(value.includes('order=title'), 'the sort is dropped on the way back: ' + value)
+    opened.db.close()
+})
+
+test('ordering by title actually reorders the rows', async () => {
+    const opened = twoSeriesStore()
+    const asc = '/review?coin=GB.SOV&sale=all&order=title'
+    const dear = '/review?coin=GB.SOV&sale=all&order=dearest'
+    const pages = await fetchAll(opened, [asc, dear])
+
+    const titlesIn = (body) => [...body.matchAll(/GB\.SOV\.BULLION\.FULL example (\d+)/g)]
+        .map(m => m[1])
+    const a = titlesIn(pages[asc].body)
+    const d = titlesIn(pages[dear].body)
+    assert.ok(a.length > 1 && d.length > 1, 'not enough rows to tell an order from')
+    assert.notDeepStrictEqual(a, d, 'two different sorts produced the same order')
+    opened.db.close()
+})
+
+test('the group filter offers only groups that are actually there', async () => {
+    /*  Offering the pack's whole vocabulary would list groups selecting
+        nothing, and a filter that can only empty the page is one nobody
+        trusts twice. */
+    const opened = twoSeriesStore()
+    const path = '/review?coin=GB.SOV&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const picker = body.match(/<select name="group"[\s\S]*?<\/select>/)
+    assert.ok(picker !== null, 'the queue offers no way to filter by group')
+    assert.ok(picker[0].includes('bullion ('), 'the group present is not named properly')
+
+    /*  Asserted on the option VALUES, not their labels. A label check reads
+        whatever the fallback happens to render and passed against a picker
+        carrying an extra empty group - it was testing a string that never
+        appears rather than the list it was about. */
+    const offered = [...picker[0].matchAll(/<option value="([A-Z_]*)"/g)]
+        .map(m => m[1]).filter(v => v !== '')
+    assert.deepStrictEqual(offered, ['BULLION'],
+        'the picker offers groups with no rows behind them: ' + JSON.stringify(offered))
+    opened.db.close()
+})
+
+test('choosing a group actually filters the rows to it', async () => {
+    /*  The picker being right about which groups exist is a different claim
+        from the filter working, and only one of them was tested. */
+    const opened = twoSeriesStore()
+    const bullion = '/review?coin=GB.SOV&sale=all&group=BULLION'
+    const branch = '/review?coin=GB.SOV&sale=all&group=BRANCH'
+    const pages = await fetchAll(opened, [bullion, branch])
+
+    assert.ok(pages[bullion].body.includes('GB.SOV.BULLION.FULL example'),
+        'filtering to the group the rows are in hid them')
+    assert.ok(pages[bullion].body.includes('in bullion'),
+        'the page does not say it is showing one group')
+
+    /*  And a group with no rows empties the table rather than being ignored.
+        A filter that silently does nothing is worse than one that shows you
+        it found nothing. */
+    assert.ok(!pages[branch].body.includes('GB.SOV.BULLION.FULL example'),
+        'filtering to an absent group returned rows from another one')
+    opened.db.close()
+})
+
+test('the drill-down carries the same strip', async () => {
+    const opened = twoSeriesStore()
+    const path = '/listings?key=GB.SOV.BULLION.FULL&q=example'
+    const body = (await fetchAll(opened, [path]))[path].body
+    assert.ok(body.includes('name="q"'), 'the drill-down cannot be searched')
+    assert.ok(body.includes('name="order"'), 'the drill-down cannot be sorted')
+    /*  And it keeps the key, or applying the strip would throw away the very
+        thing that says which coin is being looked at. */
+    assert.ok(body.includes('name="key" value="GB.SOV.BULLION.FULL"'),
+        'the strip drops the instrument key')
+    opened.db.close()
 })
