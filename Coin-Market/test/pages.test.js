@@ -1944,16 +1944,18 @@ test('a Best Offer sale is never reported as a price somebody paid', async () =>
     assert.ok(table.includes('at most'),
         'the asking price is presented as the price it sold for')
     assert.ok(!table.includes('What the winner actually paid'),
-        'the page claims to know what a Best Offer buyer paid')
-    assert.ok(table.includes('>Best Offer</span>'),
-        'a Best Offer is badged as an ordinary Buy-It-Now')
+        'the page claims to know what an offers-allowed buyer paid')
+    assert.ok(table.includes('>Offers allowed</span>'),
+        'a lot that merely allowed offers is badged as an ordinary Buy-It-Now')
     assert.ok(!table.includes('Bought outright at the asking price'),
-        'a privately agreed price is described as paid at the asking price')
+        'a lot that may have been negotiated is described as paid at the asking price')
+    assert.ok(!table.includes('agreed a price privately'),
+        'the page asserts a negotiation that eBay never confirmed happened')
 
     /*  And the page says why, once, rather than leaving a reader to work out
         what a blank premium column means. */
-    assert.ok(body.includes('no published price'),
-        'the page shows priceless sales without saying they are priceless')
+    assert.ok(body.includes('no exact price'),
+        'the page shows ceiling-only sales without saying they are ceilings')
     assert.ok(!body.includes('Every one of these is an auction'),
         'the page claims to hold no Buy-It-Now sales while showing one')
 

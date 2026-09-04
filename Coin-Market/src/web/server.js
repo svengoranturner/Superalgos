@@ -434,9 +434,11 @@ function marketPage (opened, url) {
                       beside a blank premium reads as a display fault rather
                       than as the admission it is. */
                   '<td class="mono">' + (sale.censored === 1
-                      ? '<span class="thin" title="Sold through Best Offer. eBay does not ' +
-                        'publish what an accepted offer was, so this is the asking price the ' +
-                        'listing ended on - what the buyer paid was this or less.">at most ' +
+                      ? '<span class="thin" title="The seller allowed offers on this lot. eBay ' +
+                        'never says whether one was taken, so this is the asking price the ' +
+                        'listing ended on and the buyer paid this or less. Most such lots sell ' +
+                        'at the asking price; some do not, and nothing in eBay&#39;s API tells ' +
+                        'the two apart.">at most ' +
                         gbp(paid) + '</span>'
                       : '<strong title="What the winner actually paid: ' +
                         gbp(hammer) + ' to the seller plus ' + gbp(paid - hammer) +
@@ -451,8 +453,9 @@ function marketPage (opened, url) {
                   '<td class="mono">' + (sale.saleType === 'AUCTION'
                       ? (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—')
                       : sale.saleType === 'BEST_OFFER'
-                          ? '<span class="badge" title="Seller and buyer agreed a price ' +
-                            'privately. eBay does not publish what it was.">Best Offer</span>'
+                          ? '<span class="badge" title="A Buy-It-Now whose seller accepted ' +
+                            'offers. It may have sold at the asking price or below it, and eBay ' +
+                            'publishes neither which nor how much.">Offers allowed</span>'
                           : '<span class="badge" title="Bought outright at the asking price. ' +
                             'A Buy-It-Now has no bids.">Buy-It-Now</span>') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
@@ -470,8 +473,10 @@ function marketPage (opened, url) {
     const soldTable = (rows) =>
         '<div class="card scroll"><table><thead><tr><th></th><th></th><th>Sold</th>' +
         '<th>Coin type</th><th>Price</th><th title="How it sold. A number is an ' +
-        'auction and says how contested it was; a Buy-It-Now was bought outright and has ' +
-        'no bids to count.">How it sold</th><th>Premium over spot</th><th></th>' +
+        'auction and says how contested it was. A Buy-It-Now was bought outright at the ' +
+        'asking price. Offers allowed means the seller took offers, so the lot went for ' +
+        'that price or less and eBay will not say which.">How it sold</th>' +
+        '<th>Premium over spot</th><th></th>' +
         '</tr></thead><tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
 
     const salesHtml = sales.length === 0
@@ -847,11 +852,11 @@ ${noBuyItNowSales
       'sale has been resolved yet, so the clearing prices on this page are auction prices ' +
       '&mdash; the honest measure of what a coin fetches, but not the whole market.</p>'
     : ''}${noBuyItNowPrices
-    ? '<p class="thin costnote"><strong>The Buy-It-Now sales here have no published price.</strong> ' +
-      'Every one of them went through Best Offer, where buyer and seller agree a figure privately ' +
-      'and eBay only ever shows the asking price the listing ended on. Those rows are marked ' +
-      '<em>at most</em> and carry no premium: the accepted offer was that price or less, and there ' +
-      'is no way to tell by how much. The premiums on this page are auction premiums.</p>'
+    ? '<p class="thin costnote"><strong>The Buy-It-Now sales here have no exact price.</strong> ' +
+      'Every one of them allowed offers, and eBay never says whether an offer was taken &mdash; ' +
+      'so each of those lots sold at its asking price or below it, with no way to tell which. ' +
+      'They are marked <em>at most</em>. A plain Buy-It-Now, with no offers allowed, does carry ' +
+      'an exact price and will appear here as one.</p>'
     : ''}
 ${salesHtml}
 
