@@ -172,29 +172,38 @@ exports.newRepository = function (db, options) {
         same reasoning lastSweepAt() records from the outage of 2026-08-30,
         which is twice now.
 
-        QUIET_SWEEP_HOURS is measured, not chosen. Reconstructing every gap
-        in the snapshot history of priced Buy-It-Now lots and asking which
-        gaps ended in the lot being seen again:
+        QUIET_SWEEP_HOURS is measured, and the first measurement of it was
+        wrong in an instructive way.
 
-            absent 24h   13 came back    279 did not    95.5%
-            absent 48h    5 came back    226 did not    97.8%
-            absent 72h    1 came back    170 did not    99.4%
-            absent 96h    0 came back    110 did not   100.0%
+        It came from snapshot history: every gap in a lot's timeline, and
+        whether the lot was seen again after it. That said 99.4% at 72 hours.
+        But a lot absent for days and never seen again counted as GONE, so
+        every lot that was absent, alive, and simply never re-crawled scored
+        as a success. The proxy was measuring the crawler, not the market.
 
-        72 hours is where the curve flattens: exactly one lot in the recorded
-        history has ever returned after three days away. The threshold only
-        governs how many Trading calls get spent on lots that turn out to be
-        alive, though - it is NOT what keeps the data honest. That is the
-        resolver's refusal to record an outcome for a listing eBay still
-        calls Active, which makes a wrong guess here cost one call and
-        nothing else.
+        These numbers come from asking eBay. Every row is a lot the resolver
+        actually put the question to, and the answer is eBay's:
+
+            absent >= 72h    176 asked    149 ended    27 live     85%
+            absent >= 96h    119 asked    116 ended     3 live     97%
+
+        96 hours is the knee. The extra day costs nothing that matters -
+        GetItem answers for 90 days after a listing closes, so there is no
+        deadline being raced here, unlike the ended auctions this queue
+        serves first.
+
+        And the threshold still only governs SPEND, not honesty. What keeps
+        the data right is the resolver's refusal to record an outcome for a
+        listing eBay still calls Active, which is why being wrong here costs
+        one Trading call and a note not to ask again, rather than a fabricated
+        sale.
 
         Priced lots only. An unattributed listing's outcome feeds no clearing
         statistic, and there are 2,914 priced against 25,241 in total, so the
         restriction is most of the difference between a bounded backlog and
         a pointless one.
     */
-    const QUIET_SWEEP_HOURS = 72
+    const QUIET_SWEEP_HOURS = 96
 
     function quietBuyItNow (wanted, retentionFloor) {
         if (wanted <= 0) { return [] }
@@ -769,6 +778,40 @@ exports.newRepository = function (db, options) {
         setListingSeries (browseId, seriesId) {
             return db.prepare('UPDATE listing SET series = ? WHERE browse_id = ?')
                 .run(seriesId === undefined ? null : seriesId, browseId)
+        },
+
+        /*
+            Sold lots whose price we wrote off as unknowable because the
+            seller had left the offer button on.
+
+            Every one of these was resolved before there was any way to ask
+            which offers a listing received, and a lot that already has an
+            outcome is never offered to the resolver again - so they cannot
+            benefit from the question being asked at resolve time. This is
+            how they get asked once, after the fact.
+        */
+        censoredOffersToRecheck (limit) {
+            return db.prepare(`
+                SELECT o.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
+                       o.final_price AS finalPrice, o.ended_at AS endedAt
+                FROM listing_outcome o
+                JOIN listing l ON l.browse_id = o.browse_id
+                WHERE o.sold = 1
+                  AND o.censored = 1
+                  AND o.sale_type = 'BEST_OFFER'
+                  AND l.legacy_id IS NOT NULL
+                ORDER BY o.ended_at DESC
+                LIMIT ?
+            `).all(limit || 200)
+        },
+
+        /*  A price we can now stand behind. Narrow on purpose: this only
+            ever clears the mark, never sets it, so a backfill cannot make
+            the store less honest than it found it. */
+        uncensorOutcome (browseId) {
+            return db.prepare(
+                'UPDATE listing_outcome SET censored = 0 WHERE browse_id = ? AND censored = 1'
+            ).run(browseId)
         },
 
         /*  eBay said this lot is still on sale. Recorded so the resolver

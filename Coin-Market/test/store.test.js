@@ -307,15 +307,20 @@ function quietFixture (sweepAgeHours, quietHours, options) {
 
 const offered = repo => repo.pendingOutcomes(50).map(r => r.legacyId)
 
-test('a Buy-It-Now lot that has gone quiet for three sweeping days is offered up', () => {
-    const { db, repository } = quietFixture(0, 73)
+test('a Buy-It-Now lot that has gone quiet for four sweeping days is offered up', () => {
+    const { db, repository } = quietFixture(0, 97)
     assert.deepStrictEqual(offered(repository), ['quiet'])
     assert.strictEqual(repository.pendingOutcomes(50)[0].quiet, 1, 'not flagged as a guess')
     db.close()
 })
 
 test('a Buy-It-Now lot only briefly out of sight is left alone', () => {
-    const { db, repository } = quietFixture(0, 48)
+    /*  Three days used to be enough and is not any more. Measured against
+        eBay's own answers rather than against our crawl history, 85% of lots
+        asked about at 72 hours had ended, against 97% at 96. The extra day
+        buys twelve points of precision and costs nothing, because GetItem
+        answers for 90 days after a listing closes. */
+    const { db, repository } = quietFixture(0, 80)
     assert.deepStrictEqual(offered(repository), [], 'asked about a lot that was probably still live')
     db.close()
 })
@@ -324,13 +329,13 @@ test('a collector outage does not make the whole corpus look sold', () => {
     /*
         THE test here. On 2026-09-04 the collector spent eight hours unable
         to make a Browse call, having convinced itself its quota was gone.
-        Measured against the wall clock this lot has been missing for 75
+        Measured against the wall clock this lot has been missing for 114
         hours and every other lot in the store would have crossed the
         threshold with it - thousands of Trading calls about listings that
         were alive and well. Measured against the sweep clock it has been
-        missing for 67 hours of actual sweeping, which is not yet enough.
+        missing for 90 hours of actual sweeping, which is not yet enough.
     */
-    const { db, repository } = quietFixture(8, 67)
+    const { db, repository } = quietFixture(24, 90)
     assert.deepStrictEqual(offered(repository), [],
         'an outage in the collector was read as an event in the market')
     db.close()
@@ -339,7 +344,7 @@ test('a collector outage does not make the whole corpus look sold', () => {
 test('an unattributed quiet lot is not worth a Trading call', () => {
     /*  Its outcome would feed no clearing statistic - and there are 25,241
         Buy-It-Now lots against 2,914 that are priced. */
-    const { db, repository } = quietFixture(0, 73, { priced: false })
+    const { db, repository } = quietFixture(0, 97, { priced: false })
     assert.deepStrictEqual(offered(repository), [])
     db.close()
 })
@@ -348,7 +353,7 @@ test('ended auctions keep their place at the front of the queue', () => {
     /*  Auctions carry a hard 90-day deadline and quiet Buy-It-Now lots carry
         none, so the new work may only ever use capacity an auction did not
         want. */
-    const { db, repository } = quietFixture(0, 73)
+    const { db, repository } = quietFixture(0, 97)
     repository.saveListing({
         browseId: 'v1|ended|0', legacyId: 'ended', marketplace: 'EBAY_GB',
         title: 'Gold Sovereign 1913', buyingOptions: 'AUCTION', currency: 'GBP',
@@ -361,7 +366,7 @@ test('ended auctions keep their place at the front of the queue', () => {
 })
 
 test('a quiet lot already resolved is not asked about again', () => {
-    const { db, repository } = quietFixture(0, 73)
+    const { db, repository } = quietFixture(0, 97)
     repository.saveOutcome('v1|quiet|0', {
         endTime: new Date().toISOString(), sold: true, finalPrice: 655,
         saleType: 'FIXED_PRICE', source: 'trading_getitem'
@@ -373,7 +378,7 @@ test('a quiet lot already resolved is not asked about again', () => {
 test('a quiet auction is not swept up by the Buy-It-Now rule', () => {
     /*  An auction without an end time is a contradiction, but the corpus is
         full of eBay's edge cases and the two paths must not overlap. */
-    const { db, repository } = quietFixture(0, 73, { buyingOptions: 'AUCTION|FIXED_PRICE' })
+    const { db, repository } = quietFixture(0, 97, { buyingOptions: 'AUCTION|FIXED_PRICE' })
     assert.deepStrictEqual(offered(repository), [])
     db.close()
 })

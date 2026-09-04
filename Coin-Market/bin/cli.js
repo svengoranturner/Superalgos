@@ -711,6 +711,77 @@ COMMANDS.init = {
     }
 }
 
+COMMANDS['backfill-offers'] = {
+    describe: 'Ask which offers older Buy-It-Now sales received, and price the ones that went at the ask',
+    async run (args) {
+        const settings = CONFIG.load()
+        const AUTH = require('../src/ebay/auth.js')
+        const TRADING = require('../src/ebay/trading.js')
+        const { newDatabase } = require('../src/store/db.js')
+        const { newRepository } = require('../src/store/repo.js')
+        const BUDGET = require('../src/ebay/budget.js')
+
+        const apply = args.includes('--apply')
+        const limit = Number(((args.find(a => a.startsWith('--limit=')) || '').split('=')[1]) || 200)
+
+        const db = newDatabase(settings.databasePath)
+        const repository = newRepository(db, {
+            sellerSalt: settings.sellerSalt,
+            rawRetentionDays: settings.collector.rawRetentionDays
+        })
+        const budget = BUDGET.newBudget(db, { dailyLimit: settings.ebay.dailyCallLimit })
+        const auth = AUTH.newAuth(settings.ebay, { environment: settings.ebay.environment })
+        const trading = TRADING.newTradingClient(auth, settings.ebay,
+            { siteId: settings.ebay.siteId, budget })
+
+        const rows = repository.censoredOffersToRecheck(limit)
+        console.log('')
+        console.log((apply ? 'BACKFILL' : 'DRY RUN') + ' - ' + rows.length +
+            ' sold Buy-It-Now lots whose price was written off as unknowable.')
+        console.log('Two Trading calls each, ' + budget.tradingRemaining() + ' left in today\'s allowance.')
+        console.log('')
+
+        const tally = { atAsk: 0, accepted: 0, unknown: 0, failed: 0 }
+
+        for (const row of rows) {
+            if (!budget.allowsTrading(2)) {
+                console.log('  stopping: Trading budget would be exceeded')
+                break
+            }
+            let verdict = null
+            try {
+                const item = await trading.getItem(row.legacyId)
+                verdict = TRADING.soldAtAsk(item, await trading.getBestOffers(row.legacyId))
+            } catch (err) {
+                tally.failed++
+                console.log('  ?  ' + row.legacyId + '  ' + err.message.slice(0, 60))
+                continue
+            }
+
+            if (verdict === true) {
+                tally.atAsk++
+                console.log('  OK ' + row.legacyId + '  GBP ' + String(row.finalPrice).padStart(9) +
+                    '  sold at the ask' + (apply ? ' - priced' : '') +
+                    '   ' + String(row.title || '').slice(0, 44))
+                if (apply) { repository.uncensorOutcome(row.browseId) }
+            } else if (verdict === false) {
+                tally.accepted++
+            } else {
+                tally.unknown++
+            }
+        }
+
+        console.log('')
+        console.log('  sold at the asking price, now exactly priced : ' + tally.atAsk +
+            (apply ? '' : '  (not written - pass --apply)'))
+        console.log('  went to an accepted offer, price stays unknown: ' + tally.accepted)
+        console.log('  could not be told apart, left censored        : ' + tally.unknown)
+        if (tally.failed > 0) { console.log('  call failed, left censored                   : ' + tally.failed) }
+        console.log('')
+        db.close()
+    }
+}
+
 COMMANDS.smoke = {
     describe: 'Probe every eBay API path and report pass/fail/unknown per capability',
     async run (args) {

@@ -32,9 +32,9 @@ function store () {
         title: 'Gold Sovereign 1912', buyingOptions: 'FIXED_PRICE', currency: 'GBP', endTime: null
     }, new Date(now).toISOString())
 
-    /*  And a lot last seen four days before it: quiet enough to be offered
+    /*  And a lot last seen five days before it: quiet enough to be offered
         up as probably ended. */
-    const lastSeen = new Date(now - 96 * HOUR_MS).toISOString()
+    const lastSeen = new Date(now - 120 * HOUR_MS).toISOString()
     repository.saveListing({
         browseId: 'v1|quiet|0', legacyId: 'quiet', marketplace: 'EBAY_GB',
         title: 'Gold Sovereign 1911', buyingOptions: 'FIXED_PRICE', currency: 'GBP', endTime: null
@@ -535,4 +535,72 @@ test('a single offer object, not an array, still parses', () => {
         [{ status: 'Accepted', codeType: null }])
     assert.deepStrictEqual(TRADING.parseBestOffers({}), [])
     assert.deepStrictEqual(TRADING.parseBestOffers(null), [])
+})
+
+
+/* ------------------------------------------------ the one-off backfill */
+
+/*
+    The lots the offer question arrived too late for.
+
+    Every Buy-It-Now sale resolved before GetBestOffers existed was stamped
+    price-unknown on the strength of the offer button being left on. A lot
+    that already has an outcome is never offered to the resolver again, so
+    they cannot pick the answer up in passing - they have to be asked once,
+    after the fact.
+*/
+function resolvedStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'salt' })
+    const now = new Date().toISOString()
+    const add = (id, saleType, censored, sold) => {
+        repository.saveListing({
+            browseId: 'v1|' + id + '|0', legacyId: id, marketplace: 'EBAY_GB',
+            title: 'Gold Sovereign ' + id, buyingOptions: 'FIXED_PRICE|BEST_OFFER',
+            currency: 'GBP', endTime: null
+        }, now)
+        repository.saveOutcome('v1|' + id + '|0', {
+            endTime: now, sold, finalPrice: 700, saleType, censored, source: 'trading_getitem'
+        })
+    }
+    add('offers-sold', 'BEST_OFFER', true, true)
+    add('offers-unsold', 'BEST_OFFER', true, false)
+    add('plain-sold', 'FIXED_PRICE', false, true)
+    add('auction-sold', 'AUCTION', false, true)
+    /*  A censored AUCTION, which is a real shape: fromLastSnapshot writes
+        one whenever the 90-day window closed before we could ask. It must
+        stay out of the backfill - offer records under-report on auctions,
+        which is the one place this mechanism is known to be unreliable. */
+    add('auction-censored', 'AUCTION', true, true)
+    return { db, repository }
+}
+
+test('the backfill offers up exactly the sales whose price was written off', () => {
+    const { db, repository } = resolvedStore()
+    assert.deepStrictEqual(
+        repository.censoredOffersToRecheck(50).map(r => r.legacyId),
+        ['offers-sold'],
+        'the backfill would spend calls on lots it cannot help')
+    db.close()
+})
+
+test('un-censoring only ever clears the mark, never sets it', () => {
+    /*  A backfill that could censor would be able to make the store less
+        honest than it found it. This one is deliberately one-way. */
+    const { db, repository } = resolvedStore()
+    repository.uncensorOutcome('v1|offers-sold|0')
+    assert.strictEqual(outcomeOf(db, 'v1|offers-sold|0').censored, 0)
+
+    /*  And it is a no-op on a row that was already exact. */
+    const before = outcomeOf(db, 'v1|plain-sold|0').censored
+    repository.uncensorOutcome('v1|plain-sold|0')
+    assert.strictEqual(outcomeOf(db, 'v1|plain-sold|0').censored, before)
+    db.close()
+})
+
+test('a lot the backfill has priced is not offered up a second time', () => {
+    const { db, repository } = resolvedStore()
+    repository.uncensorOutcome('v1|offers-sold|0')
+    assert.deepStrictEqual(repository.censoredOffersToRecheck(50).map(r => r.legacyId), [])
+    db.close()
 })
