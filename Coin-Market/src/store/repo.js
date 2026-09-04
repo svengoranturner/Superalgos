@@ -579,6 +579,34 @@ exports.newRepository = function (db, options) {
                        CASE WHEN EXISTS (
                            SELECT 1 FROM listing_instrument li WHERE li.browse_id = r.browse_id
                        ) THEN 1 ELSE 0 END AS priced,
+                       /*
+                           WHICH group it is counted in, not merely that it is.
+
+                           The flag above has always answered "is this
+                           distorting a number on the front page"; it never
+                           answered "which number". So a row could say
+                           "counted in the statistics" while the group doing
+                           the counting - bullion, proof, graded - stayed
+                           invisible, and the reviewer confirmed the coin was
+                           genuine without ever being shown the classification
+                           that decides what it is worth.
+
+                           The best_guess column is not a substitute: it is what the
+                           classifier PROPOSED for a lot it could not place,
+                           and is null for exactly the rows that were placed.
+                           The two are complements, and the row wants
+                           whichever exists.
+
+                           Level 0 to match every other read path - a listing
+                           carries a row per level of the taxonomy, and the
+                           leaf is the one the statistics are keyed on.
+                       */
+                       (SELECT li.key FROM listing_instrument li
+                        JOIN instrument i2 ON i2.key = li.key AND i2.level = 0
+                        WHERE li.browse_id = r.browse_id LIMIT 1) AS instrumentKey,
+                       (SELECT li.confidence FROM listing_instrument li
+                        JOIN instrument i2 ON i2.key = li.key AND i2.level = 0
+                        WHERE li.browse_id = r.browse_id LIMIT 1) AS filedConfidence,
                        /*  The asking price, so the review page can say what
                            it implies. A "gold sovereign" priced below its own
                            gold content is not a coin needing a decision - it

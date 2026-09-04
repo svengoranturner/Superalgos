@@ -1704,16 +1704,29 @@ function queueRow (row, verdictCell) {
         of 411 in BULLION.FULL.
     */
     const filedAs = row.instrumentKey || row.bestGuess || null
-    if (filedAs !== null) {
+    if (filedAs === null) {
+        /*  Worth saying rather than leaving blank. An unplaced coin is not a
+            coin filed wrongly - it is one the tool could not place at all,
+            which is a different job for the reviewer and the only case where
+            no group is the honest answer. */
+        meta.push('<span class="badge critical" title="The tool could not work out ' +
+            'which group this coin belongs to, so it is counted in no clearing figure ' +
+            'and has no premium.">no group</span>')
+    } else {
         const name = INSTRUMENTS.displayName(filedAs)
-        const shaky = Number.isFinite(row.confidence) && row.confidence < 0.7
+        /*  filedConfidence is how sure the classifier was of the group it
+            ACTUALLY filed the coin under; row.confidence, on a queued row, is
+            how sure it was of the guess it could not commit to. Prefer the
+            first: it is the number attached to the badge being drawn. */
+        const sureness = Number.isFinite(row.filedConfidence) ? row.filedConfidence : row.confidence
+        const shaky = Number.isFinite(sureness) && sureness < 0.7
         meta.push('<span class="badge' + (shaky ? ' critical' : '') +
             '" title="The tool has filed this as ' + escapeHtml(name) + ' (' +
             escapeHtml(filedAs) + '), and that is the group whose clearing prices ' +
             'its premium and any offer on it are measured against. If the group is ' +
             'wrong, both numbers are wrong.' +
             (shaky
-                ? ' It is only ' + Math.round(row.confidence * 100) + '% sure of that, ' +
+                ? ' It is only ' + Math.round(sureness * 100) + '% sure of that, ' +
                   'which is low - worth a look.'
                 : '') +
             '">' + escapeHtml(name) + (shaky ? ' &middot; unsure' : '') + '</span>')

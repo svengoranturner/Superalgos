@@ -2004,14 +2004,129 @@ test('a review row says which coin group it was filed under', async () => {
 })
 
 test('a group the classifier was guessing at is flagged, not stated flatly', async () => {
-    /*  These rows are queued at 0.5. A category badge that looked equally
-        confident at 0.5 and at 0.97 would invite exactly the trust the
-        owner has been giving it. */
-    const opened = twoSeriesStore()
+    /*
+        Two different confidences live on a queued row and only one of them
+        is about the badge.
+
+        The review queue's own confidence says how sure the tool is that a
+        HUMAN should look; the instrument row's says how sure it was of the
+        group it actually filed the coin under. A row can be queued at 0.5
+        for a reason that has nothing to do with the group - an odd price, a
+        suspect category - while the group itself was a confident call. The
+        badge hedges on the second, because that is the number attached to
+        the claim it is making.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|guess|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'guess', title: 'Sovereign 1980 possibly proof',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString(),
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    /*  Filed under proof, but barely. */
+    repository.saveClassification(id, [{ key: 'GB.SOV.PROOF.FULL', level: 0 }], 0.4, 'title', 0.2354, {})
+    /*  Queued for a confident reason unrelated to the group. */
+    repository.queueForReview(id, 'worth a look', 'GB.SOV.PROOF.FULL', 0.95)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
     const body = (await fetchAll(opened, ['/review']))['/review'].body
-    assert.ok(body.includes('unsure'), 'a 50%-confidence guess is presented as settled')
-    assert.ok(body.includes('50% sure'), 'the row does not say how unsure it is')
-    opened.db.close()
+
+    assert.ok(body.includes('Sovereign (proof)'), 'the group is missing')
+    assert.ok(body.includes('unsure'), 'a 40%-confidence filing is presented as settled')
+    assert.ok(body.includes('40% sure'),
+        'the row hedges on the queue score rather than on the filing it is describing')
+    db.close()
+})
+
+test('a coin that IS counted shows the group counting it, with no guess to fall back on', async () => {
+    /*
+        The case that made this worth fixing, and the one every other test
+        here was accidentally hiding.
+
+        review_queue.best_guess is what the classifier PROPOSED for a lot it
+        could not place. It is null for exactly the rows that WERE placed -
+        so on the live queue, 82 of 83 rows carried a group and showed
+        nothing, because the badge had only ever been fed best_guess. The row
+        said "counted in the statistics" while refusing to say which
+        statistic, which is the whole complaint: the reviewer confirms the
+        coin is genuine having never seen the classification that decides
+        what it is worth.
+
+        So this row is classified and queued WITHOUT a guess, exactly as the
+        real ones are.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|placed|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'placed', title: '1980 Gold Proof Sovereign boxed',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString(),
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: 'GB.SOV.PROOF.FULL', level: 0 }], 0.88, 'title', 0.2354, {})
+    repository.queueForReview(id, 'worth a look', null, 0.5)
+
+    /*  The store must hand the group over, or no amount of rendering can
+        show it. */
+    const queued = repository.reviewQueue(10, 'GB.SOV')
+    assert.strictEqual(queued.length, 1)
+    assert.strictEqual(queued[0].bestGuess, null, 'the fixture is not the real shape')
+    assert.strictEqual(queued[0].instrumentKey, 'GB.SOV.PROOF.FULL',
+        'the queue knows the coin is counted somewhere but not where')
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    assert.ok(body.includes('counted in the statistics'), 'the fixture is not counted at all')
+    assert.ok(body.includes('Sovereign (proof)'),
+        'the row says it is counted in the statistics without saying in which')
+    assert.ok(!body.includes('no group'), 'a placed coin was reported as unplaced')
+
+    db.close()
+})
+
+test('a row the tool could not place says so, rather than showing nothing', async () => {
+    /*  A blank where the group goes reads as a rendering fault. An unplaced
+        coin is a different job for the reviewer from a misfiled one: it is
+        counted in no clearing figure at all. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|nogroup|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'nogroup', title: 'Gold coin, unclear what',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString(),
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    /*  Queued with no guess and never classified: nothing filed it anywhere. */
+    repository.queueForReview(id, 'cannot place this', null, 0.1)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    assert.ok(body.includes('no group'), 'an unplaced coin shows a blank where its group goes')
+    db.close()
 })
 
 test('a confident group is stated without hedging', async () => {
