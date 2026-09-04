@@ -44,7 +44,12 @@ const ALLOWED_HOSTS = new Set(['i.ebayimg.com', 'i.ebayimg.co.uk'])
 /*  What one of their image paths looks like. Not strictly necessary once the
     host is pinned, but it costs nothing and keeps the proxy to the one job
     it exists for. */
-const ALLOWED_PATH = /^\/[A-Za-z0-9/_-]+\/s-l\d+\.(jpg|jpeg|png|webp)$/i
+/*  The tilde is not decoration: eBay's image ids are base64-ish and a good
+    fraction of them carry one - `yWQAAeSw9fJql~Vx`. Leaving it out of this
+    class refused 24 of the 114 pictures on one real page, and they fell back
+    to the direct eBay URL, so the page half-worked in exactly the way that
+    hides the fault. The test fixture's id happened not to have one. */
+const ALLOWED_PATH = /^\/[A-Za-z0-9/_~-]+\/s-l\d+\.(jpg|jpeg|png|webp)$/i
 
 /*  Enough for several pages of thumbnails at ~12KB each, and small enough to
     sit beside a 90MB store without anybody noticing. Swept when it is

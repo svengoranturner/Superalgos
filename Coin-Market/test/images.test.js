@@ -31,6 +31,16 @@ test('a genuine eBay thumbnail is proxied', () => {
     assert.ok(decodeURIComponent(proxied.split('u=')[1]) === REAL)
 })
 
+test('an image id with a tilde in it is proxied', () => {
+    /*  Found on the live page, not in a fixture. eBay's ids are base64-ish
+        and many carry a tilde; a character class without one refused 24 of
+        114 pictures, which then fell back to the direct URL and worked -
+        badly, and invisibly. */
+    const tilde = 'https://i.ebayimg.com/images/g/yWQAAeSw9fJql~Vx/s-l225.jpg'
+    assert.ok(IMAGES.proxied(tilde) !== null, 'a tilde in the id is refused')
+    assert.strictEqual(decodeURIComponent(IMAGES.proxied(tilde).split('u=')[1]), tilde)
+})
+
 test('the .co.uk spelling of the same CDN is proxied too', () => {
     const url = 'https://i.ebayimg.co.uk/images/g/AAA/s-l500.jpg'
     assert.ok(IMAGES.proxied(url).startsWith('/img?u='))
