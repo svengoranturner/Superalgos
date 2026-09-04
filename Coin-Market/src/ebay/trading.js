@@ -352,21 +352,51 @@ const FIXED_PRICE_TYPES = ['FixedPriceItem', 'StoresFixedPrice']
     "answers wrongly".
 */
 exports.soldAtAsk = function (item, result) {
-    if (item === null || item === undefined || result === null || result === undefined) { return null }
-    if (!item.sold) { return null }
-    if (!FIXED_PRICE_TYPES.includes(item.listingType)) { return null }
-    if (item.quantitySold !== 1) { return null }
-    if (!result.available) { return null }
+    return exports.explainSoldAtAsk(item, result).verdict
+}
+
+/*
+    The same decision, with the reason attached.
+
+    Which condition declined matters as much as the decline. A backfill that
+    returns "could not tell" on 24 of 25 lots is either a guard doing its job
+    on records that have aged out, or a guard that is too strict - and those
+    call for opposite responses. Nothing could distinguish them from a
+    verdict alone.
+*/
+exports.explainSoldAtAsk = function (item, result) {
+    const no = (reason) => ({ verdict: null, reason })
+
+    if (item === null || item === undefined || result === null || result === undefined) {
+        return no('nothing to judge')
+    }
+    if (!item.sold) { return no('did not sell') }
+    if (!FIXED_PRICE_TYPES.includes(item.listingType)) {
+        return no('not a fixed-price listing (' + (item.listingType || 'unknown') + ')')
+    }
+    if (item.quantitySold !== 1) { return no('sold ' + item.quantitySold + ' units, not one') }
+    if (!result.available) { return no('offer lookup failed: ' + (result.reason || 'unknown')) }
 
     const offers = result.offers || []
-    if (offers.some(offer => ACCEPTED.includes(offer.status))) { return false }
+    if (offers.some(offer => ACCEPTED.includes(offer.status))) {
+        return { verdict: false, reason: 'an offer was accepted' }
+    }
 
     /*  No offers at all, on a listing eBay agrees received none: it can only
         have gone at the asking price. */
-    if (offers.length === 0) { return item.bestOfferCount === 0 ? true : null }
+    if (offers.length === 0) {
+        return item.bestOfferCount === 0
+            ? { verdict: true, reason: 'no offers were ever made' }
+            : no('eBay counted ' + item.bestOfferCount + ' offers but returned no records')
+    }
 
-    if (offers.length < item.bestOfferCount) { return null }
-    return true
+    if (offers.length < item.bestOfferCount) {
+        return no('only ' + offers.length + ' of ' + item.bestOfferCount + ' offer records came back')
+    }
+    return {
+        verdict: true,
+        reason: offers.length + ' offers, none accepted'
+    }
 }
 
 exports.parseAspects = function (item) {

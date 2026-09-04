@@ -742,32 +742,35 @@ COMMANDS['backfill-offers'] = {
         console.log('')
 
         const tally = { atAsk: 0, accepted: 0, unknown: 0, failed: 0 }
+        const reasons = new Map()
 
         for (const row of rows) {
             if (!budget.allowsTrading(2)) {
                 console.log('  stopping: Trading budget would be exceeded')
                 break
             }
-            let verdict = null
+            let call = null
             try {
                 const item = await trading.getItem(row.legacyId)
-                verdict = TRADING.soldAtAsk(item, await trading.getBestOffers(row.legacyId))
+                call = TRADING.explainSoldAtAsk(item, await trading.getBestOffers(row.legacyId))
             } catch (err) {
                 tally.failed++
                 console.log('  ?  ' + row.legacyId + '  ' + err.message.slice(0, 60))
                 continue
             }
 
-            if (verdict === true) {
+            if (call.verdict === true) {
                 tally.atAsk++
                 console.log('  OK ' + row.legacyId + '  GBP ' + String(row.finalPrice).padStart(9) +
-                    '  sold at the ask' + (apply ? ' - priced' : '') +
-                    '   ' + String(row.title || '').slice(0, 44))
+                    '  ' + call.reason + (apply ? ' - priced' : '') +
+                    '   ' + String(row.title || '').slice(0, 40))
                 if (apply) { repository.uncensorOutcome(row.browseId) }
-            } else if (verdict === false) {
+            } else if (call.verdict === false) {
                 tally.accepted++
+                console.log('  -- ' + row.legacyId + '  ' + call.reason)
             } else {
                 tally.unknown++
+                reasons.set(call.reason, (reasons.get(call.reason) || 0) + 1)
             }
         }
 
@@ -777,6 +780,13 @@ COMMANDS['backfill-offers'] = {
         console.log('  went to an accepted offer, price stays unknown: ' + tally.accepted)
         console.log('  could not be told apart, left censored        : ' + tally.unknown)
         if (tally.failed > 0) { console.log('  call failed, left censored                   : ' + tally.failed) }
+        if (reasons.size > 0) {
+            console.log('')
+            console.log('  why the undecidable ones were left alone:')
+            for (const [reason, n] of [...reasons.entries()].sort((a, b) => b[1] - a[1])) {
+                console.log('    ' + String(n).padStart(4) + '  ' + reason)
+            }
+        }
         console.log('')
         db.close()
     }
