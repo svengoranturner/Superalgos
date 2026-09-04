@@ -1583,6 +1583,37 @@ function denominationsFor (hint) {
 }
 
 /*
+    The pools a coin of this series could belong to.
+
+    Read off the pack, exactly as the denominations are, so a series added
+    later offers its own vocabulary without anyone editing this file. Morgan
+    dollars have key dates and common dates; sovereigns have branch mints and
+    a pre-1871 band; neither list is written down here.
+*/
+function poolsFor (hint) {
+    const pack = SERIES.get(hint) ||
+        (typeof hint === 'string' ? (SERIES.forKey(hint) || {}).pack : null) || null
+    if (pack === null || !pack.pools) { return [''] }
+    return [''].concat(Object.keys(pack.pools))
+}
+
+/*
+    Which pool the classifier already put it in, read off the key.
+
+    Positional, like the denomination beside it: a key IS
+    `<series>.<pool>.<denomination>...`, so `forKey().rest[0]` is the answer
+    for any series, with no vocabulary to maintain here.
+*/
+function detectedPool (row) {
+    const key = row.instrumentKey || row.bestGuess || null
+    if (typeof key !== 'string') { return null }
+    const found = SERIES.forKey(key)
+    if (found === null) { return null }
+    const pool = found.rest[0]
+    return pool && found.pack.pools && found.pack.pools[pool] ? pool : null
+}
+
+/*
     Which denomination the classifier already worked out, read off the key.
 
     Positional rather than by matching against a list of names: the key IS
@@ -1629,7 +1660,27 @@ function callControls (row) {
         whole section: the handler reads the denomination and quantity
         belonging to each row it is acting on, whether that is this one row or
         every ticked one. */
-    return '<select name="d_' + id + '">' + options + '</select>' +
+    /*  The pool picker, pre-selected to whatever the classifier decided, so
+        the common case still needs no interaction: clicking Genuine submits
+        the pool it already had. It only asks a question when it reads
+        "which kind?", which is when there is one worth answering.
+
+        Beside the denomination rather than hidden behind a drill-down,
+        because this is the field the owner had no way of checking while
+        giving 192 verdicts - and a control nobody sees is a control nobody
+        uses. */
+    const pool = detectedPool(row)
+    const poolOptions = poolsFor(row.series || row.instrumentKey || row.bestGuess)
+        .map(x => '<option value="' + x + '"' + (x === (pool || '') ? ' selected' : '') + '>' +
+            (x === '' ? 'which kind?' : escapeHtml(String(x).toLowerCase().replace(/_/g, ' '))) +
+            '</option>')
+        .join('')
+
+    return '<select name="p_' + id + '" title="Which kind of coin this is, and so which ' +
+        'pile of clearing prices it is measured against. The tool works this out from the ' +
+        'title; if it has it wrong, the premium beside it and any offer on it are wrong too.">' +
+        poolOptions + '</select>' +
+        '<select name="d_' + id + '">' + options + '</select>' +
         '<input class="qty" type="number" name="q_' + id + '" min="1" max="99" value="1" ' +
         'title="How many of the same coin are in this lot. Leave at 1 unless it is a multiple.">' +
         '<button class="yes" name="genuine" value="' + id + '">Genuine</button>' +
@@ -2149,6 +2200,12 @@ function handlePost (opened, pathname, form) {
                 denomination: verdict === LEARNED.VERDICT.SOVEREIGN
                     ? (form.get('d_' + legacyId) || null)
                     : null,
+                /*  Like the denomination: only meaningful alongside
+                    "genuine", and an untouched dropdown must not be stored
+                    as a correction. */
+                pool: verdict === LEARNED.VERDICT.SOVEREIGN
+                    ? (form.get('p_' + legacyId) || null)
+                    : null,
                 quantity: verdict === LEARNED.VERDICT.SOVEREIGN
                     ? Number(form.get('q_' + legacyId)) || 1
                     : 1
@@ -2179,6 +2236,7 @@ function handlePost (opened, pathname, form) {
             /*  A denomination is only meaningful alongside "genuine", and
                 an empty select must not be stored as a correction. */
             denomination: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('denomination') || null) : null,
+            pool: verdict === LEARNED.VERDICT.SOVEREIGN ? (form.get('pool') || null) : null,
             quantity: verdict === LEARNED.VERDICT.SOVEREIGN ? Number(form.get('quantity')) || 1 : 1
         })
         /*  One coin, not all five thousand. A verdict cannot affect any

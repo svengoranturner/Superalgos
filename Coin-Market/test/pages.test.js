@@ -9,6 +9,7 @@ const SPOT = require('../src/spot/spot.js')
 const MARKET = require('../src/analytics/market.js')
 const SERVER = require('../src/web/server.js')
 const SERIES = require('../src/catalogue/series/index.js')
+const LEARNED = require('../src/catalogue/learned.js')
 
 /*
     Does every page actually render?
@@ -1531,11 +1532,28 @@ test('a sovereign queue still reads exactly as it did', async () => {
         'the per-row button lost its wording')
     /*  Order matters as much as membership: this is the order the dropdown
         has always had, and a change would be a diff the owner would notice
-        without it being an improvement. */
-    const options = [...body.matchAll(/<option value="([A-Z]*)"/g)].map(m => m[1])
+        without it being an improvement.
+
+        Scoped to the denomination select by name, because the row now also
+        carries a pool picker. Matching every <option> on the page swept both
+        together and reported the pools as reordered denominations - the
+        assertion was reading a control it was never about. */
+    const denominationSelects = [...body.matchAll(/<select name="d_[^>]*>([\s\S]*?)<\/select>/g)]
+    assert.ok(denominationSelects.length > 0, 'the denomination select vanished')
+    const options = denominationSelects
+        .flatMap(m => [...m[1].matchAll(/<option value="([A-Z_]*)"/g)].map(o => o[1]))
     const distinct = options.filter((d, i) => d !== '' && options.indexOf(d) === i)
     assert.deepStrictEqual(distinct, ['FULL', 'HALF', 'QUARTER', 'DOUBLE', 'QUINTUPLE'],
         'the sovereign denominations changed or reordered: ' + JSON.stringify(distinct))
+
+    /*  And the pools are their own list, in the pack's own order. */
+    const poolSelects = [...body.matchAll(/<select name="p_[^>]*>([\s\S]*?)<\/select>/g)]
+    assert.ok(poolSelects.length > 0, 'the row offers no way to correct the coin group')
+    const pools = [...poolSelects[0][1].matchAll(/<option value="([A-Z_]*)"/g)]
+        .map(o => o[1]).filter(x => x !== '')
+    assert.deepStrictEqual(pools,
+        ['COLLECTOR', 'EARLY', 'GRADED', 'PROOF', 'BRANCH', 'UNATTRIBUTED', 'BULLION'],
+        'the sovereign pools changed or reordered: ' + JSON.stringify(pools))
 
     opened.db.close()
 })
@@ -2155,5 +2173,160 @@ test('a confident group is stated without hedging', async () => {
 
     assert.ok(body.includes('Sovereign (proof)'), 'the group is missing')
     assert.ok(!body.includes('unsure'), 'a confident call was hedged anyway')
+    db.close()
+})
+
+
+/*
+    Correcting which KIND of coin something is, and having it stick.
+
+    The owner gave 192 genuine/not-genuine verdicts with no way to see, let
+    alone fix, which pool the coin had been put in - and the pool decides
+    which clearing prices it is measured against. On this store's own sold
+    auctions a full sovereign in the bullion pool clears at +9.6% and one in
+    the proof pool at +40.6%, so a coin in the wrong pool is a thirty point
+    error in what the tool thinks it is worth.
+
+    A picker that stores a preference but leaves the coin where it was would
+    be worse than none, so the assertion here is on the instrument key the
+    listing ends up counted under.
+*/
+test('a pool you choose moves the coin, not just the label', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|misfiled|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'misfiled', title: '1980 Gold Sovereign Elizabeth II boxed',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString(),
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.6, 'title', 0.2354, {})
+
+    const keyOf = () => (db.prepare(
+        'SELECT li.key AS k FROM listing_instrument li JOIN instrument i ON i.key = li.key ' +
+        'AND i.level = 0 WHERE li.browse_id = ?').get(id) || {}).k
+    assert.strictEqual(keyOf(), 'GB.SOV.BULLION.FULL', 'the fixture does not start where it should')
+
+    /*  You look at the picture and say: that is a proof. */
+    repository.label({
+        legacyId: 'misfiled', title: '1980 Gold Sovereign Elizabeth II boxed',
+        verdict: LEARNED.VERDICT.SOVEREIGN, denomination: 'FULL', pool: 'PROOF', series: 'GB.SOV'
+    })
+    require('../src/catalogue/reclassify.js').one(db, repository, 'misfiled', {})
+
+    assert.strictEqual(keyOf(), 'GB.SOV.PROOF.FULL',
+        'the coin was told it is a proof and stayed in the bullion pool')
+
+    /*  And it is now measured against proofs, which is the point of moving it. */
+    const view = MARKET.newMarketView(repository, SPOT.newSpotLookup(db, {}), {})
+    assert.ok(view.forInstrument('GB.SOV.PROOF.FULL') !== null,
+        'the proof pool has no market for the coin just moved into it')
+
+    db.close()
+})
+
+test('leaving the pool picker alone changes nothing', async () => {
+    /*  An untouched dropdown posts an empty string. Stored, it would read as
+        a human having chosen "no pool" and would outrank the classifier with
+        nothing behind it. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const id = 'v1|untouched|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'untouched', title: '1980 Gold Proof Sovereign',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: 'GB.SOV.PROOF.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    repository.label({
+        legacyId: 'untouched', title: '1980 Gold Proof Sovereign',
+        verdict: LEARNED.VERDICT.SOVEREIGN, denomination: 'FULL', pool: '', series: 'GB.SOV'
+    })
+    require('../src/catalogue/reclassify.js').one(db, repository, 'untouched', {})
+
+    const key = (db.prepare(
+        'SELECT li.key AS k FROM listing_instrument li JOIN instrument i ON i.key = li.key ' +
+        'AND i.level = 0 WHERE li.browse_id = ?').get(id) || {}).k
+    assert.strictEqual(key, 'GB.SOV.PROOF.FULL',
+        'an untouched dropdown overrode the classifier')
+    db.close()
+})
+
+
+test('choosing a pool on a row carries through the form to the coin', async () => {
+    /*
+        The three tests above all call repository.label() directly, so none of
+        them touches the wire - and the field name has to match on both sides
+        or a picker sits there doing nothing. Mutating the bulk handler to
+        drop the pool broke no test at all until this one existed.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const id = 'v1|wire|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'wire', title: '1980 Gold Sovereign Elizabeth II boxed',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.6, 'title', 0.2354, {})
+
+    const opened = { db, repository, spotAt: SPOT.newSpotLookup(db, {}), view: MARKET.newMarketView(repository, SPOT.newSpotLookup(db, {}), {}) }
+    await post(opened, '/apply', {
+        genuine: 'wire', back: '/review',
+        p_wire: 'PROOF', d_wire: 'FULL', q_wire: '1'
+    })
+
+    assert.strictEqual(repository.labels()[0].pool, 'PROOF',
+        'the pool chosen on the row never reached the store')
+    const key = (db.prepare(
+        'SELECT li.key AS k FROM listing_instrument li JOIN instrument i ON i.key = li.key ' +
+        'AND i.level = 0 WHERE li.browse_id = ?').get(id) || {}).k
+    assert.strictEqual(key, 'GB.SOV.PROOF.FULL', 'the coin did not move')
+    db.close()
+})
+
+test('an untouched pool dropdown is stored as no answer, not as an empty one', async () => {
+    /*  The dropdown posts an empty string when nobody touches it. Stored as
+        '', it is a value a later reader could take for a choice; the column
+        exists to record judgements, and "" is not one. Checked at the store
+        rather than through a key, because learned.js also treats it as
+        falsy - so a key assertion passes either way and proves nothing. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    repository.label({
+        legacyId: 'blank', title: 'Gold Sovereign', verdict: LEARNED.VERDICT.SOVEREIGN,
+        denomination: 'FULL', pool: '', series: 'GB.SOV'
+    })
+    assert.strictEqual(db.prepare('SELECT pool FROM listing_label WHERE legacy_id = ?').get('blank').pool,
+        null, 'an empty dropdown was stored as a decision')
+    db.close()
+})
+
+test('the classifier is handed the pool a human chose', async () => {
+    /*  labels() feeds the classifier's hot path. A column missing from it is
+        a correction that stores and then does nothing, which is exactly how
+        this failed first time round. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    repository.label({
+        legacyId: 'handed', title: 'Gold Sovereign', verdict: LEARNED.VERDICT.SOVEREIGN,
+        denomination: 'FULL', pool: 'GRADED', series: 'GB.SOV'
+    })
+    assert.strictEqual(repository.labels()[0].pool, 'GRADED',
+        'the classifier is never told which pool a human chose')
     db.close()
 })

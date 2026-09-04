@@ -549,5 +549,35 @@ exports.MIGRATIONS = [
            --------------------------------------------------------------- */
         ALTER TABLE listing ADD COLUMN alive_checked_at TEXT;
         `
+    },
+    {
+        name: '012-which-kind-of-coin-you-say-it-is',
+        sql: `
+        /* ---------------------------------------------------------------
+           The pool a human put a coin in.
+
+           A verdict has always answered one question - is this a real
+           sovereign - while the tool silently answered a second: which KIND.
+           Bullion, proof, graded, branch mint, pre-1871. That second answer
+           decides which pile of clearing prices the coin joins, so it sets
+           the premium shown against it and the ceiling of any offer on it.
+           Measured on this store's own sold auctions, a full sovereign in
+           the bullion pool clears at +9.6% and one in the proof pool at
+           +40.6%: a coin in the wrong pool is a thirty point error.
+
+           3,404 lots are pooled off the title alone, and the confidence
+           tails are not small - 43 of 239 in GRADED.FULL below 0.7, 38 of
+           411 in BULLION.FULL, 31 of 289 in PROOF.FULL. There was no column
+           to disagree with any of it. The owner's words: "I haven't been
+           checking the categorisation, so that's potential room for error."
+
+           NULLABLE, and null is not a pool. It means nobody has said, which
+           is the state of every row today and the correct default: the
+           classifier's answer stands until a human replaces it. Nothing is
+           backfilled, because writing a guess into a column that exists to
+           record judgements would defeat the point of having it.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing_label ADD COLUMN pool TEXT;
+        `
     }
 ]

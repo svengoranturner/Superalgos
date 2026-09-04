@@ -336,6 +336,30 @@ exports.apply = function (classification, label) {
             attributes.confidence.denomination = 1
         }
 
+        /*
+            Which pool you put it in, and why that outranks the classifier.
+
+            poolFor() reads a coin's pool off its year, grade band, finish and
+            mint - all inferred from the title. It is right most of the time
+            and wrong often enough to matter: measured on this store's own
+            sold auctions, a full sovereign in the bullion pool clears at
+            +9.6% and one in the proof pool at +40.6%, so a coin in the wrong
+            pool is a thirty point error in what the tool believes it is
+            worth, and it flows into the ceiling of every offer on that type.
+
+            Set here rather than by editing finish or gradeBand, because those
+            are evidence and this is a conclusion. A human saying "that is a
+            proof" is not claiming to have read the word PROOF in the title -
+            they have looked at the picture. Writing the conclusion straight
+            into attributes.pool leaves the evidence honestly as it was found
+            and lets instruments.keyFor use the answer, which already prefers
+            attributes.pool over anything it would derive.
+        */
+        if (label.pool) {
+            attributes.pool = label.pool
+            attributes.confidence.pool = 1
+        }
+
         /*  How many coins are in the lot.
 
             Left alone, this is 1 and nothing changes. Set, it says the lot

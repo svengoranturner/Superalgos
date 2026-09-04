@@ -574,7 +574,7 @@ exports.newRepository = function (db, options) {
                            changes when a seller relists and a verdict
                            should not have to be given twice. */
                        l.legacy_id AS legacyId,
-                       lb.verdict AS verdict, lb.denomination AS labelledDenomination,
+                       lb.verdict AS verdict, lb.denomination AS labelledDenomination, lb.pool AS labelledPool,
                        lb.quantity AS labelledQuantity,
                        /*  Everything a glance needs, so the queue can be
                            worked without opening a tab per listing. All of
@@ -706,13 +706,14 @@ exports.newRepository = function (db, options) {
                 : 1
             return bindAll(db.prepare(`
                 INSERT INTO listing_label
-                    (legacy_id, title, verdict, denomination, note, labelled_at, source, quantity, series)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (legacy_id, title, verdict, denomination, note, labelled_at, source, quantity, series, pool)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(legacy_id) DO UPDATE SET
                     title = excluded.title, verdict = excluded.verdict,
                     denomination = excluded.denomination, note = excluded.note,
                     labelled_at = excluded.labelled_at, source = excluded.source,
-                    quantity = excluded.quantity, series = excluded.series
+                    quantity = excluded.quantity, series = excluded.series,
+                    pool = excluded.pool
             `), [entry.legacyId, entry.title, entry.verdict, entry.denomination,
                 entry.note, now, entry.source || 'human', quantity,
                 /*
@@ -738,7 +739,19 @@ exports.newRepository = function (db, options) {
                     answer and the one listing.series already gives. A caller
                     may still override explicitly; nothing does today.
                 */
-                entry.series !== undefined ? entry.series : this.seriesFor(entry.legacyId)])
+                entry.series !== undefined ? entry.series : this.seriesFor(entry.legacyId),
+                /*
+                    Which POOL you say it is: bullion, proof, graded, and so
+                    on. The verdict answers whether the coin is real; this
+                    answers which kind, and that is the answer deciding which
+                    clearing prices it is measured against.
+
+                    NULL means you have not said, and the classifier keeps
+                    its own answer. An empty string from an untouched
+                    dropdown is the same thing and must land as NULL too -
+                    storing it would read as a human having chosen "none".
+                */
+                entry.pool ? entry.pool : null])
         },
 
         /*  The title a decision should be recorded against. Looked up rather
@@ -852,7 +865,13 @@ exports.newRepository = function (db, options) {
                            rule induced from a label cannot be scoped, and the
                            rejection cannot be read back in that coin's own
                            words. */
-                       series
+                       series,
+                       /*  And which pool you put it in. This query feeds the
+                           classifier's hot path, so a column missing here is
+                           a correction that stores and then does nothing -
+                           which is exactly how the pool override first
+                           failed its own test. */
+                       pool
                 FROM listing_label ORDER BY labelled_at DESC
             `).all()
         },
@@ -979,7 +998,7 @@ exports.newRepository = function (db, options) {
                        o.ended_at AS endedAt, o.bid_count AS finalBidCount,
                        o.censored, o.sale_type AS saleType,
                        q.reason,
-                       lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.verdict, lb.denomination AS labelledDenomination, lb.pool AS labelledPool,
                        lb.quantity AS labelledQuantity,
                        /*  The same three conditions as activeListings: no
                            resolved outcome, not past its end time (a NULL
@@ -1183,7 +1202,7 @@ exports.newRepository = function (db, options) {
                            offering to judge it again. Every other queue on
                            the site joins this; the sold table did not,
                            because until now it had no controls to grey out. */
-                       lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.verdict, lb.denomination AS labelledDenomination, lb.pool AS labelledPool,
                        lb.quantity AS labelledQuantity
                 FROM listing_outcome o
                 JOIN listing l ON l.browse_id = o.browse_id
@@ -1266,7 +1285,7 @@ exports.newRepository = function (db, options) {
                            without guessing at either. */
                        scope.metal, l.series,
                        s.price, s.shipping, s.bid_count AS bidCount,
-                       lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.verdict, lb.denomination AS labelledDenomination, lb.pool AS labelledPool,
                        lb.quantity AS labelledQuantity,
                        q.reason, 1 AS priced, 1 AS live
                 FROM scope
