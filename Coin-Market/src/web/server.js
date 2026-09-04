@@ -347,26 +347,31 @@ function marketPage (opened, url) {
     const soldTotal = repository.soldCount()
 
     /*
-        HOW MANY OF THESE ARE BUY-IT-NOW SALES, and the honest answer today is
-        none - not because none happen, but because none are ever asked about.
+        WHICH OF THESE ARE BUY-IT-NOW SALES, and what that is worth.
 
-        `pendingOutcomes` offers the resolver only lots where `end_time IS NOT
-        NULL`, and a Good-'Til-Cancelled Buy-It-Now has no end time. So 25,241
-        of them, 13,767 with no best offer at all, are invisible to it: the
-        code that would record such a sale exists and has never once run.
+        Both halves are derived, because the first version of this note was
+        derived in its trigger but hard-coded in its reason - it explained
+        that no Buy-It-Now sale could be here because the resolver only asked
+        about lots with an end time. COL-01 made that false within the day,
+        and the note would have gone on asserting it. A disclosure whose
+        reason cannot go stale is the only kind worth having.
 
-        Derived rather than written down. The moment a Buy-It-Now outcome is
-        resolved this note stops appearing on its own, which is the only kind
-        of disclosure worth having - the alternative is a sentence somebody
-        has to remember to delete, and this codebase has been bitten by one of
-        those already.
+        There are two honest states, and they are not the same:
 
-        Stated at all because the owner asked exactly this question and could
-        not answer it from the page: the table looked like a table of sales,
-        and there was nothing to say which kind it could never contain.
+        none at all - no Buy-It-Now lot has been resolved yet, so the
+        clearing prices here are auction prices.
+
+        none with a price - Buy-It-Now sales ARE being recorded, but every
+        one so far went through Best Offer, and eBay does not publish what an
+        accepted offer was: the lot simply ends showing its asking price.
+        Nine of the first fifty-six resolved were exactly this. Treating them
+        as sales at the asking price is the single easiest way to build a
+        tool that lies to you confidently, so they are marked instead.
     */
-    const soldByAuction = sales.filter(s => s.saleType === 'AUCTION').length
-    const noBuyItNowSales = sales.length > 0 && soldByAuction === sales.length
+    const binSales = sales.filter(sale => sale.saleType !== 'AUCTION')
+    const binPriced = binSales.filter(sale => sale.censored !== 1)
+    const noBuyItNowSales = sales.length > 0 && binSales.length === 0
+    const noBuyItNowPrices = binSales.length > 0 && binPriced.length === 0
 
     /*  One form over both halves, so a decision can be made on a row inside
         the fold and a bulk tick can span the two. */
@@ -421,11 +426,23 @@ function marketPage (opened, url) {
                       ? '<a href="' + escapeHtml(sale.itemWebUrl) + '" target="_blank" rel="noopener">' +
                         escapeHtml(sale.title.slice(0, 58)) + '</a>'
                       : escapeHtml(sale.title.slice(0, 58))) + '</td>' +
-                  '<td class="mono"><strong title="What the winner actually paid: ' +
-                      gbp(hammer) + ' to the seller plus ' + gbp(paid - hammer) +
-                      ' buyer protection fee to eBay. The premium beside it is measured on ' +
-                      'this figure, against the price of its own metal when the lot closed.">' +
-                      gbp(paid) + '</strong></td>' +
+                  /*  A censored sale went through Best Offer, and eBay
+                      publishes only the asking price the listing ended on.
+                      That is an UPPER bound on what changed hands, never the
+                      figure itself, and the cell has to say so: the premium
+                      column already refuses to guess, and a confident price
+                      beside a blank premium reads as a display fault rather
+                      than as the admission it is. */
+                  '<td class="mono">' + (sale.censored === 1
+                      ? '<span class="thin" title="Sold through Best Offer. eBay does not ' +
+                        'publish what an accepted offer was, so this is the asking price the ' +
+                        'listing ended on - what the buyer paid was this or less.">at most ' +
+                        gbp(paid) + '</span>'
+                      : '<strong title="What the winner actually paid: ' +
+                        gbp(hammer) + ' to the seller plus ' + gbp(paid - hammer) +
+                        ' buyer protection fee to eBay. The premium beside it is measured on ' +
+                        'this figure, against the price of its own metal when the lot closed.">' +
+                        gbp(paid) + '</strong>') + '</td>' +
                   /*  HOW it sold, not just how contested it was. A bid count
                       is an auction idea; on a Buy-It-Now it is meaningless and
                       an em dash there reads as missing data rather than as a
@@ -433,8 +450,11 @@ function marketPage (opened, url) {
                       apart, which is the whole reason this cell changed. */
                   '<td class="mono">' + (sale.saleType === 'AUCTION'
                       ? (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—')
-                      : '<span class="badge" title="Bought outright at the asking price. ' +
-                        'A Buy-It-Now has no bids.">Buy-It-Now</span>') + '</td>' +
+                      : sale.saleType === 'BEST_OFFER'
+                          ? '<span class="badge" title="Seller and buyer agreed a price ' +
+                            'privately. eBay does not publish what it was.">Best Offer</span>'
+                          : '<span class="badge" title="Bought outright at the asking price. ' +
+                            'A Buy-It-Now has no bids.">Buy-It-Now</span>') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
                       : pct(premium)) + '</td>' +
@@ -781,10 +801,14 @@ paid. ${soldTotal < 30
     : ''}</p>
 ${noBuyItNowSales
     ? '<p class="thin costnote"><strong>Every one of these is an auction.</strong> No Buy-It-Now ' +
-      'sale has ever been recorded, and none can be yet: the tool only asks eBay what happened to ' +
-      'a lot that had an end time, and a Buy-It-Now runs until it is bought or withdrawn. So the ' +
-      'clearing prices on this page are auction prices &mdash; which is the honest measure of what ' +
-      'a coin fetches, but it is not the whole market.</p>'
+      'sale has been resolved yet, so the clearing prices on this page are auction prices ' +
+      '&mdash; the honest measure of what a coin fetches, but not the whole market.</p>'
+    : ''}${noBuyItNowPrices
+    ? '<p class="thin costnote"><strong>The Buy-It-Now sales here have no published price.</strong> ' +
+      'Every one of them went through Best Offer, where buyer and seller agree a figure privately ' +
+      'and eBay only ever shows the asking price the listing ended on. Those rows are marked ' +
+      '<em>at most</em> and carry no premium: the accepted offer was that price or less, and there ' +
+      'is no way to tell by how much. The premiums on this page are auction premiums.</p>'
     : ''}
 ${salesHtml}
 

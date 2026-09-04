@@ -1881,7 +1881,81 @@ test('a page with only auction sales says so plainly', async () => {
     const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
     assert.ok(body.includes('Every one of these is an auction'),
         'the page does not disclose that it holds no Buy-It-Now sales')
-    assert.ok(body.includes('a Buy-It-Now runs until it is bought or withdrawn'),
-        'the disclosure does not say WHY there are none')
+    assert.ok(body.includes('clearing prices on this page are auction prices'),
+        'the disclosure does not say what that costs the reader')
     opened.db.close()
+})
+
+/*
+    A Best Offer sale, and the one number the page must refuse to print.
+
+    COL-01 started resolving Buy-It-Now lots, and the first fifty-six threw up
+    nine sales that had all gone through Best Offer. eBay does not publish
+    what an accepted offer was - the listing just ends showing its asking
+    price - so that figure is an UPPER bound on what changed hands and
+    nothing more.
+
+    The premium column already declined to guess. The price column did not:
+    it printed the asking price under a tooltip reading "What the winner
+    actually paid", which is a specific false claim about a specific coin,
+    and the badge beside it said the lot had been "bought outright at the
+    asking price". A confident price next to a blank premium reads as a
+    display fault rather than as the admission it is.
+*/
+test('a Best Offer sale is never reported as a price somebody paid', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const sell = (legacyId, saleType, censored) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Gold Sovereign ' + legacyId,
+            buyingOptions: 'FIXED_PRICE', endTime: now
+        }, now)
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, 'GB.SOV')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: 905, shipping: 0, bidCount: null,
+            saleType, censored, source: 'test'
+        })
+    }
+    sell('offer-1', 'BEST_OFFER', true)
+
+    const liveId = 'v1|live|0'
+    repository.saveListing({
+        browseId: liveId, legacyId: 'live', title: 'Gold Sovereign live',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot(liveId, { price: 1200, shipping: 0, observedAt: now })
+    repository.setListingSeries(liveId, 'GB.SOV')
+    repository.saveClassification(liveId, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const table = (body.split('id="sold"')[1] || '').split('<h2')[0]
+
+    assert.ok(table.includes('at most'),
+        'the asking price is presented as the price it sold for')
+    assert.ok(!table.includes('What the winner actually paid'),
+        'the page claims to know what a Best Offer buyer paid')
+    assert.ok(table.includes('>Best Offer</span>'),
+        'a Best Offer is badged as an ordinary Buy-It-Now')
+    assert.ok(!table.includes('Bought outright at the asking price'),
+        'a privately agreed price is described as paid at the asking price')
+
+    /*  And the page says why, once, rather than leaving a reader to work out
+        what a blank premium column means. */
+    assert.ok(body.includes('no published price'),
+        'the page shows priceless sales without saying they are priceless')
+    assert.ok(!body.includes('Every one of these is an auction'),
+        'the page claims to hold no Buy-It-Now sales while showing one')
+
+    db.close()
 })
