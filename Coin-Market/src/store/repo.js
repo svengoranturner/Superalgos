@@ -219,6 +219,12 @@ exports.newRepository = function (db, options) {
               AND l.legacy_id IS NOT NULL
               AND l.last_seen < ?
               AND l.last_seen > ?
+              /*  And not one eBay has recently told us is still on sale.
+                  Without this a lot found Active is offered again every
+                  cycle, forever, because being alive leaves no trace: the
+                  first live run spent 28 of 38 calls re-asking lots it had
+                  already been told about. */
+              AND (l.alive_checked_at IS NULL OR l.alive_checked_at < ?)
               AND EXISTS (SELECT 1 FROM listing_instrument li WHERE li.browse_id = l.browse_id)
               AND NOT EXISTS (
                   SELECT 1
@@ -229,7 +235,7 @@ exports.newRepository = function (db, options) {
             GROUP BY l.legacy_id
             ORDER BY endTime ASC
             LIMIT ?
-        `).all(quietBefore, retentionFloor, wanted)
+        `).all(quietBefore, retentionFloor, quietBefore, wanted)
     }
 
     return {
@@ -763,6 +769,13 @@ exports.newRepository = function (db, options) {
         setListingSeries (browseId, seriesId) {
             return db.prepare('UPDATE listing SET series = ? WHERE browse_id = ?')
                 .run(seriesId === undefined ? null : seriesId, browseId)
+        },
+
+        /*  eBay said this lot is still on sale. Recorded so the resolver
+            does not ask again tomorrow, and the day after. */
+        markAliveNow (browseId, whenIso) {
+            return db.prepare('UPDATE listing SET alive_checked_at = ? WHERE browse_id = ?')
+                .run(whenIso || new Date().toISOString(), browseId)
         },
 
         lastSweepAt () {

@@ -86,6 +86,12 @@ exports.newResolver = function (tradingClient, repository) {
                 */
                 if (item.listingStatus === 'Active') {
                     report.stillLive++
+                    /*  Remember the answer. Being alive leaves no other
+                        trace - no outcome is written - so without this the
+                        lot stays quiet and is asked again every cycle. */
+                    if (typeof repository.markAliveNow === 'function') {
+                        repository.markAliveNow(row.browseId)
+                    }
                     continue
                 }
 

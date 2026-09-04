@@ -514,5 +514,40 @@ exports.MIGRATIONS = [
         ALTER TABLE listing ADD COLUMN series TEXT;
         CREATE INDEX idx_listing_series ON listing(series);
         `
+    },
+    {
+        name: '011-when-we-last-found-it-alive',
+        sql: `
+        /* ---------------------------------------------------------------
+           When eBay last told us, directly, that a lot was still on sale.
+
+           A Good-'Til-Cancelled Buy-It-Now never announces that it is over,
+           so COL-01 infers it from absence: three days off the sweep clock
+           and the lot is offered up for resolution. The resolver then refuses
+           to write an outcome for anything eBay still calls Active, which is
+           what keeps a wrong guess cheap.
+
+           Cheap, but not free, and not once. Nothing recorded the refusal, so
+           a lot that came back Active had no outcome, stayed quiet, and was
+           offered again on the next cycle - and the next. The first live run
+           found 28 of 38 still alive; at a cycle every thirty minutes that is
+           roughly 1,300 Trading calls a day spent asking the same lots the
+           same question and getting the same answer.
+
+           So the answer is stored. A lot found alive is not asked again until
+           it has been quiet for another full stretch, measured from this
+           column.
+
+           DELIBERATELY NOT last_seen. That column is the sweep's own clock -
+           lastSweepAt() reads MAX(last_seen) over endless lots - and writing
+           a resolver observation into it would advance that clock without a
+           sweep having run, which is exactly the outage behaviour the sweep
+           clock exists to prevent.
+
+           NULL means never checked, which is every row today and the correct
+           starting state: it has never been asked.
+           --------------------------------------------------------------- */
+        ALTER TABLE listing ADD COLUMN alive_checked_at TEXT;
+        `
     }
 ]

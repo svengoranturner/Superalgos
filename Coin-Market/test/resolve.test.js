@@ -79,13 +79,31 @@ test('a lot eBay still calls Active is never recorded as an outcome', async () =
     db.close()
 })
 
-test('a lot still live is offered again next time, not lost', async () => {
+test('a lot found alive is not asked again the moment after being told', async () => {
+    /*
+        Being alive leaves no trace: no outcome is written, so the lot stays
+        quiet and qualifies again immediately. The first live run showed what
+        that costs - 28 of 38 calls spent re-asking lots eBay had already
+        said were on sale, once every thirty minutes, indefinitely.
+
+        The answer is recorded instead, and the lot goes back to the queue
+        only after it has been quiet for another full stretch.
+    */
     const { db, repository } = store()
     const client = clientReturning({
         listingStatus: 'Active', sold: false, saleType: 'FIXED_PRICE', aspects: {}
     })
     await RESOLVE.newResolver(client, repository).resolvePending(10)
-    assert.deepStrictEqual(repository.pendingOutcomes(10).map(r => r.legacyId), ['quiet'])
+
+    assert.deepStrictEqual(repository.pendingOutcomes(10).map(r => r.legacyId), [],
+        'a lot eBay just said was on sale is queued to be asked about again')
+
+    /*  But not lost. Once the liveness check is itself as stale as the
+        absence threshold, the lot is a candidate once more - a Buy-It-Now
+        alive today can be sold next week. */
+    repository.markAliveNow('v1|quiet|0', new Date(Date.now() - 200 * HOUR_MS).toISOString())
+    assert.deepStrictEqual(repository.pendingOutcomes(10).map(r => r.legacyId), ['quiet'],
+        'a lot checked long ago never comes back to the queue')
     db.close()
 })
 
