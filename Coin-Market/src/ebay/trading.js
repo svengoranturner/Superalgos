@@ -187,10 +187,44 @@ exports.parseItem = function (root) {
     const bidCount = num(selling.BidCount)
     const price = num(selling.ConvertedCurrentPrice) || num(selling.CurrentPrice)
 
-    const isAuction = listingType === 'Chinese' || listingType === 'Auction'
+    /*
+        ListingType says how a lot COULD be bought, not how it was.
+
+        'Chinese' is eBay's name for an auction, including one carrying a
+        Buy-It-Now button, and this corpus holds 284 such dual-format lots
+        plus 1,402 auctions with Best Offer enabled. On any of them a sale can
+        happen without a single bid - somebody clicks Buy-It-Now, or the
+        seller accepts an offer - and the listing still reports as an auction.
+
+        Taken at face value that becomes a hammer price: filed in the AUCTION
+        channel, marked exact because the censoring rule below requires
+        !isAuction, and fed straight into fair value, the bid ceiling and the
+        uplift curve. It would be the one contamination that reaches the
+        number the whole tool is built on.
+
+        A sale needs a bidder. So a lot that sold with a bid count of exactly
+        zero did not clear at auction, whatever its listing type says, and
+        does not belong in the auction channel. Which of the two ways it went
+        is not always knowable, so it is treated like any other fixed-price
+        sale: exact when no offers were allowed, a ceiling when they were.
+
+        Checked against the live store before writing this: all 379 resolved
+        auction sales carry at least one bid, so nothing is currently
+        misfiled. This is a guard against a shape the corpus contains rather
+        than a repair of damage already done - which is also why it is safe
+        to apply to stored rows on the next resolve.
+
+        Only a FINITE zero counts. A null bid count means eBay did not say,
+        and inferring a Buy-It-Now purchase from silence would invent the
+        very error this prevents.
+    */
+    const listedAsAuction = listingType === 'Chinese' || listingType === 'Auction'
     const bestOfferEnabled = String(item.BestOfferDetails ? item.BestOfferDetails.BestOfferEnabled : '') === 'true'
 
     const sold = quantitySold > 0
+    const soldWithoutABid = sold && listedAsAuction && bidCount === 0
+    const isAuction = listedAsAuction && !soldWithoutABid
+
     const censored = sold && !isAuction && bestOfferEnabled
 
     return {

@@ -189,3 +189,101 @@ test('an exhausted budget is refused before the request is made', async () => {
         globalThis.fetch = realFetch
     }
 })
+
+
+/*
+    A sale with no bidder is not a hammer price.
+
+    eBay's ListingType says how a lot COULD be bought. 'Chinese' means auction
+    - including one carrying a Buy-It-Now button - and this corpus holds 284
+    dual-format lots and 1,402 auctions with Best Offer enabled. On any of
+    them somebody can click Buy-It-Now, or the seller can accept an offer, and
+    the listing still reports itself as an auction with zero bids.
+
+    Taken at face value that becomes a hammer price: filed under AUCTION,
+    marked exact, and fed into fair value, the bid ceiling and the uplift
+    curve - the numbers the whole tool rests on. Measured before the fix: all
+    379 resolved auction sales carried at least one bid, so nothing was
+    misfiled yet. This guards a shape the corpus contains.
+*/
+const auctionItem = (over) => Object.assign({
+    listingStatus: 'Completed', sold: true, finalPrice: 900,
+    endTime: new Date().toISOString(), aspects: {}
+}, over)
+
+test('a lot that sold with zero bids never enters the auction channel', () => {
+    /*  Straight at the parser, because this is where the sale type is
+        decided and every consumer downstream trusts it. */
+    const parsed = TRADING.parseItem({
+        Item: {
+            ItemID: '1', ListingType: 'Chinese',
+            SellingStatus: { QuantitySold: '1', BidCount: '0', CurrentPrice: '900',
+                ListingStatus: 'Completed' },
+            BestOfferDetails: { BestOfferEnabled: 'false' }
+        }
+    })
+    assert.strictEqual(parsed.sold, true)
+    assert.notStrictEqual(parsed.saleType, 'AUCTION',
+        'a sale with no bidder was recorded as a hammer price')
+    assert.strictEqual(parsed.saleType, 'FIXED_PRICE')
+    assert.strictEqual(parsed.censored, false,
+        'a plain Buy-It-Now purchase has an exact price')
+})
+
+test('a zero-bid sale on an offers-enabled auction is a ceiling, not a hammer price', () => {
+    const parsed = TRADING.parseItem({
+        Item: {
+            ItemID: '2', ListingType: 'Chinese',
+            SellingStatus: { QuantitySold: '1', BidCount: '0', CurrentPrice: '900',
+                ListingStatus: 'Completed' },
+            BestOfferDetails: { BestOfferEnabled: 'true' }
+        }
+    })
+    assert.notStrictEqual(parsed.saleType, 'AUCTION')
+    assert.strictEqual(parsed.censored, true,
+        'an accepted offer on an auction listing was priced at the ask')
+})
+
+test('a genuine auction with bids is untouched', () => {
+    const parsed = TRADING.parseItem({
+        Item: {
+            ItemID: '3', ListingType: 'Chinese',
+            SellingStatus: { QuantitySold: '1', BidCount: '7', CurrentPrice: '900',
+                ListingStatus: 'Completed' },
+            BestOfferDetails: { BestOfferEnabled: 'false' }
+        }
+    })
+    assert.strictEqual(parsed.saleType, 'AUCTION')
+    assert.strictEqual(parsed.censored, false)
+    assert.strictEqual(parsed.bidCount, 7)
+})
+
+test('an auction that did not sell keeps its type, bids or none', () => {
+    /*  Zero bids and no sale is just an auction nobody wanted. Rerouting it
+        would corrupt the unsold side of every sell-through figure. */
+    const parsed = TRADING.parseItem({
+        Item: {
+            ItemID: '4', ListingType: 'Chinese',
+            SellingStatus: { QuantitySold: '0', BidCount: '0', CurrentPrice: '900',
+                ListingStatus: 'Completed' },
+            BestOfferDetails: { BestOfferEnabled: 'false' }
+        }
+    })
+    assert.strictEqual(parsed.sold, false)
+    assert.strictEqual(parsed.saleType, 'AUCTION',
+        'an unsold auction was reclassified as a fixed-price lot')
+})
+
+test('a missing bid count is not read as zero', () => {
+    /*  eBay declining to say is not eBay saying none. Inferring a Buy-It-Now
+        purchase from silence would invent the error this guard prevents. */
+    const parsed = TRADING.parseItem({
+        Item: {
+            ItemID: '5', ListingType: 'Chinese',
+            SellingStatus: { QuantitySold: '1', CurrentPrice: '900', ListingStatus: 'Completed' },
+            BestOfferDetails: { BestOfferEnabled: 'false' }
+        }
+    })
+    assert.strictEqual(parsed.saleType, 'AUCTION',
+        'a null bid count was treated as proof of no bidding')
+})
