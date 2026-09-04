@@ -2451,3 +2451,185 @@ test('the drill-down carries the same strip', async () => {
         'the strip drops the instrument key')
     opened.db.close()
 })
+
+
+/*
+    The front page carries the strip too, and one search covers all of it.
+
+    Three tables of different things - live auctions, lots open to an offer,
+    completed sales - but the question a person has is about a coin, not
+    about a table. Typing "proof" should narrow all three rather than making
+    you ask three times.
+*/
+test('one search on the front page narrows every table on it', async () => {
+    const opened = twoSeriesStore()
+    const all = '/?min=1'
+    const hunt = '/?min=1&q=' + encodeURIComponent('US.MORGAN')
+    const pages = await fetchAll(opened, [all, hunt])
+
+    assert.ok(pages[all].body.includes('GB.SOV.BULLION.FULL example'),
+        'the unfiltered page is missing the sovereign rows')
+    assert.ok(!pages[hunt].body.includes('GB.SOV.BULLION.FULL example'),
+        'searching for dollars still shows sovereign rows')
+    assert.ok(pages[hunt].body.includes('across every table on this page'),
+        'the page does not say the search covers all of it')
+    opened.db.close()
+})
+
+test('the sold table can be ordered without disturbing the other panels', async () => {
+    const opened = twoSeriesStore()
+    const dear = '/?min=1&order=dearest'
+    const cheap = '/?min=1&order=cheapest'
+    const pages = await fetchAll(opened, [dear, cheap])
+
+    /*  The price CELL only. Every row carries three figures - what went to
+        the seller, the fee, and the total - and sweeping them all up gave a
+        list whose first and last entries were different quantities from
+        different rows, so a descending check compared a total against a
+        hammer price and failed on correct output. */
+    const pricesIn = (body) => {
+        const section = (body.split('id="sold"')[1] || '').split('<h2')[0]
+        return [...section.matchAll(/<strong[^>]*>£([0-9,]+\.[0-9]{2})<\/strong>/g)]
+            .map(m => Number(m[1].replace(/,/g, '')))
+    }
+    const a = pricesIn(pages[dear].body)
+    const b = pricesIn(pages[cheap].body)
+    assert.ok(a.length > 1, 'not enough sold rows to tell an order from')
+    assert.notDeepStrictEqual(a, b, 'dearest and cheapest produced the same order')
+    assert.ok(a[0] >= a[a.length - 1], 'dearest-first is not descending')
+    opened.db.close()
+})
+
+test('the front page strip keeps the sample size it arrived with', async () => {
+    /*  min= decides how many sales a coin type needs before it is shown at
+        all. Dropping it on search would silently widen the page underneath
+        the search, which reads as the search doing something it did not. */
+    const opened = twoSeriesStore()
+    const path = '/?min=1&q=example'
+    const body = (await fetchAll(opened, [path]))[path].body
+    assert.ok(body.includes('name="min" value="1"'),
+        'the strip drops the minimum sample size')
+    opened.db.close()
+})
+
+
+test('the search narrows the opportunities panel too, not only the tables below it', async () => {
+    /*
+        Its own fixture, because the shared one leaves this panel empty - a
+        lot only appears in it when its price is within a few percent of the
+        metal in it, and the shared listings are all well above that. A test
+        asserting against an empty panel proves nothing, which is exactly why
+        dropping the filter here broke no test.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 49.7, null, 'test')
+
+    /*  Priced at roughly the value of their own metal, so both land in the
+        panel: a full sovereign holds 0.2354oz (about GBP 775 here) and a
+        Morgan 0.7734oz of silver (about GBP 38). */
+    const near = (id, key, fineOz, price, title) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title, buyingOptions: 'AUCTION', endTime: soon,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, bidCount: 3, observedAt: now })
+        repository.setListingSeries(browseId, key.startsWith('GB') ? 'GB.SOV' : 'US.MORGAN')
+        repository.saveClassification(browseId, [{ key, level: 0 }], 0.9, 'title', fineOz, {})
+    }
+    near('sov1', 'GB.SOV.BULLION.FULL', 0.2354, 740, 'Gold Sovereign 1912 bullion')
+    near('mor1', 'US.MORGAN.COMMON.DOLLAR', 0.7734, 36, 'Morgan Silver Dollar 1921')
+
+    /*  One Good-'Til-Cancelled lot, purely to set the sweep clock:
+        lastSweepAt() reads the newest sighting among listings with no end
+        time, and the freshness gate this panel runs is measured against it.
+        With only auctions in the store there is no clock, nothing is
+        actionable, and the panel is empty for a reason that has nothing to
+        do with what is being tested. */
+    const anchor = 'v1|anchor|0'
+    repository.saveListing({
+        browseId: anchor, legacyId: 'anchor', title: 'Gold Sovereign shop stock',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot(anchor, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(anchor, 'GB.SOV')
+    repository.saveClassification(anchor, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const all = '/?min=1'
+    const hunt = '/?min=1&q=morgan'
+    const pages = await fetchAll(opened, [all, hunt])
+
+    const countIn = (body) => {
+        const m = body.match(/Live auctions at or near spot \((\d+)\)/)
+        return m === null ? -1 : Number(m[1])
+    }
+    assert.strictEqual(countIn(pages[all].body), 2, 'the fixture does not fill the panel')
+    assert.strictEqual(countIn(pages[hunt].body), 1,
+        'the opportunities panel ignored the search')
+    assert.ok(!pages[hunt].body.includes('Gold Sovereign 1912 bullion'),
+        'a row that does not match the search survived in the panel')
+    db.close()
+})
+
+test('the sold table orders by when a sale closed, not when the lot appeared', async () => {
+    /*  A completed sale has no firstSeen worth ordering by - what anybody
+        means by "newest sale" is the one that closed most recently. Dating
+        these rows by the listing's own arrival put them in an order nobody
+        asked for, and every sale in the earlier fixture shared an end time,
+        so no test could see it. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = Date.now()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(new Date(now).toISOString(), 'XAU', 3290, null, 'test')
+
+    /*  Listed in one order, sold in the opposite one. */
+    const days = [1, 2, 3, 4]
+    days.forEach((d, i) => {
+        const id = 'v1|sale' + i + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'sale' + i, title: 'Gold Sovereign closing ' + d,
+            buyingOptions: 'AUCTION', endTime: new Date(now - d * 86400000).toISOString()
+        }, new Date(now - (10 - d) * 86400000).toISOString())
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: new Date(now).toISOString() })
+        repository.setListingSeries(id, 'GB.SOV')
+        repository.saveClassification(id, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: new Date(now - d * 86400000).toISOString(), sold: true,
+            finalPrice: 900, shipping: 0, bidCount: 5, saleType: 'AUCTION',
+            censored: false, source: 'trading_getitem'
+        })
+    })
+    const liveId = 'v1|live|0'
+    repository.saveListing({
+        browseId: liveId, legacyId: 'live', title: 'Gold Sovereign live',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, new Date(now).toISOString())
+    repository.saveSnapshot(liveId, { price: 1200, shipping: 0, observedAt: new Date(now).toISOString() })
+    repository.setListingSeries(liveId, 'GB.SOV')
+    repository.saveClassification(liveId, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const newest = '/?min=1&order=newest'
+    const oldest = '/?min=1&order=oldest'
+    const pages = await fetchAll(opened, [newest, oldest])
+
+    const closingIn = (body) => {
+        const section = (body.split('id="sold"')[1] || '').split('<h2')[0]
+        return [...section.matchAll(/Gold Sovereign closing (\d)/g)].map(m => Number(m[1]))
+    }
+    assert.deepStrictEqual(closingIn(pages[newest].body), [1, 2, 3, 4],
+        'newest-first is not ordering by when the sale closed')
+    assert.deepStrictEqual(closingIn(pages[oldest].body), [4, 3, 2, 1],
+        'oldest-first is not ordering by when the sale closed')
+    db.close()
+})

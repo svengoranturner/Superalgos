@@ -342,7 +342,36 @@ function marketPage (opened, url) {
     */
     const SOLD_SHOWN = 25
     const SOLD_FETCHED = 100
-    const sales = repository.recentSales(SOLD_FETCHED)
+    const allSales = repository.recentSales(SOLD_FETCHED)
+
+    /*
+        ONE SEARCH FOR THE WHOLE PAGE, not three boxes.
+
+        The front page carries three tables of different things - live
+        auctions, lots open to an offer, completed sales - and the question a
+        person actually has is about a coin, not about a table. Typing
+        "proof" should narrow all three, so the page answers "what is
+        happening with proofs" rather than making you ask it three times.
+
+        The ordering is per-table, because the tables are ordered by
+        different quantities and always have been: the opportunities panel
+        has its own ending-soonest tabs, and this is the sold table's.
+    */
+    const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title']
+    const pageTerms = searchTerms(url)
+    const soldControlled = applyRowControls(allSales, url, SOLD_SORTS, 'newest')
+    const sales = soldControlled.rows
+
+    const pageSearch = controlStrip('/', url, {
+        carry: url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {},
+        allowed: SOLD_SORTS,
+        fallback: 'newest'
+    })
+    const pageNarrowed = pageTerms.length === 0
+        ? ''
+        : '<p class="thin">Showing rows matching ' +
+          pageTerms.map(t => '<code>' + escapeHtml(t) + '</code>').join(' ') +
+          ' across every table on this page.</p>'
     /*  The real total, not the fetch. See soldCount. */
     const soldTotal = repository.soldCount()
 
@@ -580,7 +609,7 @@ function marketPage (opened, url) {
             : (a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     }
 
-    const shown = opportunities.slice(0, 40)
+    const shown = opportunities.filter(row => matchesSearch(row, pageTerms)).slice(0, 40)
     for (const row of shown) { row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
@@ -618,7 +647,9 @@ function marketPage (opened, url) {
             })
         }
     }
-    const offers = ALERT_RULES.dedupeByListing(offerEntries).slice(0, 20)
+    const offers = ALERT_RULES.dedupeByListing(offerEntries)
+        .filter(entry => matchesSearch(entry.alert, pageTerms))
+        .slice(0, 20)
 
     const offerHtml = offers.length === 0
         ? '<p class="thin">Nothing to offer on right now. A lot only appears here when its coin ' +
@@ -858,6 +889,8 @@ ${noBuyItNowSales
       'They are marked <em>at most</em>. A plain Buy-It-Now, with no offers allowed, does carry ' +
       'an exact price and will appear here as one.</p>'
     : ''}
+${pageSearch}
+${pageNarrowed}
 ${salesHtml}
 
 <h2 id="evidence" class="sub" style="margin:34px 0 4px">The evidence behind these</h2>
@@ -1692,11 +1725,11 @@ const NULLS_LAST = (value) => (value === null || value === undefined || !Number.
 const ROW_SORTS = {
     newest: {
         label: 'Newest first',
-        compare: (a, b) => String(b.firstSeen || '').localeCompare(String(a.firstSeen || ''))
+        compare: (a, b) => String(rowWhen(b)).localeCompare(String(rowWhen(a)))
     },
     oldest: {
         label: 'Oldest first',
-        compare: (a, b) => String(a.firstSeen || '').localeCompare(String(b.firstSeen || ''))
+        compare: (a, b) => String(rowWhen(a)).localeCompare(String(rowWhen(b)))
     },
     dearest: {
         label: 'Dearest first',
@@ -1738,6 +1771,13 @@ const ROW_SORTS = {
         label: 'By title',
         compare: (a, b) => String(a.title || '').localeCompare(String(b.title || ''))
     }
+}
+
+/*  When a row happened. A live listing is dated by when it appeared; a
+    completed sale by when it closed, which is the only date on it and the
+    one anybody means by "newest". ISO 8601 sorts as text. */
+function rowWhen (row) {
+    return row.endedAt || row.firstSeen || row.lastSeen || ''
 }
 
 function rowTotal (row) {

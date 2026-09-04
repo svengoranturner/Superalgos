@@ -172,38 +172,77 @@ exports.newRepository = function (db, options) {
         same reasoning lastSweepAt() records from the outage of 2026-08-30,
         which is twice now.
 
-        QUIET_SWEEP_HOURS is measured, and the first measurement of it was
-        wrong in an instructive way.
+        QUIET_SWEEP_HOURS has been wrong twice, in opposite directions, and
+        both times because of what was being optimised rather than how it was
+        measured.
 
-        It came from snapshot history: every gap in a lot's timeline, and
-        whether the lot was seen again after it. That said 99.4% at 72 hours.
-        But a lot absent for days and never seen again counted as GONE, so
-        every lot that was absent, alive, and simply never re-crawled scored
-        as a success. The proxy was measuring the crawler, not the market.
+        First it came from snapshot history - every gap in a lot's timeline,
+        and whether the lot was seen again - which said 99.4% at 72 hours. But
+        a lot absent for days and never seen again counted as GONE, so lots
+        that were absent, alive and never re-crawled scored as successes. That
+        proxy was measuring the crawler, not the market.
 
-        These numbers come from asking eBay. Every row is a lot the resolver
-        actually put the question to, and the answer is eBay's:
+        Then it came from asking eBay: 176 lots, 85% ended at 72 hours and 97%
+        at 96. Honest numbers, but taken during and just after the collector
+        outage of 2026-09-04, when the sweep made no Browse call for eight
+        hours and hundreds of live lots therefore looked absent. Tuning to
+        that put the threshold at 96 hours - four days before a sale could
+        appear.
 
-            absent >= 72h    176 asked    149 ended    27 live     85%
-            absent >= 96h    119 asked    116 ended     3 live     97%
+        What both attempts missed is that PRECISION PER CALL IS NOT THE
+        CONSTRAINT. Measured on a healthy sweep:
 
-        96 hours is the knee. The extra day costs nothing that matters -
-        GetItem answers for 90 days after a listing closes, so there is no
-        deadline being raced here, unlike the ended auctions this queue
-        serves first.
+            lots last seen 1h ago   1804
+            lots last seen 2h ago      4
+            lots last seen 3h ago      6
+            lots last seen 4h ago     10
 
-        And the threshold still only governs SPEND, not honesty. What keeps
-        the data right is the resolver's refusal to record an outcome for a
-        listing eBay still calls Active, which is why being wrong here costs
-        one Trading call and a note not to ask again, rather than a fabricated
-        sale.
+        A live lot is seen every hour. Absence is a clean signal within hours,
+        and the standing population it selects is small - 461 priced lots
+        absent 8h or more, only 285 of them never asked - against a Trading
+        allowance of 5,000 a day of which about 600 is spent. There is no
+        scarcity here to ration.
+
+        So the threshold is now 8 hours: comfortably clear of the 2-hour
+        99th-percentile gap between sightings, tolerant of a degraded or
+        truncated sweep, and still same-day rather than same-week. A lot that
+        sells tonight is asked about tonight.
+
+        Asking early helps a second time, which the four-day version quietly
+        cost us. eBay drops a listing's Best Offer records after roughly five
+        days - 20 of 25 lots in the first backfill came back "counted N
+        offers, returned none" - and those records are the only thing that
+        separates a Buy-It-Now sold at its asking price from one sold via an
+        accepted offer. Ask within hours and that price is exact; ask on the
+        fourth day and it is a ceiling forever.
+
+        The threshold still only governs SPEND and LATENCY, never honesty.
+        What keeps the data right is the resolver's refusal to record an
+        outcome for a listing eBay still calls Active, which is why being
+        wrong here costs one Trading call and a note not to ask again, rather
+        than a fabricated sale.
 
         Priced lots only. An unattributed listing's outcome feeds no clearing
         statistic, and there are 2,914 priced against 25,241 in total, so the
         restriction is most of the difference between a bounded backlog and
         a pointless one.
     */
-    const QUIET_SWEEP_HOURS = 96
+    const QUIET_SWEEP_HOURS = 8
+
+    /*
+        And how long a lot found ALIVE is left alone.
+
+        Not the same number, and it was: the back-off reused the absence
+        threshold, so a lot eBay had just called Active waited a full four
+        days to be asked again. A Buy-It-Now alive this morning can be sold
+        by tonight, and waiting four days to notice is the same latency
+        problem one step further along.
+
+        Twelve hours instead. Long enough that a lot flickering in and out of
+        search is not asked about on every cycle, short enough that a genuine
+        sale is caught the same day.
+    */
+    const ALIVE_RECHECK_HOURS = 12
 
     function quietBuyItNow (wanted, retentionFloor) {
         if (wanted <= 0) { return [] }
@@ -218,6 +257,8 @@ exports.newRepository = function (db, options) {
 
         const quietBefore =
             new Date(Date.parse(sweep.at) - QUIET_SWEEP_HOURS * 60 * 60 * 1000).toISOString()
+        const recheckBefore =
+            new Date(Date.parse(sweep.at) - ALIVE_RECHECK_HOURS * 60 * 60 * 1000).toISOString()
 
         return db.prepare(`
             SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, MIN(l.last_seen) AS endTime,
@@ -232,7 +273,8 @@ exports.newRepository = function (db, options) {
                   Without this a lot found Active is offered again every
                   cycle, forever, because being alive leaves no trace: the
                   first live run spent 28 of 38 calls re-asking lots it had
-                  already been told about. */
+                  already been told about. Its own interval, not the absence
+                  threshold - see ALIVE_RECHECK_HOURS. */
               AND (l.alive_checked_at IS NULL OR l.alive_checked_at < ?)
               AND EXISTS (SELECT 1 FROM listing_instrument li WHERE li.browse_id = l.browse_id)
               AND NOT EXISTS (
@@ -244,7 +286,7 @@ exports.newRepository = function (db, options) {
             GROUP BY l.legacy_id
             ORDER BY endTime ASC
             LIMIT ?
-        `).all(quietBefore, retentionFloor, quietBefore, wanted)
+        `).all(quietBefore, retentionFloor, recheckBefore, wanted)
     }
 
     return {

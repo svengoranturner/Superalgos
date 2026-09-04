@@ -87,7 +87,9 @@ test('a lot found alive is not asked again the moment after being told', async (
         said were on sale, once every thirty minutes, indefinitely.
 
         The answer is recorded instead, and the lot goes back to the queue
-        only after it has been quiet for another full stretch.
+        after its own interval - twelve hours, not the absence threshold. A
+        Buy-It-Now alive this morning can be sold by tonight, and the
+        back-off must not be the thing that hides it.
     */
     const { db, repository } = store()
     const client = clientReturning({
@@ -101,7 +103,16 @@ test('a lot found alive is not asked again the moment after being told', async (
     /*  But not lost. Once the liveness check is itself as stale as the
         absence threshold, the lot is a candidate once more - a Buy-It-Now
         alive today can be sold next week. */
-    repository.markAliveNow('v1|quiet|0', new Date(Date.now() - 200 * HOUR_MS).toISOString())
+    /*  Ten hours on: still inside the twelve-hour back-off, so it waits.
+        This is the case that separates the back-off from the absence
+        threshold - under an eight-hour window it would already be back. */
+    repository.markAliveNow('v1|quiet|0', new Date(Date.now() - 10 * HOUR_MS).toISOString())
+    assert.deepStrictEqual(repository.pendingOutcomes(10).map(r => r.legacyId), [],
+        'the back-off is running on the absence threshold rather than its own')
+
+    /*  And past it, the lot is a candidate again: a Buy-It-Now alive this
+        morning can be sold by tonight. */
+    repository.markAliveNow('v1|quiet|0', new Date(Date.now() - 24 * HOUR_MS).toISOString())
     assert.deepStrictEqual(repository.pendingOutcomes(10).map(r => r.legacyId), ['quiet'],
         'a lot checked long ago never comes back to the queue')
     db.close()

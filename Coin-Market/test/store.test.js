@@ -307,7 +307,21 @@ function quietFixture (sweepAgeHours, quietHours, options) {
 
 const offered = repo => repo.pendingOutcomes(50).map(r => r.legacyId)
 
-test('a Buy-It-Now lot that has gone quiet for four sweeping days is offered up', () => {
+test('a lot that sells tonight is asked about tonight, not next week', () => {
+    /*
+        The whole point of the threshold being hours rather than days. A lot
+        that sold this evening stops being seen this evening; waiting four
+        days to ask meant four days before the sale could appear anywhere,
+        and by then eBay has dropped the Best Offer records that would have
+        made its price exact rather than a ceiling.
+    */
+    const { db, repository } = quietFixture(0, 9)
+    assert.deepStrictEqual(offered(repository), ['quiet'],
+        'a lot quiet for nine hours is still not worth asking about')
+    db.close()
+})
+
+test('a Buy-It-Now lot that has gone quiet for days is offered up', () => {
     const { db, repository } = quietFixture(0, 97)
     assert.deepStrictEqual(offered(repository), ['quiet'])
     assert.strictEqual(repository.pendingOutcomes(50)[0].quiet, 1, 'not flagged as a guess')
@@ -315,12 +329,10 @@ test('a Buy-It-Now lot that has gone quiet for four sweeping days is offered up'
 })
 
 test('a Buy-It-Now lot only briefly out of sight is left alone', () => {
-    /*  Three days used to be enough and is not any more. Measured against
-        eBay's own answers rather than against our crawl history, 85% of lots
-        asked about at 72 hours had ended, against 97% at 96. The extra day
-        buys twelve points of precision and costs nothing, because GetItem
-        answers for 90 days after a listing closes. */
-    const { db, repository } = quietFixture(0, 80)
+    /*  A live lot is seen every hour - 1,804 in the last sweep against 4, 6
+        and 10 in the three before it - so a couple of missed sightings is
+        noise, not an ending. Four hours is noise. */
+    const { db, repository } = quietFixture(0, 4)
     assert.deepStrictEqual(offered(repository), [], 'asked about a lot that was probably still live')
     db.close()
 })
@@ -329,13 +341,13 @@ test('a collector outage does not make the whole corpus look sold', () => {
     /*
         THE test here. On 2026-09-04 the collector spent eight hours unable
         to make a Browse call, having convinced itself its quota was gone.
-        Measured against the wall clock this lot has been missing for 114
+        Measured against the wall clock this lot has been missing for 16
         hours and every other lot in the store would have crossed the
         threshold with it - thousands of Trading calls about listings that
         were alive and well. Measured against the sweep clock it has been
-        missing for 90 hours of actual sweeping, which is not yet enough.
+        missing for 4 hours of actual sweeping, which is not yet enough.
     */
-    const { db, repository } = quietFixture(24, 90)
+    const { db, repository } = quietFixture(12, 4)
     assert.deepStrictEqual(offered(repository), [],
         'an outage in the collector was read as an event in the market')
     db.close()
