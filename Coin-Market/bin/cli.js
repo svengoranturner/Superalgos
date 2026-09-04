@@ -277,7 +277,11 @@ COMMANDS.dashboard = {
             container - reaches this over a docker bridge whose gateway
             address belongs to the deployment, not to the app. */
         const alsoHosts = (settings && settings.dashboard && settings.dashboard.alsoHosts) || []
-        require('../src/web/server.js').start(opened, { port, host, alsoHosts })
+        /*  Fetched thumbnails live beside the store rather than in the
+            source tree: it is the directory that already survives a deploy
+            and is already excluded from backups. */
+        const imageCache = PATH.join(opened.storeDir, 'image-cache')
+        require('../src/web/server.js').start(opened, { port, host, alsoHosts, imageCache })
     }
 }
 
@@ -836,6 +840,10 @@ function open (explicitDbPath) {
     }
 
     const db = newDatabase(dbPath)
+    /*  Kept on the handle so a caller that needs somewhere to put files -
+        the image cache - does not have to re-derive the same path from the
+        same settings and get it subtly different. */
+    const storeDir = PATH.dirname(dbPath)
     const repository = newRepository(db, {
         sellerSalt: (settings && settings.sellerSalt) || 'demo',
         rawRetentionDays: (settings && settings.collector && settings.collector.rawRetentionDays) || 180
@@ -847,7 +855,7 @@ function open (explicitDbPath) {
         targetQuantile: (settings && settings.coins && settings.coins.watchlist)
             ? settings.coins.watchlist.targetQuantile : 0.35
     })
-    return { db, repository, spotAt, view, settings, dbPath }
+    return { db, repository, spotAt, view, settings, dbPath, storeDir }
 }
 
 /* -------------------------------------------------------------- main */

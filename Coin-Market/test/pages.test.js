@@ -1759,3 +1759,40 @@ test('the sold count excludes sales the table can never show', () => {
 
     db.close()
 })
+
+/*
+    Nothing on a page points at eBay's image CDN any more.
+
+    Through the login proxy the pictures stopped arriving - blank space, no
+    broken icon, and still blank in a private window, which rules out an
+    extension but not Firefox's own tracking protection. Rather than keep
+    diagnosing a browser we do not control, the images are served from this
+    origin: a relative path is not a third-party request, so there is nothing
+    left to block.
+*/
+test('thumbnails are served from this origin, not linked to eBay', async () => {
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, ['/?min=1', '/review', '/listings?key=GB.SOV.BULLION.FULL'])
+
+    /*  What matters is that nothing FETCHES from there. The proxied address
+        naturally contains the host inside its own query parameter, so a bare
+        substring search would fail on a correct page - and would have passed
+        on a broken one that merely encoded the URL differently. */
+    for (const [path, page] of Object.entries(pages)) {
+        const direct = page.body.match(/(?:src|url\()["'&;quot]*https:\/\/i\.ebayimg[^"')]*/i)
+        assert.ok(direct === null,
+            path + ' still fetches an image straight from eBay: ' + (direct || [''])[0])
+    }
+
+    /*  And they are actually there - a test that passes because no image
+        rendered at all would prove nothing. */
+    assert.ok(pages['/review'].body.includes('src="/img?u='),
+        'no proxied image on the review queue')
+
+    /*  Both sizes: the enlarged picture rides in a CSS custom property and
+        was the easier one to forget. */
+    assert.ok(pages['/review'].body.includes('--shot:url(&quot;/img?u='),
+        'the enlarged picture still points off-site')
+
+    opened.db.close()
+})

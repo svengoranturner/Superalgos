@@ -2,6 +2,7 @@
 
 const HTTP = require('node:http')
 const RENDER = require('./render.js')
+const IMAGES = require('./images.js')
 const INSTRUMENTS = require('../catalogue/instruments.js')
 const ALERT_RULES = require('../alerts/rules.js')
 const LEARNED = require('../catalogue/learned.js')
@@ -50,7 +51,14 @@ const HTML_HEADERS = {
 
 exports.start = function (opened, options) {
 
-    const config = Object.assign({ port: 34260, host: '127.0.0.1' }, options || {})
+    const config = Object.assign({
+        port: 34260,
+        host: '127.0.0.1',
+        /*  Where fetched thumbnails are kept. Null disables caching entirely,
+            which is what the tests use: they must not write to a directory
+            and they never fetch anything real. */
+        imageCache: null
+    }, options || {})
 
     const handler = (request, response) => {
         const url = new URL(request.url, 'http://' + config.host)
@@ -94,6 +102,11 @@ exports.start = function (opened, options) {
                 html = reviewPage(opened, url)
             } else if (url.pathname === '/listings') {
                 html = listingsPage(opened, url)
+            } else if (url.pathname === '/img') {
+                /*  Returns its own response - an image, not a page - so it
+                    exits here rather than falling through to the HTML
+                    writeHead below. */
+                return IMAGES.handle(url, response, { cacheDir: config.imageCache })
             } else if (url.pathname === '/teach') {
                 html = teachPage(opened, url)
             } else if (url.pathname === '/rule-confirm') {
@@ -1526,9 +1539,17 @@ function callControls (row) {
     Shared, because UI-03 asks for the same picture on every page that lists
     a lot and a second copy of this would drift from the first. */
 function shot (imageUrl, caption) {
-    const big = largerImage(imageUrl)
-    const thumb = imageUrl
-        ? '<img src="' + escapeHtml(imageUrl) + '" alt="" loading="lazy" decoding="async">'
+    /*  SAME ORIGIN, both sizes. Linking straight to eBay's CDN meant the
+        pictures were a third-party request, and through the login proxy they
+        stopped arriving - blank space, no broken icon, and still blank in a
+        private window. Served from here there is no third party left to
+        block. `proxied` returns null for anything not on the allowlist, in
+        which case the original is used and behaves exactly as it did. */
+    const thumbSrc = IMAGES.proxied(imageUrl) || imageUrl
+    const bigSrc = IMAGES.proxied(largerImage(imageUrl)) || largerImage(imageUrl)
+    const big = bigSrc
+    const thumb = thumbSrc
+        ? '<img src="' + escapeHtml(thumbSrc) + '" alt="" loading="lazy" decoding="async">'
         : '<img alt="" src="data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==">'
     if (!big) { return '<div class="q-shot">' + thumb + '</div>' }
     return '<details class="q-shot" style="--shot:url(&quot;' + escapeHtml(big) + '&quot;)">' +
