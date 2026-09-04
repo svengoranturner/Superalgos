@@ -1578,3 +1578,184 @@ test('each recorded decision reads in its own coin terms', async () => {
 
     opened.db.close()
 })
+
+/*
+    A wrong sale can be thrown out from where you noticed it.
+
+    The owner's report: "it only shows 15 sold auctions and I've no way to
+    exclude any if there are incorrect ones slipped through." Both halves
+    were true - the table was capped at fifteen and rendered read-only, so a
+    sale you could see was wrong had to be hunted down on another page to act
+    on.
+
+    It is the most expensive read-only table in the tool. Every clearing
+    figure, fair value and bid ceiling is built from these rows and nothing
+    else, so one misfiled lot moves the numbers the whole page exists to
+    report.
+*/
+test('a wrong sale can be rejected from the table it appears in', async () => {
+    const opened = twoSeriesStore()
+    const before = opened.repository.recentSales(100)
+    assert.ok(before.length > 0, 'the fixture has no completed sales')
+    const target = before[0]
+
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const table = body.split('id="sold"')[1] || ''
+    assert.ok(table.length > 0, 'the sold table did not render')
+
+    /*  The controls the table never had. */
+    assert.ok(table.includes('name="pick" value="' + target.legacyId + '"'),
+        'a sold row cannot be ticked')
+    assert.ok(table.includes('name="reject" value="' + target.legacyId + '"'),
+        'a sold row cannot be rejected')
+    assert.ok(table.includes('name="bulk"'), 'the sold table has no bulk action')
+
+    /*  And the verdict actually lands, through the same handler every other
+        queue posts to. */
+    const server = SERVER.start(opened, { port: 0, host: '127.0.0.1', quiet: true })
+    await new Promise(resolve => server.once('listening', resolve))
+    try {
+        const response = await fetch(
+            'http://127.0.0.1:' + server.address().port + '/apply', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({ reject: target.legacyId, back: '/' }).toString(),
+                redirect: 'manual'
+            })
+        assert.strictEqual(response.status, 303)
+    } finally {
+        server.close()
+    }
+
+    const label = opened.repository.labels().find(l => l.legacyId === target.legacyId)
+    assert.ok(label, 'rejecting from the sold table recorded nothing')
+    assert.strictEqual(label.verdict, 'NOT_TRACKED')
+
+    /*  And it LEAVES. Rejecting drops the listing_instrument row, and
+        recentSales joins that - so the lot is gone from the table and from
+        every clearing figure built on it, which is exactly what the bar above
+        it promises. Not merely greyed out: the point of the control is to
+        stop a wrong sale counting. */
+    const after = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const afterTable = after.split('id="sold"')[1] || ''
+    assert.ok(!afterTable.includes('value="' + target.legacyId + '"'),
+        'a rejected sale is still in the table, so it is still in the numbers')
+    assert.ok(!opened.repository.recentSales(100).some(r => r.legacyId === target.legacyId),
+        'a rejected sale still feeds the clearing figures')
+
+    /*  A lot marked GENUINE stays, and reads as settled with a way back -
+        the other half of the control, and the one that must not vanish. */
+    const keeper = opened.repository.recentSales(100)[0]
+    if (keeper) {
+        opened.repository.label({
+            legacyId: keeper.legacyId, title: keeper.title, verdict: 'TRACKED'
+        })
+        const kept = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+        const keptTable = kept.split('id="sold"')[1] || ''
+        assert.ok(keptTable.includes('name="undo" value="' + keeper.legacyId + '"'),
+            'a sale confirmed genuine offers no way to change your mind')
+    }
+
+    opened.db.close()
+})
+
+/*
+    Fifteen was the cap; the heading must now say what is really there.
+
+    A count that is really a fetch limit is a number that quietly stops being
+    true, and on this table the total IS the point - it is the size of the
+    evidence every clearing figure rests on.
+*/
+test('the sold heading counts the sales, not the fetch', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    /*  MORE THAN THE FETCH LIMIT, not merely more than the page shows.
+        Below the limit the true total and the fetched count are equal, so a
+        heading that prints the wrong one still looks right - which is exactly
+        how a fetch limit quietly becomes a lie. 105 crosses it. */
+    for (let n = 0; n < 105; n++) {
+        const id = 'v1|s' + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 's' + n, title: 'Gold Sovereign ' + n,
+            buyingOptions: 'AUCTION', endTime: now
+        }, now)
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, 'GB.SOV')
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: 900 + n, shipping: 0,
+            bidCount: 5, saleType: 'AUCTION', censored: false, source: 'test'
+        })
+    }
+
+    assert.strictEqual(repository.soldCount(), 105)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+
+    assert.ok(body.includes('What has actually sold (105)'),
+        'the heading reports the fetch limit rather than the real number of sales')
+    /*  100 fetched, 25 shown, so 75 behind the fold. */
+    assert.ok(body.includes('Show the other 75 completed sales'),
+        'the rest are not reachable behind a fold')
+    /*  And it says plainly that it is not showing all of them. */
+    assert.ok(body.includes('Showing the 100 most recent'),
+        'the page hides that it fetched fewer than exist')
+
+    db.close()
+})
+
+/*
+    The sold count counts what the table can actually show.
+
+    `listing_outcome WHERE sold = 1` looks like the obvious definition and is
+    the wrong one: recentSales INNER JOINs listing_instrument, so a sale whose
+    listing is not filed under a coin type can never appear however high the
+    limit goes. Measured on the live store when this was written: 295 sold
+    outcomes against 69 the table could reach. A heading promising four times
+    what the page can show is worse than the fetch limit it replaced.
+*/
+test('the sold count excludes sales the table can never show', () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.BULLION.FULL'
+
+    const sell = (legacyId, priced) => {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: 'Gold Sovereign ' + legacyId,
+            buyingOptions: 'AUCTION', endTime: now
+        }, now)
+        repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+        if (priced) {
+            repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        }
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: 910, shipping: 0,
+            bidCount: 3, saleType: 'AUCTION', censored: false, source: 'test'
+        })
+    }
+
+    sell('priced-1', true)
+    sell('priced-2', true)
+    /*  Sold, but filed under no coin type - exactly the shape that made the
+        live store read 295 when the table could show 69. */
+    sell('unfiled-1', false)
+    sell('unfiled-2', false)
+    sell('unfiled-3', false)
+
+    assert.strictEqual(repository.soldCount(), 2,
+        'the count includes sales the table cannot reach')
+    assert.strictEqual(repository.recentSales(100).length, 2,
+        'the fixture does not reproduce the shape being tested')
+
+    db.close()
+})

@@ -317,12 +317,25 @@ function marketPage (opened, url) {
         block,
         composition: repository.marketComposition(seriesBlocks.length > 1 ? block.id : null)
     }))
-    const sales = repository.recentSales(15)
-    const salesHtml = sales.length === 0
-        ? '<p class="thin">No completed sales resolved yet.</p>'
-        : '<div class="card scroll"><table><thead><tr><th></th><th>Sold</th><th>Coin type</th>' +
-          '<th>Price</th><th>Bids</th><th>Premium over spot</th></tr></thead><tbody>' +
-          sales.map(sale => {
+    /*
+        FIFTEEN WAS TOO FEW, and the owner said so.
+
+        These are the only prices in the tool that somebody actually paid -
+        every clearing figure is built from them and nothing else - so seeing
+        fifteen of them was seeing the least of the evidence. A hundred are
+        fetched now and twenty-five shown, with the rest folded away: the fold
+        is collapsed, and the thumbnails inside it are lazy, so the page costs
+        no more to load than it did.
+    */
+    const SOLD_SHOWN = 25
+    const SOLD_FETCHED = 100
+    const sales = repository.recentSales(SOLD_FETCHED)
+    /*  The real total, not the fetch. See soldCount. */
+    const soldTotal = repository.soldCount()
+
+    /*  One form over both halves, so a decision can be made on a row inside
+        the fold and a bulk tick can span the two. */
+    const soldRow = (sale) => {
               /*
                   This table did its own arithmetic and got two things wrong.
 
@@ -350,6 +363,17 @@ function marketPage (opened, url) {
                   ? null
                   : PREMIUM.premium(paid, sale.fineOz, spotThen.gbpPerOz)
               return '<tr>' +
+                  /*  A WRONG SALE IS THE MOST EXPENSIVE WRONG ROW IN THE TOOL.
+                      Every clearing figure, every fair value and every bid
+                      ceiling is built from these and nothing else, so one
+                      misfiled lot moves numbers the whole page is about - and
+                      until now this was the one queue with no way to say so.
+                      You could see it was wrong and had to go and find it
+                      somewhere else to act. */
+                  '<td>' + (sale.legacyId && !sale.verdict
+                      ? '<input class="pick" type="checkbox" name="pick" value="' +
+                        escapeHtml(sale.legacyId) + '" title="Select this sale for a bulk decision">'
+                      : '<span class="pick-spacer"></span>') + '</td>' +
                   /*  The picture, on the one table that lacked it. These are
                       the most important rows in the tool - every clearing
                       figure is built from them and nothing else - and the
@@ -371,8 +395,34 @@ function marketPage (opened, url) {
                   '<td class="mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
                       : pct(premium)) + '</td>' +
+                  /*  Reject only, and no denomination picker. The full
+                      controls belong on the drill-down, where there is room
+                      and where the denomination actually needs setting; here
+                      the one question worth asking of a completed sale is
+                      whether it is the coin it claims to be. */
+                  '<td>' + soldControls(sale) + '</td>' +
                   '</tr>'
-          }).join('') + '</tbody></table></div>'
+    }
+
+    const soldTable = (rows) =>
+        '<div class="card scroll"><table><thead><tr><th></th><th></th><th>Sold</th>' +
+        '<th>Coin type</th><th>Price</th><th>Bids</th><th>Premium over spot</th><th></th>' +
+        '</tr></thead><tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
+
+    const salesHtml = sales.length === 0
+        ? '<p class="thin">No completed sales resolved yet.</p>'
+        : '<form method="post" action="/apply">' +
+          '<input type="hidden" name="back" value="/">' +
+          bulkBar(sales, 'A wrong sale here moves every clearing figure on the page, ' +
+              'because they are all built from these rows and nothing else.') +
+          soldTable(sales.slice(0, SOLD_SHOWN)) +
+          (sales.length > SOLD_SHOWN
+              ? '<details class="more"><summary>Show the other ' +
+                (sales.length - SOLD_SHOWN) + ' completed sale' +
+                (sales.length - SOLD_SHOWN === 1 ? '' : 's') + '</summary>' +
+                soldTable(sales.slice(SOLD_SHOWN)) + '</details>'
+              : '') +
+          '</form>'
 
     /*
         Live opportunities: auctions on coins we can identify, priced at or
@@ -676,11 +726,13 @@ keener &mdash; measured here, these lots ask a shade MORE than rigid Buy-It-Nows
 suggested figure comes from your own ceiling rather than from their asking price.</p>
 ${offerHtml}
 
-<h2 id="sold">What has actually sold (${sales.length})</h2>
+<h2 id="sold">What has actually sold (${soldTotal})</h2>
 <p class="thin">Completed auctions with a hammer price. Every clearing figure on this page is
 built from these and nothing else &mdash; an asking price is an opinion, and this is what somebody
-paid. ${sales.length < 30
+paid. ${soldTotal < 30
     ? 'There are not many yet: they only arrive as lots this tool was already watching come to a close.'
+    : ''}${soldTotal > sales.length
+    ? ' Showing the ' + sales.length + ' most recent.'
     : ''}</p>
 ${salesHtml}
 
@@ -933,6 +985,36 @@ function saleTabs (basePath, current, params, counts) {
 function saleFrom (url) {
     const raw = url === undefined || url === null ? null : url.searchParams.get('sale')
     return ['auction', 'bin', 'all'].includes(raw) ? raw : SALE_DEFAULT
+}
+
+/*
+    The one control a completed sale needs.
+
+    Deliberately NOT `callControls`. That offers a denomination picker and a
+    quantity spinner, which belong on the drill-down where a coin is being
+    identified; a sale that has already happened is being CHECKED, and the
+    only question worth a column here is whether it is the coin it claims to
+    be. The market page was cut from 11,144px to 4,261px once already for
+    exactly this kind of creep (UI-14), and eight controls per row across a
+    hundred rows is how that comes back.
+
+    A settled row shows what you said and offers to take it back, so a
+    decision made here does not read as a row that ignored you.
+*/
+function soldControls (sale) {
+    if (!sale.legacyId) { return '<span class="thin">&mdash;</span>' }
+    const id = escapeHtml(sale.legacyId)
+    if (sale.verdict) {
+        const said = sale.verdict === LEARNED.VERDICT.TRACKED
+            ? 'genuine'
+            : SERIES.words(sale).notOne.toLowerCase()
+        return '<span class="settled thin">' + escapeHtml(said) + '</span> ' +
+            '<button class="plain" name="undo" value="' + id + '" ' +
+            'title="Forget this decision">undo</button>'
+    }
+    return '<button class="no" name="reject" value="' + id + '" ' +
+        'title="This is not the coin it says it is - remove it from every clearing figure">' +
+        escapeHtml(SERIES.words(sale).notOne) + '</button>'
 }
 
 /*

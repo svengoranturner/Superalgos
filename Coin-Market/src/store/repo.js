@@ -960,6 +960,33 @@ exports.newRepository = function (db, options) {
             down and mixed in with lots that ended unsold, which is the wrong
             way round for the only measurement here that is not a guess.
         */
+        /*  How many completed sales exist, as opposed to how many the page
+            asked for. The heading prints this: a count that is really a
+            fetch limit is a number that quietly stops being true, and this is
+            the one table where the total is the whole point - it is the size
+            of the evidence every clearing figure rests on. */
+        soldCount () {
+            /*  THE SAME POPULATION recentSales draws from, joins and all.
+
+                Counting `listing_outcome WHERE sold = 1` on its own looked
+                obviously right and was not: recentSales INNER JOINs
+                listing_instrument, so a sale whose listing is not filed under
+                a coin type - excluded, or never classified - can never appear
+                in the table however high the limit goes. On the live store
+                that is 295 against 69, so the heading would have promised
+                four times what the page could show. A count that names a
+                bigger number than the thing it counts is worse than the fetch
+                limit it replaced. */
+            return db.prepare(`
+                SELECT COUNT(DISTINCT o.browse_id) AS n
+                FROM listing_outcome o
+                JOIN listing l ON l.browse_id = o.browse_id
+                JOIN listing_instrument li ON li.browse_id = o.browse_id
+                JOIN instrument i ON i.key = li.key AND i.level = 0
+                WHERE o.sold = 1
+            `).get().n
+        },
+
         recentSales (limit) {
             return db.prepare(`
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
@@ -974,9 +1001,17 @@ exports.newRepository = function (db, options) {
                         Every sold Morgan was priced against gold and reported
                         about -97%: a number so wrong it read as a data fault
                         rather than a unit one. */
-                       i.metal, l.series
+                       i.metal, l.series,
+                       /*  What you have already said about this coin, so the
+                           table can show a settled row as settled rather than
+                           offering to judge it again. Every other queue on
+                           the site joins this; the sold table did not,
+                           because until now it had no controls to grey out. */
+                       lb.verdict, lb.denomination AS labelledDenomination,
+                       lb.quantity AS labelledQuantity
                 FROM listing_outcome o
                 JOIN listing l ON l.browse_id = o.browse_id
+                LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 /*  Level 0 only: one row per sale, at the coarsest coin type
                     it was filed under. Joining every level would repeat each
                     sale five times. */
