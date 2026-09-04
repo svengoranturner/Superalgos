@@ -3,6 +3,7 @@
 const HTTP = require('node:http')
 const RENDER = require('./render.js')
 const IMAGES = require('./images.js')
+const STATIC = require('./static.js')
 const INSTRUMENTS = require('../catalogue/instruments.js')
 const ALERT_RULES = require('../alerts/rules.js')
 const LEARNED = require('../catalogue/learned.js')
@@ -44,6 +45,52 @@ const METAL_NAMES = { XAU: 'gold', XAG: 'silver', XPT: 'platinum', XPD: 'palladi
     response and revalidating - and there is no validator here to revalidate
     against. The pages are small and local; there is nothing to save.
 */
+/*
+    Which theme this reader has chosen, if any.
+
+    Read straight off the Cookie header rather than through a parser: one
+    name, one value, two possible values, and a dependency-free tool does not
+    take on a cookie library to read `theme=dark`. Anything else - absent,
+    malformed, a value nobody set - returns null, and null means the page
+    stamps nothing and prefers-color-scheme decides.
+*/
+function themeFrom (request) {
+    const header = (request && request.headers && request.headers.cookie) || ''
+    const found = /(?:^|;\s*)theme=(dark|light)(?:;|$)/.exec(header)
+    return found === null ? null : found[1]
+}
+
+/*
+    Set it, and go back where you came from.
+
+    A GET that changes something is normally a mistake - a crawler can walk
+    it, a prefetch can trip it. This one is deliberate and safe: the only
+    thing it changes is which colours the reader sees, it is idempotent, and
+    it belongs to the browser that asked rather than to any stored data. The
+    alternative, a POST form, would put a submit button in the menu bar of
+    every page.
+
+    `back` goes through the same safeBack allow-list the verdict forms use,
+    so this cannot be turned into an open redirect.
+*/
+function setTheme (url, response) {
+    const to = url.searchParams.get('to')
+    const theme = to === 'dark' || to === 'light' ? to : null
+    const back = safeBack(url.searchParams.get('back'))
+
+    const headers = { Location: back }
+    if (theme !== null) {
+        /*  A year, and Lax rather than Strict: arriving from a link in
+            MetalHead is a cross-site navigation, and Strict would drop the
+            cookie exactly there - the reader's theme would forget itself
+            every time they came in through the login. */
+        headers['Set-Cookie'] = 'theme=' + theme +
+            '; Path=/; Max-Age=31536000; SameSite=Lax'
+    }
+    response.writeHead(302, headers)
+    response.end()
+}
+
 const HTML_HEADERS = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store, must-revalidate'
@@ -107,6 +154,26 @@ exports.start = function (opened, options) {
                     exits here rather than falling through to the HTML
                     writeHead below. */
                 return IMAGES.handle(url, response, { cacheDir: config.imageCache })
+            } else if (STATIC.handles(url.pathname)) {
+                /*  The stylesheet and the fonts. BEFORE the page router, and
+                    that ordering is the whole point: the chain below ends in
+                    an unconditional `else` that renders the market page, so
+                    until this branch existed a request for /style.css was
+                    answered with the front page, as text/html, status 200 -
+                    a broken stylesheet that looked like a working one. */
+                return STATIC.handle(url.pathname, response)
+            } else if (url.pathname === '/theme') {
+                /*  Dark or light, without a line of script.
+
+                    The design asks for a toggle that persists and that
+                    respects prefers-color-scheme on a first visit. With
+                    `script-src 'none'` there is no localStorage to reach, so
+                    the choice is a cookie: this link sets it and sends the
+                    reader back where they were. No cookie means no
+                    data-theme attribute, which means the operating system
+                    decides - the first-visit behaviour the design wants,
+                    arrived at by doing nothing. */
+                return setTheme(url, response)
             } else if (url.pathname === '/teach') {
                 html = teachPage(opened, url)
             } else if (url.pathname === '/rule-confirm') {
@@ -117,9 +184,16 @@ exports.start = function (opened, options) {
                 html = marketPage(opened, url)
             }
             response.writeHead(200, HTML_HEADERS)
-            response.end(html)
+            response.end(RENDER.stampTheme(html, themeFrom(request)))
         } catch (err) { fail(err) }
     }
+
+    /*  Served pages link the stylesheet; nothing else in the process does.
+        Set here rather than passed to all eleven page() calls, and set only
+        when a server actually starts - which is why `report build`, running
+        in its own process without one, still inlines the sheet into the file
+        it produces. */
+    RENDER.useStylesheet('/style.css?v=' + STATIC.version())
 
     const server = HTTP.createServer(handler)
 

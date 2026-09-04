@@ -88,6 +88,17 @@ you what one buyer would pay on demand, not where the market clears. Accepted Be
 excluded entirely, because eBay never publishes what was actually paid for them.
 </p></div>`
 
+    /*  Inline the stylesheet, explicitly.
+
+        This file travels: it is written to disk and sent to somebody, and a
+        <link rel="stylesheet" href="/style.css"> resolves to nothing once it
+        has left. Inlining is already the default, but saying so here means
+        the report does not depend on whether anything else in the process
+        happened to start a server first. The fonts cannot come with it, so a
+        shared report renders in system-ui - the sizes and the layout survive,
+        the condensed headings do not. */
+    RENDER.useStylesheet(null)
+
     const html = RENDER.page('Sovereign market report', body)
         .replace(/<nav>[\s\S]*?<\/nav>/, '')     /* a shared report has no navigation */
 

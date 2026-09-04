@@ -26,242 +26,23 @@ exports.escapeHtml = escapeHtml
 exports.pct = pct
 exports.gbp = gbp
 
-const STYLE = `
-:root {
-  color-scheme: light;
-  --plane:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink-2:#52514e; --muted:#898781;
-  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
-  --clearing:#2a78d6; --ask:#eb6834; --good:#006300; --critical:#d03b3b;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --plane:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
-    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
-    --clearing:#3987e5; --ask:#d95926; --good:#0ca30c; --critical:#e66767;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --plane:#0d0d0d; --surface:#1a1a19; --ink:#ffffff; --ink-2:#c3c2b7; --muted:#898781;
-  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
-  --clearing:#3987e5; --ask:#d95926; --good:#0ca30c; --critical:#e66767;
-}
-* { box-sizing:border-box }
-body {
-  margin:0; background:var(--plane); color:var(--ink);
-  font:15px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-}
-.wrap { max-width:1120px; margin:0 auto; padding:32px 20px 72px }
-h1 { font-size:22px; margin:0 0 4px; letter-spacing:-0.01em }
-h2 { font-size:15px; margin:36px 0 12px; letter-spacing:-0.005em }
-.sub { color:var(--ink-2); margin:0 0 28px; font-size:14px }
-.card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:20px; margin-bottom:20px }
-.hero { display:flex; flex-wrap:wrap; gap:32px; align-items:baseline }
-.hero .n { font-size:40px; font-weight:640; letter-spacing:-0.02em; line-height:1 }
-.hero .l { color:var(--ink-2); font-size:13px; margin-top:6px; max-width:30ch }
-.scroll { overflow-x:auto }
-table { border-collapse:collapse; width:100%; font-size:13.5px; min-width:720px }
-th { text-align:right; font-weight:560; color:var(--ink-2); padding:8px 10px; border-bottom:1px solid var(--axis); white-space:nowrap }
-th:first-child, td:first-child { text-align:left }
-td { padding:8px 10px; border-bottom:1px solid var(--grid); text-align:right; white-space:nowrap }
-tbody tr:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
-.mono { font-variant-numeric:tabular-nums }
-.thin { color:var(--muted); font-size:12px }
-/*  A link has to look like one.
+const STATIC = require('./static.js')
 
-    "a { color: inherit }" with no underline made every coin type on the
-    market page read as plain text, so the drill-down - and the auction /
-    Buy-It-Now filter that lives on it - was unreachable unless you happened
-    to click a word that gave no sign of being clickable. */
-a { color:inherit }
-td a, th a { text-decoration:underline; text-decoration-color:var(--axis);
-  text-underline-offset:3px }
-td a:hover { text-decoration-color:var(--ink) }
-.legend { display:flex; gap:18px; align-items:center; font-size:13px; color:var(--ink-2); margin-bottom:14px }
-.swatch { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:6px; vertical-align:-1px }
-.alert { border-left:3px solid var(--good); padding:12px 16px; margin-bottom:10px; background:var(--surface); border-radius:0 8px 8px 0 }
-.alert { display:flex; gap:14px; align-items:flex-start }
-.alert-main { min-width:0; flex:1 1 auto }
-.alert-shot { flex:0 0 auto }
-.alert .t { font-weight:560 }
-.badge { display:inline-block; padding:1px 7px; border-radius:99px; font-size:11.5px; border:1px solid var(--border); color:var(--ink-2) }
-.warn { color:var(--critical) }
-nav { display:flex; gap:16px; margin-bottom:24px; font-size:14px }
-/*  The section jump bar. The market page carries eight sections and the two
-    worth acting on were below the fold, so the owner was using the browser's
-    text search to reach them. Sticky, because the page is long enough that
-    scrolling back to a bar at the top is the same problem again. */
-.jump { position:sticky; top:0; z-index:5; display:flex; flex-wrap:wrap; gap:6px;
-  align-items:center; padding:8px 0 9px; margin:0 0 22px;
-  background:var(--plane); border-bottom:1px solid var(--axis) }
-.jump a { font-size:12.5px; color:var(--ink-2); text-decoration:none;
-  padding:3px 9px; border:1px solid var(--border); border-radius:99px; white-space:nowrap }
-.jump a:hover, .jump a:focus-visible { color:var(--ink); border-color:var(--ink-2) }
-.jump .n { font-variant-numeric:tabular-nums; color:var(--muted) }
-/*  A section the page keeps but does not put in your way. <details> because
-    it needs no JavaScript and remembers nothing, which is right for a page
-    that is rebuilt on every request. */
-/*  The scope choice on a learned rule. Deliberately plain and adjacent to
-    the button, because it changes what the button does. */
-/*  A thumbnail inside a table cell. The queue's own .q-shot is sized for a
-    flex row; in a table it needs a width of its own or the column stretches
-    to whatever eBay sent. */
-.shot-cell { width:52px; padding-right:0 }
-.shot-cell .q-shot { width:44px; height:44px }
-.shot-cell .q-shot img { width:44px; height:44px; object-fit:cover; border-radius:6px }
-.scope { display:inline-flex; gap:6px; align-items:center; font-size:12.5px;
-  color:var(--ink-2); cursor:pointer; margin-right:4px }
-.scope input { margin:0 }
-.scope:hover { color:var(--ink) }
-details.fold { border-top:1px solid var(--axis); padding:2px 0 }
-details.fold > summary { cursor:pointer; list-style:none; padding:13px 2px; font-size:15px;
-  font-weight:560; color:var(--ink-2); display:flex; gap:10px; align-items:baseline }
-details.fold > summary::-webkit-details-marker { display:none }
-details.fold > summary::before { content:"+"; font-family:var(--mono,monospace); color:var(--muted) }
-details.fold[open] > summary::before { content:"2" }
-details.fold > summary:hover { color:var(--ink) }
-details.fold > summary .why { font-weight:400; font-size:13px; color:var(--muted) }
-details.fold h2:first-of-type { margin-top:4px }
-/*  The overflow of a capped list: same affordance, quieter. */
-details.more > summary { cursor:pointer; font-size:13px; color:var(--ink-2); padding:10px 2px }
-details.more > summary:hover { color:var(--ink) }
-h2[id] { scroll-margin-top:56px }
-nav a { color:var(--ink-2); text-decoration:none; padding-bottom:3px; border-bottom:2px solid transparent }
-nav a.on { color:var(--ink); border-bottom-color:var(--ink) }
-.badge.good { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }
-.badge.critical { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
-/*  The verdict controls. Deliberately plain buttons in a plain form: the
-    review queue is worked through quickly, and anything that needs
-    JavaScript to record a decision is something that can silently fail to
-    record one. */
-.verdict { display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:flex-end }
-button, select { font:inherit; font-size:12.5px; padding:3px 9px; border-radius:6px;
-  border:1px solid var(--border); background:var(--surface); color:var(--ink); cursor:pointer }
-button:hover { background:color-mix(in srgb, var(--ink) 6%, transparent) }
-button.yes { color:var(--good); border-color:color-mix(in srgb, var(--good) 40%, transparent) }
-button.no  { color:var(--critical); border-color:color-mix(in srgb, var(--critical) 40%, transparent) }
-button.plain { color:var(--ink-2) }
-.settled { color:var(--ink-2); font-size:12px }
-/*  The tick column. Kept narrow and first so a cull is one pass straight down
-    the left edge without the pointer leaving that column. */
-input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critical); cursor:pointer }
-.pick-spacer { display:block; width:16px }
-.bulkbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:0 0 12px }
-/*  Search, group and order. Wraps rather than scrolls, because on a phone a
-    control that has scrolled off the side is a control that is not there. */
-.strip { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0 0 }
-.strip input[type=search] { flex:1 1 220px; min-width:160px; padding:5px 10px;
-  border:1px solid var(--border); border-radius:6px; background:var(--surface); color:inherit }
-.strip select { padding:5px 8px }
-.strip button { font-size:13px; padding:5px 12px }
-.bulkbar button { font-size:13px; padding:5px 12px }
-/*  Composition bars. Plain flex rather than SVG: the quantity is a share of
-    a whole, a rectangle divided by percentage says exactly that, and it
-    reflows on a phone without any viewBox arithmetic. */
-.comp { display:flex; flex-direction:column; gap:14px }
-.comp-row { display:grid; grid-template-columns:minmax(120px,170px) minmax(0,1fr); gap:14px; align-items:center }
-.comp-label { font-size:13px; color:var(--ink-2) }
-.comp-label b { color:var(--ink); font-weight:560 }
-.comp-bar { display:flex; height:30px; border-radius:6px; overflow:hidden; background:var(--grid) }
-.comp-bar span { display:flex; align-items:center; justify-content:center; font-size:11.5px;
-  color:#fff; white-space:nowrap; overflow:hidden; min-width:0 }
-.comp-bar span.pale { color:var(--ink-2); background:var(--grid) }
-.comp-bar span.hatch { color:var(--ink-2);
-  background:repeating-linear-gradient(135deg, var(--grid) 0 7px, transparent 7px 14px) }
-.tabs { display:flex; flex-wrap:wrap; gap:8px }
-.tab { display:inline-block; font-size:13px; padding:5px 12px; border-radius:99px;
-  border:1px solid var(--border); color:var(--ink-2); text-decoration:none }
-a.tab:hover { background:color-mix(in srgb, var(--ink) 6%, transparent) }
-.tab.on { color:var(--ink); border-color:var(--ink); font-weight:560 }
-.comp-key { display:flex; flex-wrap:wrap; gap:6px 16px; font-size:12px; color:var(--ink-2); margin-top:4px }
-input.qty { font:inherit; font-size:12.5px; width:52px; padding:3px 6px; border-radius:6px;
-  border:1px solid var(--border); background:var(--surface); color:var(--ink) }
-.countries { display:flex; flex-wrap:wrap; gap:6px 14px; margin:10px 0 14px }
-.countries label { font-size:12.5px; color:var(--ink-2); display:flex; gap:5px; align-items:center }
-.countries input { accent-color:var(--clearing) }
-/*  The work queue: a list, not a table.
+/*
+    The stylesheet, one way or the other.
 
-    eBay titles run to 70 characters at the median and 84 at the longest,
-    and a table column wide enough for one of those pushed the whole page
-    sideways - the global "table { min-width:720px }" and
-    "td { white-space:nowrap }" are right for the market statistics and
-    wrong for a queue somebody has to read. Scoped class names, so the wide
-    statistics table keeps the horizontal scroll it needs. */
-.queue { display:flex; flex-direction:column }
-.q { display:grid; grid-template-columns:18px 56px minmax(0,1fr) auto; gap:12px;
-  align-items:start; padding:11px 4px; border-bottom:1px solid var(--grid) }
-.q:hover { background:color-mix(in srgb, var(--ink) 4%, transparent) }
-/*  A row with its picture open sits above its neighbours, so the preview is
-    not painted under the row below. */
-.q:has(.q-shot[open]) { position:relative; z-index:30 }
-.q-shot { position:relative; width:56px; height:56px }
-.q-shot > summary { list-style:none; cursor:zoom-in; display:block; border-radius:6px }
-.q-shot > summary::-webkit-details-marker { display:none }
-.q-shot[open] > summary { cursor:zoom-out; outline:2px solid var(--clearing); outline-offset:2px }
-.q-shot img { width:56px; height:56px; object-fit:cover; border-radius:6px; display:block;
-  border:1px solid var(--border); background:var(--plane) }
-/*  minmax(0,1fr) above and min-width:0 here are the two rules that actually
-    stop a long title forcing the grid wider than the viewport. */
-.q-main { min-width:0 }
-.q-title { font-size:13.5px; line-height:1.35; overflow-wrap:anywhere }
-.q-title a { text-decoration:none }
-.q-title a:hover { text-decoration:underline }
-.q-meta { margin-top:5px; display:flex; flex-wrap:wrap; gap:5px 10px; align-items:center;
-  font-size:11.5px; color:var(--muted) }
-/*  Two lines, not four. The queue is scanned, so row height is how many
-    listings fit on a screen. */
-.q-side { display:flex; flex-direction:column; align-items:flex-end; gap:6px; text-align:right }
-.q-price { display:flex; flex-wrap:wrap; gap:4px 8px; align-items:baseline; justify-content:flex-end }
+    Served pages link it, so the browser caches it once instead of carrying
+    24KB on every response, and so MetalHead's Content-Security-Policy can
+    stop having to permit inline style at all one day.
 
-/*  The preview, on hover or keyboard focus.
+    `report build` cannot: it produces a single file meant to be emailed and
+    opened from disk, where /style.css resolves to nothing. So the default is
+    inline and the SERVER opts in, which means the report keeps working
+    without knowing this decision exists.
+*/
+let stylesheetHref = null
 
-    eBay sends x-frame-options: SAMEORIGIN, so the listing page itself
-    cannot be shown here - but the photo is what a glance is actually for,
-    and we already store its URL for every listing.
-
-    The large image is named ONLY inside the hover rule, so the browser
-    never fetches it until asked. Two hundred rows would otherwise pull
-    about 8MB on page load. The delay is deliberate: without it, running an
-    eye down the list flashes a preview per row. */
-/*  Below the thumbnail, not beside it.
-
-    Beside it meant on top of the title, which is the thing most worth
-    reading and the one the picture is least able to replace. Dropping it
-    below the row keeps title, badges and price visible while the picture is
-    open.
-
-    The image is named only in the [open] rule, so it is not downloaded until
-    the picture is actually asked for - 550 rows would otherwise pull about
-    20MB on page load. */
-.q-big { position:absolute; left:0; top:62px; z-index:40; width:340px; height:340px;
-  border-radius:10px; border:1px solid var(--border); pointer-events:none;
-  background:var(--surface) center/contain no-repeat;
-  box-shadow:0 12px 34px rgba(0,0,0,0.30) }
-.q-shot[open] > .q-big { background-image:var(--shot) }
-.q-big .cap { position:absolute; left:0; right:0; bottom:0; padding:7px 10px; font-size:11.5px;
-  color:var(--ink-2); background:color-mix(in srgb, var(--surface) 88%, transparent);
-  border-radius:0 0 9px 9px; border-top:1px solid var(--border) }
-
-@media (max-width:760px) {
-  .q { grid-template-columns:18px 44px minmax(0,1fr) }
-  .q-shot, .q-shot img { width:44px; height:44px }
-  .q-side { grid-column:3; align-items:flex-start; text-align:left;
-    flex-direction:row; flex-wrap:wrap; align-items:center }
-  .q-big { left:0; top:52px; width:min(86vw,340px); height:min(86vw,340px) }
-}
-.proposal { border:1px solid var(--border); border-radius:8px; padding:14px 16px; margin-bottom:12px }
-details { margin:16px 0 }
-summary { cursor:pointer; color:var(--ink-2); font-size:13.5px; padding:6px 0 }
-a.confirm { display:inline-block; margin-top:10px; font-size:12.5px; color:var(--critical);
-  text-decoration:none; border:1px solid color-mix(in srgb, var(--critical) 40%, transparent);
-  border-radius:6px; padding:4px 10px }
-a.confirm:hover { background:color-mix(in srgb, var(--critical) 10%, transparent) }
-.proposal .p { font-weight:560; font-size:15px }
-.proposal ul { margin:8px 0 0; padding-left:18px; color:var(--muted); font-size:12px }
-.phrase { font-variant-numeric:tabular-nums; background:color-mix(in srgb, var(--ink) 7%, transparent);
-  padding:1px 6px; border-radius:4px }
-`
+exports.useStylesheet = function (href) { stylesheetHref = href || null }
 
 /*
     The three places worth going, and which one you are on.
@@ -292,13 +73,35 @@ exports.page = function (title, body, pathname) {
         '<a href="' + href + '"' + (href === pathname ? ' class="on"' : '') + '>' +
         escapeHtml(label) + '</a>').join('')
 
+    const style = stylesheetHref === null
+        ? '<style>' + STATIC.css() + '</style>'
+        : '<link rel="stylesheet" href="' + escapeHtml(stylesheetHref) + '">'
+
     return `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title><style>${STYLE}</style></head>
+<title>${escapeHtml(title)}</title>${style}</head>
 <body><div class="wrap">
 <nav>${nav}</nav>
 ${body}
 </div></body></html>`
+}
+
+/*
+    Which theme the reader chose, written onto the document.
+
+    Not passed down through the eleven page functions, because none of them
+    has the request and none of them should need it: a theme is a property of
+    who is looking, not of what is being shown. The request handler stamps it
+    on the way out, in one place.
+
+    An unrecognised value stamps nothing, which is the correct default and
+    not a fallback - with no attribute the tokens fall to
+    prefers-color-scheme, so a first visit follows the operating system
+    exactly as the design asks.
+*/
+exports.stampTheme = function (html, theme) {
+    if (theme !== 'dark' && theme !== 'light') { return html }
+    return html.replace('<html lang="en">', '<html lang="en" data-theme="' + theme + '">')
 }
 
 /*
