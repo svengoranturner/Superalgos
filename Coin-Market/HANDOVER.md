@@ -544,12 +544,13 @@ above melt**. Where the classifier managed a best guess its denomination sets
 the melt; where it did not, the quarter is used - the smallest sovereign
 struck - so an "impossible" verdict is the conservative call.
 
-**The opportunities panel drops the impossible ones and says how many.** An
-edge computed against a lot that cannot be the coin claimed is arithmetic on a
-category error, and it is exactly the listing that floats to the top of an
-edge-ranked list, because the bigger the mismatch the better the bargain
-looks. A book about sovereigns showed an 87% edge. Eight to nine lots are
-hidden at any time, linked to the review page so a wrong call is findable.
+**Nothing is dropped for being priced below spot.** This paragraph used to say
+the opportunities panel hid those lots and counted them; that panel was
+rewritten and the exclusion went with it. Nothing in the code excludes a lot
+from any statistic or any view on the grounds of its price — `impossible` has
+exactly one consumer, and it is a CSS class name. The badge is advisory,
+deliberately: a price can show a lot is not the coin claimed, it cannot show
+that it is, and worn metal genuinely does sell under spot.
 
 **It also works as a detector of the classifier's own mistakes.** A genuine
 2012 quarter sovereign came up "below melt", which is only possible if it was

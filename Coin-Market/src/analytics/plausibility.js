@@ -24,10 +24,25 @@ const SERIES = require('../catalogue/series/index.js')
 */
 
 const VERDICTS = {
+    /*
+        THE LABEL USED TO SAY "not this coin", FLATLY, and that was too strong.
+
+        Metal does sell under spot. A worn, damaged or simply unloved coin can
+        clear below its own content, and a stacker hunting exactly those is
+        one of the readers this tool is for - premium.js has said so all along
+        ("negative means the coin sold below its gold content, which does
+        happen on unloved ungraded lots and is a strong buy signal"), while
+        this label told them it could not be the coin.
+
+        Both readings are live below 0.85, and this now says both. The
+        threshold is unchanged: what was wrong was the certainty, not the line.
+    */
     IMPOSSIBLE: {
         code: 'IMPOSSIBLE',
-        label: 'below spot - not this coin',
-        detail: 'Priced under its own metal content, so it cannot be the coin the title claims.'
+        label: 'below its own metal',
+        detail: 'Priced under the metal it contains. Usually something other than the coin ' +
+            'the title claims - but a worn or unloved example really can sell here, so it ' +
+            'is worth a look rather than a dismissal.'
     },
     BULLION: {
         code: 'BULLION',

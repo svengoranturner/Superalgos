@@ -2876,7 +2876,18 @@ function scanRow (row, verdictCell, sweepAt) {
         '</div>' +
         '<div class="lot-meta">' + escapeHtml(meta.join(' · ')) + '</div>' +
         '</div></div></td>' +
-        '<td class="ident">' + (name === null ? '—' : escapeHtml(name)) + '</td>' +
+        /*  A LINK, because this was the one thing on the page that could not
+            be followed. Everything a coin type is worth - what it clears at,
+            how fast it sells, every sale behind the number - lives on
+            /listings, and the only way in was Reference, then Coin types,
+            then finding the row in a table. The owner could not find it and
+            said so; it was reachable in three clicks from a menu nobody had
+            reason to open. */
+        '<td class="ident">' + (name === null
+            ? '—'
+            : '<a href="/listings?key=' + encodeURIComponent(row.instrumentKey) +
+              '" title="Every sale behind this coin type, and what it clears at">' +
+              escapeHtml(name) + '</a>') + '</td>' +
         '<td class="figure bid" data-spot="' +
             (metalValue === null ? '' : escapeHtml(gbp(metalValue))) + '">' + gbp(total) + '</td>' +
         '<td class="figure spot">' + (metalValue === null ? '—' : gbp(metalValue)) + '</td>' +
@@ -3176,6 +3187,32 @@ function listingsPage (opened, url) {
     const saleCounts = repository.saleCountsForInstrument(key)
 
     /*
+        WHEN THESE SALES HAPPENED, which no page has ever said.
+
+        Every clearing figure here is over a 180-day window with a 45-day
+        half-life, and a coin type whose three qualifying sales all closed 170
+        days ago rendered identically to one whose three closed last week. The
+        owner asked for the period covered; every outcome already carries the
+        date it ended, so it is a min and a max away and nothing was doing it.
+
+        Reported as the span of the sales ACTUALLY BEHIND the figure, not as
+        the window they were drawn from - a 180-day window holding six days of
+        sales is a six-day sample, and saying "180 days" would be the more
+        flattering of the two true statements.
+    */
+    const priced = (market.outcomes || [])
+        .filter(o => o.sold && !o.censored && Number.isFinite(o.clearingPremium))
+    const saleDates = priced.map(o => Date.parse(o.endedAt)).filter(Number.isFinite).sort()
+    const sampleSpan = saleDates.length === 0
+        ? null
+        : {
+            n: saleDates.length,
+            from: new Date(saleDates[0]).toISOString().slice(0, 10),
+            to: new Date(saleDates[saleDates.length - 1]).toISOString().slice(0, 10),
+            days: Math.round((saleDates[saleDates.length - 1] - saleDates[0]) / 86400000)
+        }
+
+    /*
         Show only the figure whose population matches the tab you are on.
 
         The asking median is built from FIXED_PRICE listings alone
@@ -3245,6 +3282,25 @@ function listingsPage (opened, url) {
         is auction-only by nature, which is a reason to label it, not a
         reason to make it unreachable from the view whose whole point is to
         show everything. */
+    /*  The same chart the Premiums page draws, with one row on it.
+
+        It answers the question this page exists for - where does THIS coin
+        clear, and what are people asking - and it was only ever drawn across
+        every coin type at once, twelve rows at a time, where a single type is
+        one line among twelve. */
+    const typeChart = market.fairValue.sufficient
+        ? '<div class="card">' + RENDER.premiumChart([{
+            label: INSTRUMENTS.displayName(key),
+            p10: market.fairValue.p10,
+            p25: market.fairValue.p25,
+            p50: market.fairValue.p50,
+            p75: market.fairValue.p75,
+            p90: market.fairValue.p90,
+            ask: market.liquidity.medianAskPremium,
+            n: market.fairValue.n
+        }]) + '</div>'
+        : ''
+
     const statTiles = sale === 'auction'
         ? clearTile + bidsTile
         : (sale === 'bin' ? askTile : clearTile + askTile + bidsTile)
@@ -3339,6 +3395,14 @@ moving the numbers on the front page.${sale === 'all' ? '' :
   ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged' +
     saleNoun + '</div></div>' : ''}
 </div>
+${sampleSpan === null
+    ? ''
+    : '<p class="thin">Priced from ' + sampleSpan.n + ' sale' + (sampleSpan.n === 1 ? '' : 's') +
+      ' between ' + escapeHtml(sampleSpan.from) + ' and ' + escapeHtml(sampleSpan.to) +
+      ' &mdash; ' + (sampleSpan.days === 0 ? 'all on one day' : sampleSpan.days + ' days') +
+      ', inside a 180-day window weighted so a sale 45 days old counts half as much as ' +
+      'today\'s.</p>'}
+${typeChart}
 
 <div class="card">
   ${saleTabs('/listings', sale, { key }, saleCounts)}

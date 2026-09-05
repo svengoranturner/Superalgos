@@ -3473,3 +3473,49 @@ test('every figure on the strip says what it is over', async () => {
     })
     opened.db.close()
 })
+
+test('a coin type can be reached from the lot that belongs to it', async () => {
+    /*
+        THE OWNER COULD NOT FIND THIS PAGE, and it was there all along:
+        /listings holds every sale behind a coin type, what it clears at, and
+        the lots still live. The only way in was Reference, then Coin types,
+        then finding the row in a table - three clicks from a menu nobody had
+        reason to open, and nothing on the scanner linked to it at all.
+    */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/?band=any']))['/?band=any'].body
+    const table = (/<table class="scan">[\s\S]*?<\/table>/.exec(body) || [''])[0]
+
+    const links = table.match(/href="\/listings\?key=[^"]+"/g) || []
+    assert.ok(links.length > 0,
+        'no row on the scanner links to the coin type it was identified as')
+
+    /*  And the link goes somewhere real. */
+    const key = decodeURIComponent(/key=([^"]+)/.exec(links[0])[1])
+    const target = '/listings?key=' + encodeURIComponent(key)
+    const landed = (await fetchAll(opened, [target]))[target]
+    assert.strictEqual(landed.status, 200, target + ' does not render')
+    assert.ok(!landed.body.includes('No coin type given'),
+        'the link from a row lands on the no-coin-type error page')
+    opened.db.close()
+})
+
+test('a coin type says when its sales happened', async () => {
+    /*  Every clearing figure here is over 180 days with a 45-day half-life,
+        and a type whose sales all closed 170 days ago rendered identically to
+        one whose sales closed last week. The owner asked for the period. */
+    const opened = twoSeriesStore()
+    const path = '/listings?key=GB.SOV.BULLION.FULL'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.match(body, /Priced from \d+ sales? between \d{4}-\d{2}-\d{2} and \d{4}-\d{2}-\d{2}/,
+        'the page does not say what period its figures cover')
+
+    /*  The span of the sales actually behind the figure, not the window they
+        were drawn from - a 180-day window holding six days of sales is a
+        six-day sample, and quoting the window would be the more flattering of
+        two true statements. */
+    assert.match(body, /180-day window/,
+        'the page does not say the window the sample was drawn from either')
+    opened.db.close()
+})
