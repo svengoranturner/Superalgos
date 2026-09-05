@@ -1362,6 +1362,29 @@ exports.newRepository = function (db, options) {
                     SELECT li.browse_id, li.key, li.quantity, i.fine_oz, i.metal
                     FROM listing_instrument li
                     JOIN instrument i ON i.key = li.key AND i.level = 0
+                    /*  THE SAME FILTER THE TAIL APPLIES, APPLIED FIRST.
+
+                        The latest CTE below finds the newest snapshot for every
+                        listing in this CTE, and the tail then throws almost
+                        all of them away: of 15,079 tracked listings only
+                        2,213 are unresolved auctions still running and still
+                        being seen, and only 417 come back. Building the
+                        newest-snapshot set for the other 12,866 was the
+                        single most expensive thing the front page did.
+
+                        Measured on a copy of the live store: 1,249ms -> 255ms
+                        for the same 417 rows, compared field by field. The
+                        tail keeps its own copy of these conditions - they are
+                        what makes the row correct, this is only what makes it
+                        cheap, and a filter that exists for speed should not be
+                        the one deciding what the answer is. */
+                    JOIN listing lf ON lf.browse_id = li.browse_id
+                    WHERE lf.buying_options LIKE '%AUCTION%'
+                      AND lf.end_time IS NOT NULL
+                      AND lf.end_time > ?1
+                      AND lf.last_seen > ?2
+                      AND NOT EXISTS (SELECT 1 FROM listing_outcome o
+                                      WHERE o.browse_id = li.browse_id)
                 ),
                 /*  Latest snapshot per listing, grouped ONCE.
 
@@ -1433,11 +1456,11 @@ exports.newRepository = function (db, options) {
                 WHERE l.buying_options LIKE '%AUCTION%'
                   AND o.browse_id IS NULL
                   AND l.end_time IS NOT NULL
-                  AND l.end_time > ?
-                  AND l.last_seen > ?
+                  AND l.end_time > ?1
+                  AND l.last_seen > ?2
                   AND s.price IS NOT NULL
                 ORDER BY l.end_time ASC
-                LIMIT ?
+                LIMIT ?3
             `).all(
                 new Date().toISOString(),
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
