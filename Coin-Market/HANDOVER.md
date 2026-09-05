@@ -704,6 +704,28 @@ worse with every sweep. Restricting the window to the instrument's own listings
 first: **1.4s**. Pre-existing, not introduced. `reviewQueue` had the same shape
 and got the same fix.
 
+## The third performance bug, and the one still needing a restart
+
+**The collector invalidated every memo every two seconds.**
+`listing_instrument` was written with `INSERT OR REPLACE`, so a listing the
+sweep re-saw was rewritten whatever it held and `assigned_at` moved with it.
+`marketWatermark()` reads `MAX(assigned_at)` over that table on purpose — a
+re-filed coin has to invalidate the figures computed from it — so the collector
+looked, to every cache in the app, like a continuous stream of change.
+
+Measured on the live store: the watermark moved **16 times in 60 seconds while
+the row count stood at 15,295 exactly, not once**. Every market memo, every
+composition, the menu-bar counts and the tracked-type set were being thrown
+away and rebuilt from cold at that rate.
+
+The row is now written only when one of its answers differs. **This one needs
+the collector restarted to take effect** — the dashboard has it, the collector
+process is still running the old code:
+
+```
+sudo systemctl restart coin-market-collector
+```
+
 ## What is actually still wrong on the market page
 
 Measured, not guessed: **318 of 3,459 live listings (9.2%)**, and it is a mix.
