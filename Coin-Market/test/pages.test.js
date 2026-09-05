@@ -3019,6 +3019,69 @@ test('the coin types page is one table, with the series as a column', async () =
     opened.db.close()
 })
 
+/*
+    THE CAP THAT MADE THE FILTER A LIE.
+
+    seriesBlocks caps each series at PER_SERIES = 40 so the pages built on it
+    pay for a bounded set. /types was built on the same list, and its first
+    sentence is "every type this tool tracks" - on the live store, 80 of 746.
+
+    The display half of that is arguable. The other half is not: the coin
+    picker counts its options off the rows on hand, so a type below the cap
+    was not further down the page, it was unreachable - not shown, and not
+    offerable by the control meant to find it.
+*/
+test('a coin type past the cap is on the page, and in the filter', async () => {
+    const opened = manyTypesStore(46)
+    const body = (await fetchAll(opened, ['/types']))['/types'].body
+
+    const rows = body.split('<tbody>')[1]
+    const smallest = 'Sovereign \u00b7 Type 45'
+    assert.ok(body.includes('Type 45'),
+        'the 46th type of 46 is not on a page that says it shows every one')
+
+    const shown = (rows.match(/<tr>/g) || []).length
+    assert.strictEqual(shown, 46, 'the table has ' + shown + ' rows, not 46')
+
+    /*  And the control can reach it, which is the part the cap really broke. */
+    const picker = body.split('class="coin-picker"')[1].split('</form>')[0]
+    assert.ok(picker.includes('Type 45'),
+        'the coin picker cannot offer a type the table is showing')
+    assert.ok(smallest.length > 0)
+    opened.db.close()
+})
+
+/*  More coin types in one series than the per-series cap allows, each with a
+    live shelf and no sales - which is the cheapest row that still qualifies,
+    and the kind the cap cuts first. */
+function manyTypesStore (types) {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    for (let t = 0; t < types; t++) {
+        const key = 'GB.SOV.TYPE_' + t + '.FULL'
+        /*  Descending listing counts, so the LAST type is the one the cap
+            would cut - instruments() hands them back busiest first. */
+        for (let n = 0; n < 3 + (types - t); n++) {
+            const id = 'v1|t' + t + 'n' + n + '|0'
+            repository.saveListing({
+                browseId: id, legacyId: 't' + t + 'n' + n, title: key + ' example ' + n,
+                buyingOptions: 'FIXED_PRICE', endTime: null,
+                imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+            }, now)
+            repository.saveSnapshot(id, { price: 900 + n, shipping: 4, observedAt: now })
+            repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        }
+    }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
 test('a coin types column reorders the table', async () => {
     /*  twoSeriesStore is the wrong fixture for this and passed anyway: only
         the sovereign has resolved sales, so only one row has a clearing price

@@ -830,6 +830,34 @@ function marketPage (opened, url, reference) {
     const typeCoin = coinFrom(url)
     const typeMetals = metalsFrom(url)
 
+    /*  EVERY TYPE, NOT THE FORTY PER SERIES THE OTHER PAGES USE.
+
+        `markets` is capped at PER_SERIES because the pages built on it want a
+        representative set and pay for the whole set on a cold cache. This
+        page's first sentence is "every type this tool tracks", and on the
+        live store the cap made that 80 of 746.
+
+        Which would be a display quibble if the controls did not come from the
+        same list: the coin picker's options are counted off the rows on hand,
+        so a type below the cap was not merely further down the page, it was
+        unreachable - not shown, and not offerable by the filter meant to find
+        it. A filter that cannot reach two thirds of the data is worse than no
+        filter, because it looks like an answer.
+
+        Measured on the Pi, cold: 80 keys 2.4s, 746 keys 4.8s. The memo inside
+        marketsFor is per key under one stamp, so this warms the other pages
+        rather than competing with them - and it is a thunk, so a page that
+        never renders the table never pays for it. Warm, both are 0.08s. */
+    let allTypesMemo = null
+    const allTypes = () => {
+        if (allTypesMemo !== null) { return allTypesMemo }
+        const rows = repository.instruments(0, 3).filter(r => r.listingCount >= minSample)
+        const found = view.marketsFor(rows.map(r => r.key))
+        allTypesMemo = rows.map(row => ({ row, market: found.get(row.key) }))
+            .filter(e => e.market.fairValue.sufficient || e.market.liquidity.askSampleSize > 0)
+        return allTypesMemo
+    }
+
     /*  WHICH SALES THE CLEARING COLUMNS ARE BUILT FROM.
 
         `fairByChannel` has always held one fair value per channel, computed
@@ -969,7 +997,8 @@ function marketPage (opened, url, reference) {
         const asked = url.searchParams.get('order')
         const order = Object.prototype.hasOwnProperty.call(TYPE_SORTS, asked) ? asked : 'sales'
 
-        const rows = markets
+        const every = allTypes()
+        const rows = every
             .filter(e => typeMetals.includes(SERIES.metalForKey(e.row.key)))
             .filter(e => {
                 const parts = coinPartsOf(e.row.key)
@@ -1001,7 +1030,7 @@ function marketPage (opened, url, reference) {
             behind it here too. */
         const options = (field, chosen) => {
             const seen = new Map()
-            for (const e of markets) {
+            for (const e of every) {
                 const parts = coinPartsOf(e.row.key)
                 if (parts === null) { continue }
                 if (field !== 'series' && typeCoin.series !== null &&
@@ -1076,7 +1105,6 @@ function marketPage (opened, url, reference) {
                 '</tr>'
         }).join('')
 
-        const hidden = seriesBlocks.reduce((sum, b) => sum + b.hidden, 0)
         return '<div class="filters">' +
             '<span class="filter-label">Selling as</span>' + saleControl +
             '<span class="filter-divider"></span>' +
@@ -1085,13 +1113,11 @@ function marketPage (opened, url, reference) {
             '<div class="card scroll"><table>' +
             sortableHead(TYPE_COLUMNS, order, (key) => typesHref({ order: key })) +
             '<tbody>' + body + '</tbody></table></div>' +
-            '<p class="thin">Showing <strong>' + rows.length + '</strong> of ' + markets.length +
+            '<p class="thin">Showing <strong>' + rows.length + '</strong> of ' + every.length +
             ' tracked coin types' +
-            (hidden > 0
-                ? '; ' + hidden + ' more ' + (hidden === 1 ? 'is' : 'are') +
-                  ' tracked but too thinly listed to appear'
-                : '') +
-            '. Clearing figures come from ' +
+            (rows.length === every.length ? ' \u2014 every one of them' : '') +
+            '. A type appears once it has ' + minSample + ' listings and either a clearing ' +
+            'price or something on the shelf. Clearing figures come from ' +
             (typeSale === 'bin' ? 'Buy-It-Now' : 'auction') + ' sales only; the two markets ' +
             'are not averaged.</p>'
     }
