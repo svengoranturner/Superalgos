@@ -3871,3 +3871,119 @@ test('the rules page still adds a single hand-typed phrase', async () => {
         'the hand-typed rule was not saved')
     opened.db.close()
 })
+
+/*
+    THE SAME THING IN REVERSE.
+
+    The owner: "Then I want to be able to do the same in reverse if I spot a
+    listing that should be included."
+
+    Every rule this tool had could only say "not that". Naming a series by
+    hand rescues one listing; if the packs could not read that title they will
+    not read the next one either, so the rescue had to be repeated for ever.
+    An inclusion rule generalises it.
+*/
+test('rescuing a coin offers to generalise the rescue', async () => {
+    const opened = strandedStore()
+
+    const done = await post(opened, '/apply', {
+        genuine: '287558264634', s_287558264634: 'GB.SOV', back: '/review'
+    })
+    assert.ok(done.location.startsWith('/teach'),
+        'naming the series by hand offered nothing to generalise: ' + done.location)
+    assert.ok(done.location.includes('include=1'),
+        'the teach page was opened in the rejecting direction after a rescue')
+    opened.db.close()
+})
+
+test('a coin the packs already read has nothing to teach', async () => {
+    /*  The offer is made only where a series had to be supplied. */
+    const opened = strandedStore()
+    const now = new Date().toISOString()
+    opened.repository.saveListing({
+        browseId: 'v1|plain|0', legacyId: '555', title: '1905 Gold Sovereign',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    opened.repository.saveSnapshot('v1|plain|0', { price: 800, shipping: 0, observedAt: now })
+
+    const done = await post(opened, '/apply', { genuine: '555', back: '/review' })
+    assert.ok(!done.location.startsWith('/teach'),
+        'a coin the packs recognised was offered a rescue rule it does not need')
+    opened.db.close()
+})
+
+test('an inclusion rule rescues the next coin like it, without a human', async () => {
+    /*  THE POINT OF THE WHOLE THING. A second listing, never touched by
+        anybody, classified by the rule learned from the first. */
+    const opened = strandedStore()
+    const now = new Date().toISOString()
+
+    opened.repository.saveLearnedRule({
+        phrase: '2pound', kind: 'INCLUDE', series: 'GB.SOV', support: 2, agreement: null
+    })
+
+    opened.repository.saveListing({
+        browseId: 'v1|second|0', legacyId: '888',
+        title: 'GOLD 2POUND 1887 Victoria Jubilee Head',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    opened.repository.saveSnapshot('v1|second|0', { price: 1500, shipping: 0, observedAt: now })
+
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.one(opened.db, opened.repository, '888', { allowedCountries: [] })
+
+    const series = opened.db.prepare(
+        'SELECT series FROM listing WHERE legacy_id = ?').get('888').series
+    assert.strictEqual(series, 'GB.SOV',
+        'the rule learned from one coin did not reach the next one like it')
+
+    const keys = opened.db.prepare(
+        'SELECT key FROM listing_instrument WHERE browse_id = ?').all('v1|second|0')
+    assert.ok(keys.some(k => k.key.includes('DOUBLE')),
+        'rescued, but not priced as the double sovereign it is: ' +
+        (keys.map(k => k.key).join(', ') || 'no keys at all'))
+    opened.db.close()
+})
+
+test('an inclusion rule never overrules a pack that read the title', async () => {
+    const opened = strandedStore()
+    const now = new Date().toISOString()
+    opened.repository.saveLearnedRule({
+        phrase: 'gold', kind: 'INCLUDE', series: 'GB.SOV', support: 9, agreement: null
+    })
+    opened.repository.saveListing({
+        browseId: 'v1|morgan|0', legacyId: '777', title: '1902 Morgan Silver Dollar gold toned',
+        buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    opened.repository.saveSnapshot('v1|morgan|0', { price: 40, shipping: 0, observedAt: now })
+
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.one(opened.db, opened.repository, '777', { allowedCountries: [] })
+
+    assert.strictEqual(
+        opened.db.prepare('SELECT series FROM listing WHERE legacy_id = ?').get('777').series,
+        'US.MORGAN',
+        'a broad inclusion rule overruled a pack that recognised the title')
+    opened.db.close()
+})
+
+test('the teach form writes an inclusion rule, not an exclusion', async () => {
+    /*  The other tests write the rule straight into the store, so the form's
+        own kind field was never exercised - and a mutation making /rule write
+        every rule as NOT_TRACKED passed all of them. This posts what the page
+        posts. */
+    const opened = strandedStore()
+    await post(opened, '/rule', {
+        phrase: '2pound', kind: 'INCLUDE', series: 'GB.SOV', support: '2',
+        back: '/teach?legacy=287558264634&include=1'
+    })
+
+    const rule = opened.repository.learnedRules().find(r => r.phrase === '2pound')
+    assert.ok(rule !== undefined, 'the rule was not saved at all')
+    assert.strictEqual(rule.kind, 'INCLUDE',
+        'the form saved an inclusion rule as ' + rule.kind + ' - it would exclude the coin ' +
+        'it was meant to rescue')
+    assert.strictEqual(rule.series, 'GB.SOV',
+        'an inclusion rule must name what it includes into, got ' + rule.series)
+    opened.db.close()
+})

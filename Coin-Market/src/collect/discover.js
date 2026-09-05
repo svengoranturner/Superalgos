@@ -154,7 +154,14 @@ exports.newDiscoverer = function (browseClient, repository, options) {
             const told = claim.pack === null && label !== null && label.series
                 ? SERIES.get(label.series)
                 : null
-            const pack = claim.pack || told
+            /*  And a learned inclusion rule, which is the same evidence
+                generalised: somebody said this pattern is a tracked coin.
+                Below a label, which is about THIS listing, and below a pack,
+                which read the title itself. */
+            const ruled = claim.pack === null && told === null && learned !== null
+                ? SERIES.get(learned.seriesFor(item.title))
+                : null
+            const pack = claim.pack || told || ruled
 
             if (pack === null) {
                 repository.setListingSeries(item.browseId, null)

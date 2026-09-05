@@ -3629,6 +3629,19 @@ function handlePost (opened, pathname, form) {
         if (single && verdict === LEARNED.VERDICT.NOT_SOVEREIGN) {
             return '/teach?legacy=' + encodeURIComponent(single) + '&back=' + encodeURIComponent(back)
         }
+        /*  AND A RESCUE IS WORTH GENERALISING TOO.
+
+            Naming the series by hand fixes one listing. If the tool could not
+            read the title, it will not read the next one either - so the same
+            page is offered in the other direction, to turn "this one is a
+            sovereign" into "titles like this are sovereigns".
+
+            Only where a series had to be supplied: a coin the packs already
+            recognised has nothing to teach. */
+        if (single && verdict === LEARNED.VERDICT.SOVEREIGN && form.get('s_' + single)) {
+            return '/teach?legacy=' + encodeURIComponent(single) +
+                '&include=1&back=' + encodeURIComponent(back)
+        }
         return back + (back.includes('?') ? '&' : '?') + 'applied=' + applied +
             '&verdict=' + encodeURIComponent(verdict)
     }
@@ -3720,10 +3733,13 @@ function handlePost (opened, pathname, form) {
                 that cannot be undone by noticing later - see
                 ruleScopeControl. */
             const everySeries = per('allSeries') === '1'
+            /*  INCLUDE is the only other kind this form can write, and it is
+                never unscoped: a rule that includes has to say what INTO. */
+            const including = form.get('kind') === 'INCLUDE'
             repository.saveLearnedRule({
                 phrase,
-                kind: LEARNED.VERDICT.NOT_TRACKED,
-                series: everySeries ? null : (per('series') || SERIES.DEFAULT_ID),
+                kind: including ? 'INCLUDE' : LEARNED.VERDICT.NOT_TRACKED,
+                series: (everySeries && !including) ? null : (per('series') || SERIES.DEFAULT_ID),
                 support: Number(per('support')) || null,
                 agreement: per('agreement') === '' ? null : Number(per('agreement'))
             })
@@ -3833,7 +3849,7 @@ function ruleScopeControl (seriesId, phrase) {
         '</label>'
 }
 
-function proposalCard (p, back, legacyId, seriesId, already) {
+function proposalCard (p, back, legacyId, seriesId, already, including) {
     const pack = SERIES.get(seriesId) || SERIES.defaultPack()
     const risky = p.breaks > 0 || p.conflicts.length > 0
     const consequence = p.breaks === 0
@@ -3873,7 +3889,9 @@ function proposalCard (p, back, legacyId, seriesId, already) {
                 unticked box simply does not arrive. */
             : '<label class="scope" style="margin-top:10px">' +
               '<input type="checkbox" name="phrase" value="' + escapeHtml(p.phrase) + '"> ' +
-              'add this rule</label>' +
+              (including
+                  ? 'treat titles like this as ' + escapeHtml(SERIES.words(seriesId).plural)
+                  : 'add this rule') + '</label>' +
               '<input type="hidden" name="support:' + escapeHtml(p.phrase) + '" value="' +
               p.support + '">' +
               ruleScopeControl(seriesId, p.phrase))
@@ -3906,6 +3924,13 @@ function teachPage (opened, url) {
             '<a href="/review">Back to the review queue</a>.</p>', whereYouAre(url))
     }
 
+    /*  Which way round this page is. Rejecting teaches the tool to ignore a
+        pattern; rescuing teaches it to recognise one. Same phrases, same
+        evidence, opposite conclusion - so the page is the same page and only
+        the verb changes. */
+    const including = url.searchParams.get('include') === '1' &&
+        label.verdict === LEARNED.VERDICT.SOVEREIGN
+
     const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
 
     /*
@@ -3919,8 +3944,17 @@ function teachPage (opened, url) {
         statistics gets a button, and a rule that would remove something gets
         a confirmation page instead of one.
     */
-    const safe = proposals.filter(p => p.breaks === 0 && p.conflicts.length === 0)
-    const risky = proposals.filter(p => p.breaks > 0 || p.conflicts.length > 0)
+    /*  Breaks and conflicts are about REMOVING coins from the statistics,
+        which an inclusion rule cannot do - the worst it can do is file
+        something under a series it does not belong to, and that shows up as a
+        coin in the queue rather than a number quietly changing. So the safe
+        and risky split only applies one way round. */
+    const safe = including
+        ? proposals
+        : proposals.filter(p => p.breaks === 0 && p.conflicts.length === 0)
+    const risky = including
+        ? []
+        : proposals.filter(p => p.breaks > 0 || p.conflicts.length > 0)
 
     const nothingSafe = '<div class="card">' +
         '<p style="margin:0"><strong>Nothing here generalises safely.</strong></p>' +
@@ -3940,7 +3974,8 @@ function teachPage (opened, url) {
         : '<form method="post" action="/rule">' +
           '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
           '<input type="hidden" name="onward" value="' + escapeHtml(back) + '">' +
-          safe.map(p => proposalCard(p, back, legacyId, label.series, isAdded(p))).join('') +
+          (including ? '<input type="hidden" name="kind" value="INCLUDE">' : '') +
+          safe.map(p => proposalCard(p, back, legacyId, label.series, isAdded(p), including)).join('') +
           (safe.every(isAdded)
               ? ''
               : '<div class="bulkbar"><button class="btn btn-primary" type="submit">' +

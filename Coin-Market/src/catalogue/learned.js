@@ -133,6 +133,32 @@ exports.compile = function (rules) {
             return null
         },
 
+        /*
+            THE SAME THING IN REVERSE.
+
+            Every rule this tool had could only ever say "not that". The owner
+            asked for the other direction - a phrase that says a listing IS a
+            coin worth tracking - and the reason it matters is the whole of
+            phase two: a title no pack recognises never reaches the classifier
+            at all, so a coin like "2POUND 1902 Edward VII" had to be rescued
+            by hand, one listing at a time, for ever.
+
+            A label rescues one listing. This rescues the pattern.
+
+            It answers with a SERIES, because that is the gate that was
+            closed. Scope is not consulted: an inclusion rule names the series
+            it includes into, so an unscoped one would be meaningless rather
+            than dangerous.
+        */
+        seriesFor (title) {
+            for (const entry of compiled) {
+                if (entry.rule.kind !== 'INCLUDE') { continue }
+                if (!entry.rule.series) { continue }
+                if (entry.test.test(title)) { return entry.rule.series }
+            }
+            return null
+        },
+
         denominationFor (title, seriesId) {
             for (const entry of compiled) {
                 if (entry.rule.kind !== 'DENOMINATION') { continue }
