@@ -917,13 +917,18 @@ table.scan.queue td.bid .thin { font-family: var(--font-body); font-size: 11px }
   /*  The spot figure rides under the bid rather than being dropped: it is
       what the bid is being judged against, so a price with nothing to measure
       it by would be half a row. */
-  table.scan td.bid::after {
+  /*  Guarded on the attribute EXISTING, not merely on it being non-empty.
+
+      The queue reuses this table and its price cell carries no data-spot at
+      all - a lot awaiting a verdict is not being compared to its metal - so
+      `[data-spot=""]` did not match it and every stacked queue row grew the
+      word SPOT with nothing after it. */
+  table.scan td.bid[data-spot]:not([data-spot=""])::after {
     content: "spot " attr(data-spot); display: block;
     font-family: var(--font-body); font-size: 10px; letter-spacing: .06em;
     text-transform: uppercase; font-variant-numeric: normal; line-height: 1.4;
     color: color-mix(in srgb, var(--color-text) 50%, transparent);
   }
-  table.scan td.bid[data-spot=""]::after { content: none }
 
   /*  Thumb-sized, per the design. */
   table.scan td.verdict-cell .icon-btn { width: 44px; height: 44px; margin-left: 4px }

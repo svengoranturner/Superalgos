@@ -766,6 +766,28 @@ test('a table cell stays a table cell while its table is a table', () => {
     assert.ok(checked > 0, 'no cell display rules found; the test has lost its target')
 })
 
+/*  A LABEL FOR A NUMBER THAT IS NOT THERE.
+
+    The stacked phone row prints the spot figure under the bid, out of a
+    data-spot attribute, because a price with nothing to measure it against is
+    half a row. The guard against a lot with no spot reading was
+    `[data-spot=""]` - which needs the attribute to be present and empty.
+
+    The review queue then reused this table, and its price cell carries no
+    data-spot at all: a lot awaiting a verdict is not being compared to its
+    metal. So the guard did not match, and every stacked queue row grew the
+    word SPOT with nothing after it. */
+test('the spot label needs a spot figure to label', () => {
+    const css = STATIC.css()
+    const rule = /table\.scan td\.bid([^{]*)::after \{([^}]*)\}/.exec(css)
+
+    assert.ok(rule !== null, 'the stacked row no longer prints spot under the bid')
+    assert.ok(rule[2].includes('attr(data-spot)'), 'the test has lost its target')
+    assert.ok(rule[1].includes('[data-spot]'),
+        'the spot label fires on a cell that has no data-spot attribute at all, ' +
+        'printing the word with nothing after it: ' + rule[1].trim())
+})
+
 test('a filter toggle is a box, not an inline sliver', () => {
     /*
         THE OWNER'S REPORT: you cannot tell whether Silver and Gold are on or
