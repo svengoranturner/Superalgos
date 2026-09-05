@@ -1672,22 +1672,43 @@ exports.newRepository = function (db, options) {
                 ? "AND l.buying_options NOT LIKE '%AUCTION%'"
                 : (saleType === 'all' ? '' : "AND l.buying_options LIKE '%AUCTION%'")
             const row = db.prepare(`
-                SELECT COUNT(DISTINCT li.browse_id) AS n
-                FROM listing_instrument li
-                JOIN instrument i ON i.key = li.key AND i.level = 0
-                JOIN listing l ON l.browse_id = li.browse_id
-                LEFT JOIN (
-                    SELECT browse_id, MAX(observed_at) AS observed_at
-                    FROM listing_snapshot GROUP BY browse_id
-                ) newest ON newest.browse_id = li.browse_id
-                LEFT JOIN listing_snapshot s
-                    ON s.browse_id = newest.browse_id AND s.observed_at = newest.observed_at
-                WHERE (l.end_time IS NULL OR l.end_time > ?1)
-                  ${format}
-                  AND l.last_seen > ?2
-                  AND s.price IS NOT NULL
-                  AND NOT EXISTS (SELECT 1 FROM listing_outcome o
-                                  WHERE o.browse_id = li.browse_id)
+                /*  SCOPED FIRST, THEN THE SNAPSHOT - and the order is the
+                    whole cost of this query.
+
+                    Written the other way round it grouped listing_snapshot
+                    over every listing in the store to find each one's latest,
+                    then threw away the nine tenths that fail the cheap
+                    predicates. Measured on the Pi: 1,837ms, against 57ms for
+                    the same count before the price check was added. That is
+                    the identical mistake liveListings records fixing thirty
+                    lines down - 1,249ms to 255ms for the same rows - made
+                    again in the query written to match it.
+
+                    So the scope narrows to a few thousand candidates on
+                    indexed columns, and only those have their newest snapshot
+                    found. */
+                WITH scope AS (
+                    SELECT DISTINCT li.browse_id
+                    FROM listing_instrument li
+                    JOIN instrument i ON i.key = li.key AND i.level = 0
+                    JOIN listing l ON l.browse_id = li.browse_id
+                    WHERE (l.end_time IS NULL OR l.end_time > ?1)
+                      ${format}
+                      AND l.last_seen > ?2
+                      AND NOT EXISTS (SELECT 1 FROM listing_outcome o
+                                      WHERE o.browse_id = li.browse_id)
+                ),
+                latest AS (
+                    SELECT s.browse_id, MAX(s.observed_at) AS observed_at
+                    FROM listing_snapshot s
+                    JOIN scope ON scope.browse_id = s.browse_id
+                    GROUP BY s.browse_id
+                )
+                SELECT COUNT(*) AS n
+                FROM latest
+                JOIN listing_snapshot s
+                  ON s.browse_id = latest.browse_id AND s.observed_at = latest.observed_at
+                WHERE s.price IS NOT NULL
             `).get(
                 new Date().toISOString(),
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString()
