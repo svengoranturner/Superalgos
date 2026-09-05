@@ -3425,9 +3425,14 @@ test('the projection decides the verdict, not the bid it started from', async ()
         the projection. */
     assert.match(row, /class="chip[^"]*"[^>]*>-\d/,
         'the chip no longer prints the bid as under spot')
-    assert.strictEqual(chipClass(row), '',
-        'the chip was coloured cheap on a bid the tool\'s own record says will roughly ' +
-        'double before the hammer')
+    /*  Not merely uncoloured - DEAR. The projection answers both directions,
+        so a bid that reads as a bargain while heading past the dearest
+        quarter is called what it will be rather than what it is. Nothing
+        about the current bid could produce this verdict: it is 18% UNDER
+        spot, the cheapest thing on the page. */
+    assert.strictEqual(chipClass(row), 'dear',
+        'a bid the tool\'s own record says will roughly double before the hammer was not ' +
+        'called dear, so the projection is not deciding the verdict')
     db.close()
 })
 

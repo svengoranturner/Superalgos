@@ -3559,6 +3559,9 @@ function bandFor (row, market, curve) {
     const cheapAgainst = auction ? channels.AUCTION : channels.FIXED_PRICE
     const premium = row.ratio - 1
 
+    /*  Already past the dearest quarter, whatever happens next. A bid there
+        only rises and an ask there is simply the price, so this needs no
+        projection and holds even where there is none to be had. */
     if (dearAgainst && dearAgainst.sufficient && premium > dearAgainst.p75) {
         return { verdict: 'dear', against: dearAgainst, premium }
     }
@@ -3583,7 +3586,21 @@ function bandFor (row, market, curve) {
         return { verdict: null, against: cheapAgainst, premium, unprojected: true }
     }
 
+    /*  AND THE PROJECTION DECIDES BOTH DIRECTIONS, not only the cheap one.
+
+        Judging green on where a bid is heading and red on where it already
+        sits was half a rule, and the tooltip gave it away: a lot bid at 16.6%
+        against a band ending at 17.4%, heading for 34.1%, was described as
+        "an ordinary price". It is not an ordinary price. It is a lot that
+        will finish dearer than three quarters of its kind, and a reader
+        deciding whether to bid wants to be told so now rather than after.
+
+        So the same number answers both: where this lot is going. The bid
+        it started from only ever adds red, never removes it. */
     const finish = projected.expected / row.metalValue - 1
+    if (dearAgainst && dearAgainst.sufficient && finish > dearAgainst.p75) {
+        return { verdict: 'dear', against: dearAgainst, premium, finish }
+    }
     return finish < cheapAgainst.p25
         ? { verdict: 'cheap', against: cheapAgainst, premium, finish }
         : { verdict: null, against: cheapAgainst, premium, finish }
@@ -3608,7 +3625,12 @@ function bandTitle (row, band) {
     const sits = name + ' usually goes for ' + range + ' over spot. This one is ' +
         pct(band.premium) + '.'
 
-    if (band.verdict === 'dear') { return sits + ' Dearer than three quarters of them.' }
+    if (band.verdict === 'dear') {
+        return sits + (band.finish === undefined
+            ? ' Dearer than three quarters of them.'
+            : ' On this tool\'s own record of how far auctions rise it is heading for ' +
+              pct(band.finish) + ', dearer than three quarters of them.')
+    }
     if (band.verdict === 'cheap') {
         return sits + (band.finish === undefined
             ? ' Cheaper than three quarters of them.'
@@ -3620,7 +3642,8 @@ function bandTitle (row, band) {
             'where it will finish.'
     }
     if (band.finish !== undefined) {
-        return sits + ' Heading for about ' + pct(band.finish) + ', which is an ordinary price.'
+        return sits + ' Heading for about ' + pct(band.finish) + ', which is an ordinary ' +
+            'price for one.'
     }
     return sits
 }
