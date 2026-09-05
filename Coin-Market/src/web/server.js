@@ -277,7 +277,20 @@ function scanCounts (opened, nowMs) {
         production, which is why it never showed - but the test suite runs
         several stores in one process and read another store's counts, which is
         the same bug wearing a smaller hat. */
-    if (scanCache !== null && scanCache.opened === opened &&
+    /*  AND ON THE DATA, not only on the store and the clock.
+
+        The owner's report: change several coins, then judge another, and the
+        number in the bar does not move. It was invalidated by a thirty-second
+        timer and by nothing else - the POST path never cleared it - so a
+        verdict was invisible up there until the timer happened to expire.
+
+        The watermark already exists and already solves this: it is what makes
+        the market memo drop everything the instant a label is written. I built
+        it for that and left this on a clock, which is the same bug I argued
+        against in the commit that introduced it. The TTL now only bounds how
+        long an UNCHANGED store is trusted. */
+    const mark = opened.repository.marketWatermark()
+    if (scanCache !== null && scanCache.opened === opened && scanCache.mark === mark &&
         at - scanCache.at < SCAN_TTL_MS) { return scanCache.value }
 
     const value = { nearSpot: null, offers: null, endingHour: null, sold: null, review: null }
@@ -318,7 +331,7 @@ function scanCounts (opened, nowMs) {
             number beside a menu item. */
     }
 
-    scanCache = { at, opened, value }
+    scanCache = { at, opened, mark, value }
     return value
 }
 
@@ -1454,7 +1467,15 @@ function marketPage (opened, url, reference) {
         parameter and leaves the rest alone. Written once because doing it per
         control is how the theme toggle came to drop the query string. */
     const filterHref = (changes) => {
-        const now = { view: scanView, sort, metal: metals, within, sale, band }
+        const now = {
+            view: scanView, sort, metal: metals, within, sale, band,
+            series: coin.series, cond: coin.condition, size: coin.size,
+            /*  The search and the ordering ride along too. They belong to
+                controlStrip, which carries them by hand on its own form -
+                but a link that changes the metal had no reason to throw them
+                away, and did. */
+            q: url.searchParams.get('q'), order: url.searchParams.get('order')
+        }
         const next = Object.assign({}, now, changes)
         const params = []
         if (next.view !== 'nearSpot') { params.push('view=' + next.view) }
@@ -1463,6 +1484,9 @@ function marketPage (opened, url, reference) {
         if (next.within !== WITHIN_DEFAULT) { params.push('within=' + next.within) }
         if (next.sale !== 'auction') { params.push('sale=' + next.sale) }
         if (next.band !== bandDefault(next.view)) { params.push('band=' + next.band) }
+        for (const name of ['series', 'cond', 'size', 'q', 'order']) {
+            if (next[name]) { params.push(name + '=' + encodeURIComponent(next[name])) }
+        }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
     const withinHref = (hours) => filterHref({ within: hours })
@@ -1611,9 +1635,15 @@ function marketPage (opened, url, reference) {
     }
     const [viewTitle, viewCount] = VIEW_TITLES[scanView]
 
+    /*  THROUGH filterHref, like every other control.
+
+        This built its own URL and so dropped the sort, the window, the sale
+        type, the price band and the whole coin picker every time a view pill
+        was clicked. Same for the metal toggles below. Two builders for one job
+        is how a control comes to undo another one, and there were three. */
     const pill = (id, label, count) =>
         '<a class="btn ' + (id === scanView ? 'btn-primary' : 'btn-secondary') + ' pill" href="' +
-        (id === 'nearSpot' ? '/' : '/?view=' + id) + '">' + escapeHtml(label) +
+        filterHref({ view: id }) + '">' + escapeHtml(label) +
         (Number.isFinite(count) ? ' <span class="n">' + count + '</span>' : '') + '</a>'
 
     /*  Silver and gold are links rather than checkboxes: a checkbox needs a
@@ -1623,10 +1653,8 @@ function marketPage (opened, url, reference) {
     const metalToggle = (code, label) => {
         const on = metals.includes(code)
         const next = on ? metals.filter(m => m !== code) : metals.concat([code])
-        const query = next.length === 0 || next.length === 2
-            ? '' : '&amp;metal=' + next.join(',')
         return '<a class="radio' + (on ? ' on' : '') + '" href="' +
-            (scanView === 'nearSpot' ? '/?' : '/?view=' + scanView) + query.replace(/^&amp;/, '') +
+            filterHref({ metal: next.length === 0 ? metals : next }) +
             '"><span class="dot"></span>' + escapeHtml(label) + '</a>'
     }
 

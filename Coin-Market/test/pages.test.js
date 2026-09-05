@@ -3563,3 +3563,73 @@ test('a control that is shown is a control that filters', async () => {
         'the ending view does not start on any price')
     opened.db.close()
 })
+
+/*
+    THE COUNT IN THE BAR MUST MOVE WHEN YOU JUDGE A COIN.
+
+    The owner's report: change several on the page, then judge another, and the
+    number does not update. `scanCounts` was invalidated by a thirty-second
+    timer and by nothing else - the POST path never cleared it - so a verdict
+    was invisible in the bar until the timer happened to expire.
+
+    That is the loop the router's own comments call load-bearing: a decision
+    that does not change the front page is a decision the reader cannot trust
+    they made. The watermark that already drops the market memo on a label now
+    drops this too.
+*/
+test('the menu-bar count moves on the redirect after a verdict, not a timer later', async () => {
+    /*  deepStore prices its lots at about 1.007 of their metal, so they are
+        inside the near-spot band and the bar actually counts them.
+        twoSeriesStore asks 16% over, which is what a Buy-It-Now asks and what
+        makes that count zero - a fixture that cannot show the bug. */
+    const opened = deepStore(5)
+
+    const countIn = (body) => {
+        const nav = (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+        return Number((/Auctions near spot<span class="n">(\d+)<\/span>/.exec(nav) || [])[1])
+    }
+
+    const before = countIn((await fetchAll(opened, ['/']))['/'].body)
+    assert.ok(Number.isFinite(before) && before > 0,
+        'the bar shows no near-spot count to begin with: ' + before)
+
+    /*  Reject one of the coins the count is counting. */
+    const victim = opened.db.prepare(`
+        SELECT l.legacy_id AS id FROM listing l
+        JOIN listing_instrument li ON li.browse_id = l.browse_id
+        WHERE l.buying_options LIKE '%AUCTION%' LIMIT 1`).get().id
+    const done = await post(opened, '/apply', { reject: victim, back: '/' })
+    assert.strictEqual(done.status, 303, 'the verdict did not record')
+
+    /*  Immediately - no waiting. Same clock, changed data. */
+    const after = countIn((await fetchAll(opened, ['/']))['/'].body)
+    assert.ok(after < before,
+        'the bar still says ' + after + ' after rejecting a coin it was counting ' +
+        '(was ' + before + ') - the count is on a timer rather than on the data')
+
+    opened.db.close()
+})
+
+test('a filter link keeps every other filter', async () => {
+    /*  The metal toggles and the view pills built their own URLs, so clicking
+        Silver threw away the sort, the window, the sale type, the price band
+        and the whole coin picker. Three builders for one job. */
+    const opened = twoSeriesStore()
+    const path = '/?view=ending&within=12&sale=all&band=mid&sort=spot&series=GB.SOV'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const filters = (/<div class="filters">[\s\S]*?<\/div>\s*(?:<form|<h2)/.exec(body) || [''])[0]
+
+    const links = (filters.match(/href="\/\?[^"]*"/g) || [])
+        .map(h => h.replace(/^href="/, '').replace(/"$/, '').replace(/&amp;/g, '&'))
+    assert.ok(links.length >= 4, 'expected several filter links, found ' + links.length)
+
+    /*  Every link changes exactly one thing and keeps the rest. Checked on the
+        parameters a click used to drop. */
+    for (const link of links) {
+        const carried = ['within=12', 'sale=all', 'band=mid', 'sort=spot', 'series=GB.SOV']
+            .filter(pair => link.includes(pair.split('=')[0] + '='))
+        assert.ok(carried.length >= 3,
+            link + ' carries only ' + carried.length + ' of the five filters that were set')
+    }
+    opened.db.close()
+})
