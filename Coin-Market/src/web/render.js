@@ -199,7 +199,19 @@ function menuBar (pathname, view) {
             }).join('')
         ).join('')
 
-        return '<details class="menu' + (contains ? ' current' : '') + '">' +
+        /*  `name` makes the four an exclusive group, the way radio buttons
+            are: opening one closes the rest. Without it every menu you
+            touched stayed open and they stacked on top of each other, three
+            panels deep, because <details> has no idea its siblings exist and
+            `script-src 'none'` leaves nothing to teach it.
+
+            A browser too old for the attribute ignores it and behaves as it
+            does today, which is the bug rather than a worse one. Chrome 120,
+            Safari 17.2 and Firefox 130 all shipped it.
+
+            Clicking outside, or Escape, still will not close a menu. That one
+            is not solvable without script and is the honest cost of the CSP. */
+        return '<details name="menubar" class="menu' + (contains ? ' current' : '') + '">' +
             '<summary>' + escapeHtml(label) + icon('chevron', 12) + '</summary>' +
             '<div class="menu-panel blueprint">' +
             '<i class="corner tl"></i><i class="corner tr"></i>' +

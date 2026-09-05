@@ -523,18 +523,30 @@ nav.bar .rates {
 /*  Square, 28px, and the pair is mutually exclusive: whichever theme is
     active hides its own link and shows the other. Decided in the cascade
     because the server cannot know - a first visit has no cookie, and the
-    answer then depends on an operating system setting it never sees. */
+    answer then depends on an operating system setting it never sees.
+
+    That comment was right and every rule under it was backwards. `.to-dark`
+    is the link TO dark, so it belongs to a reader who is in LIGHT; it was
+    being shown in dark and hidden in light, and so was its opposite. The
+    toggle therefore offered you the theme you were already in, in all three
+    states - you clicked it, the server set the cookie to the value it already
+    had, redirected you back, and nothing changed. It was not a broken link or
+    a dropped cookie: the button worked perfectly and pointed at where you
+    already were.
+
+    The invariant, now asserted in test/pages.test.js rather than trusted:
+    in every state exactly one link shows, and it is the other theme's. */
 .icon-btn { width: 28px; height: 28px; padding: 0; color: var(--color-text) }
-.to-dark { display: none }
-.to-light { display: inline-flex }
+.to-dark { display: inline-flex }
+.to-light { display: none }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .to-dark { display: inline-flex }
-  :root:not([data-theme="light"]) .to-light { display: none }
+  :root:not([data-theme="light"]) .to-dark { display: none }
+  :root:not([data-theme="light"]) .to-light { display: inline-flex }
 }
-:root[data-theme="dark"] .to-dark { display: inline-flex }
-:root[data-theme="dark"] .to-light { display: none }
-:root[data-theme="light"] .to-dark { display: none }
-:root[data-theme="light"] .to-light { display: inline-flex }
+:root[data-theme="dark"] .to-dark { display: none }
+:root[data-theme="dark"] .to-light { display: inline-flex }
+:root[data-theme="light"] .to-dark { display: inline-flex }
+:root[data-theme="light"] .to-light { display: none }
 
 /*  A phone has no room for four menus and a set of rates. The bar keeps the
     brand and the toggle; the menus wrap under them. */

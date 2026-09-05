@@ -325,3 +325,222 @@ test('the stylesheet URL changes when the stylesheet does', async () => {
         different URL. */
     assert.match(STATIC.version(), /^[0-9a-f]{12}$/)
 })
+
+/*
+    THE THEME TOGGLE, AND WHY THIS TEST IS A CASCADE SIMULATION.
+
+    The toggle shipped broken and looked perfect. Two links are rendered, one
+    per theme, and CSS shows whichever one you are not currently using. Every
+    rule that decided this was backwards: `.to-dark` is the link TO dark, so
+    it belongs to a reader in LIGHT, and it was being shown in dark. The
+    result was a button that offered you the theme you already had. Clicking
+    it set the cookie to the value it already held, redirected you back, and
+    changed nothing - in all three states, so no combination of clicks ever
+    revealed the fault.
+
+    Nothing an ordinary test could see was wrong. The markup was right, both
+    hrefs were right, the route was right, the cookie was right; the two tests
+    below this one prove each of those separately and would all have passed on
+    the broken build. The defect lived entirely in which of two elements the
+    cascade chose to show, so that is what this measures: for every state the
+    page can be in, settle the winning `display` the way a browser would - by
+    specificity, then source order - and assert that exactly one link shows
+    and it is the other theme's.
+*/
+
+/*  Enough of a cascade to settle two class selectors. */
+function specificityOf (selector) {
+    /*  :not() contributes its argument's specificity; the :not() itself adds
+        nothing, so unwrap it and count what was inside. */
+    const bare = selector.replace(/:not\(([^)]*)\)/g, '$1')
+    return [
+        0,
+        (bare.match(/\[[^\]]*\]/g) || []).length + (bare.match(/\.[\w-]+/g) || []).length,
+        (bare.match(/:root/g) || []).length
+    ]
+}
+
+/*  Every stretch of the sheet, in source order, flagged with whether it sits
+    inside a dark-preference media query.
+
+    Brace-matched rather than pattern-matched, and the reason is a bug this
+    very test shipped with: the sheet holds SEVERAL `prefers-color-scheme:
+    dark` blocks - the palette is one - and a non-greedy pattern found the
+    first, which is not the one the toggle lives in. The toggle's media rules
+    were then read as if they applied unconditionally, and the test failed
+    against CSS that was right. A scanner that cannot pick the wrong block is
+    worth more here than a shorter one. */
+function darkSegments (css) {
+    const MEDIA = /@media \(prefers-color-scheme: dark\)\s*\{/g
+    const out = []
+    let at = 0
+    let m
+    while ((m = MEDIA.exec(css)) !== null) {
+        /*  Emitted in true source order - the plain run, then the block that
+            interrupted it - because equal specificity is settled by which
+            rule comes later. */
+        out.push({ text: css.slice(at, m.index), inMedia: false })
+        let depth = 1
+        let i = m.index + m[0].length
+        const from = i
+        while (i < css.length && depth > 0) {
+            if (css[i] === '{') { depth++ } else if (css[i] === '}') { depth-- }
+            i++
+        }
+        out.push({ text: css.slice(from, i - 1), inMedia: true })
+        at = i
+        MEDIA.lastIndex = i
+    }
+    return out.concat({ text: css.slice(at), inMedia: false })
+}
+
+function displayRules (css, className) {
+    /*  Every `display` declaration in the sheet that targets this link, in
+        source order, tagged with whether the OS has to say dark for it to
+        apply at all. */
+    const out = []
+    for (const segment of darkSegments(css)) {
+        const rule = new RegExp('([^{}\\n]*\\.' + className + ')\\s*\\{([^}]*)\\}', 'g')
+        let m
+        while ((m = rule.exec(segment.text)) !== null) {
+            const decl = /display:\s*([\w-]+)/.exec(m[2])
+            if (decl === null) { continue }
+            out.push({ selector: m[1].trim(), display: decl[1], inMedia: segment.inMedia })
+        }
+    }
+    return out
+}
+
+/*  Every state a reader can actually be in. `stamped` is the data-theme the
+    server writes from the cookie; `os` is what prefers-color-scheme reports.
+    `showing` is the theme they are therefore looking at - which is the thing
+    the visible link has to disagree with. */
+const THEME_STATES = [
+    { name: 'first visit, light OS', stamped: null, os: 'light', showing: 'light' },
+    { name: 'first visit, dark OS', stamped: null, os: 'dark', showing: 'dark' },
+    { name: 'chose dark, light OS', stamped: 'dark', os: 'light', showing: 'dark' },
+    { name: 'chose dark, dark OS', stamped: 'dark', os: 'dark', showing: 'dark' },
+    { name: 'chose light, light OS', stamped: 'light', os: 'light', showing: 'light' },
+    { name: 'chose light, dark OS', stamped: 'light', os: 'dark', showing: 'light' }
+]
+
+function selectorMatches (selector, state) {
+    if (selector.includes('[data-theme="dark"]')) { return state.stamped === 'dark' }
+    if (selector.includes(':not([data-theme="light"])')) { return state.stamped !== 'light' }
+    if (selector.includes('[data-theme="light"]')) { return state.stamped === 'light' }
+    return true
+}
+
+function displayOf (rules, state) {
+    let winner = null
+    let best = [-1, -1, -1]
+    rules.forEach(rule => {
+        if (rule.inMedia && state.os !== 'dark') { return }
+        if (!selectorMatches(rule.selector, state)) { return }
+        const spec = specificityOf(rule.selector)
+        /*  >= on the last comparison, because a later rule of equal
+            specificity wins on source order. */
+        const beats = spec[0] > best[0] ||
+            (spec[0] === best[0] && spec[1] > best[1]) ||
+            (spec[0] === best[0] && spec[1] === best[1] && spec[2] >= best[2])
+        if (beats) { best = spec; winner = rule.display }
+    })
+    return winner
+}
+
+test('the toggle offers the theme you are not in, in every state', () => {
+    const css = STATIC.css()
+    const toDark = displayRules(css, 'to-dark')
+    const toLight = displayRules(css, 'to-light')
+
+    assert.ok(toDark.length > 0 && toLight.length > 0,
+        'no display rules found for the toggle links; the test has lost its target')
+
+    for (const state of THEME_STATES) {
+        const shown = [
+            displayOf(toDark, state) === 'none' ? null : 'to-dark',
+            displayOf(toLight, state) === 'none' ? null : 'to-light'
+        ].filter(Boolean)
+
+        assert.strictEqual(shown.length, 1,
+            state.name + ': ' + shown.length + ' toggle links visible (' +
+            (shown.join(', ') || 'none') + '); exactly one must show')
+
+        /*  The whole point. The visible link must lead AWAY from the theme on
+            screen - a link to where you already are is a button that does
+            nothing, which is exactly the bug this pins. */
+        const wanted = state.showing === 'dark' ? 'to-light' : 'to-dark'
+        assert.strictEqual(shown[0], wanted,
+            state.name + ': the page is showing ' + state.showing + ' but offers ' +
+            shown[0] + ', the theme the reader already has')
+    }
+})
+
+test('choosing a theme survives the round trip', async () => {
+    /*  The server half, end to end: no cookie means no stamp and the OS
+        decides; the route sets the cookie and sends you back where you were;
+        the next page carries the attribute the CSS keys off. */
+    const store = opened()
+
+    const first = await get(store, '/')
+    assert.ok(!/<html[^>]*data-theme/.test(first.body),
+        'a first visit stamps a theme, which overrides the reader\'s OS setting')
+
+    const set = await get(store, '/theme?to=dark&back=%2Fgaps')
+    assert.strictEqual(set.status, 302, 'the theme route did not redirect')
+    assert.match(set.setCookie || '', /(^|;|\s)theme=dark/, 'no theme cookie was set')
+    assert.strictEqual(set.location, '/gaps',
+        'the toggle did not return the reader to the page they were on')
+
+    const after = await get(store, '/', { Cookie: 'theme=dark' })
+    assert.match(after.body, /<html[^>]*data-theme="dark"/,
+        'the chosen theme is not stamped on the next page')
+
+    /*  And the other direction, so this cannot pass with a rule that only
+        ever writes "dark". */
+    const back = await get(store, '/theme?to=light&back=%2F')
+    assert.match(back.setCookie || '', /(^|;|\s)theme=light/, 'cannot get back to light')
+    const lit = await get(store, '/', { Cookie: 'theme=light' })
+    assert.match(lit.body, /<html[^>]*data-theme="light"/, 'light is not stamped')
+
+    store.db.close()
+})
+
+test('a menu closes when another opens', async () => {
+    /*
+        Four menus, four <details>, and no idea their siblings exist. Every
+        one you opened stayed open, so a couple of clicks left panels stacked
+        three deep across the page - which is what the owner saw and sent in.
+
+        The `name` attribute makes them an exclusive group the way radio
+        buttons are, and it is the only mechanism that does this without
+        script, which `script-src 'none'` forbids. Asserted on the markup
+        because the browser is what applies it and the markup is the half this
+        app controls: the same name on all of them, so they are ONE group.
+    */
+    const store = opened()
+    const body = (await get(store, '/')).body
+    const nav = (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+
+    const menus = nav.match(/<details\b[^>]*class="menu[^"]*"[^>]*>/g) || []
+    assert.ok(menus.length >= 2,
+        'found ' + menus.length + ' menus in the bar; exclusivity means nothing below two')
+
+    const names = menus.map(tag => (/name="([^"]*)"/.exec(tag) || [])[1])
+    names.forEach((name, i) => {
+        assert.ok(name !== undefined,
+            'menu ' + i + ' has no name, so it will not close its siblings: ' + menus[i])
+    })
+    const groups = new Set(names)
+    assert.strictEqual(groups.size, 1,
+        'the menus carry ' + groups.size + ' different names (' + [...groups].join(', ') +
+        '); a different name is a different group, and separate groups do not close ' +
+        'each other')
+
+    /*  And none is open on arrival - a bar that greets you with a panel over
+        the page is the same complaint from the other end. */
+    assert.ok(!/<details\b[^>]*class="menu[^"]*"[^>]*\sopen/.test(nav),
+        'a menu is open before anybody has clicked anything')
+
+    store.db.close()
+})

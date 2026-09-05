@@ -3007,11 +3007,24 @@ ${list(unsold, 'dearest first')}`}
     redirect happens - even on a loopback-only service, it is not a habit
     worth having.
 */
+/*  The pages you can be sent back to.
+
+    Hand-kept, this list went stale the moment five new pages existed: the
+    theme toggle passes the page you are on through here, and /gaps was not on
+    it, so changing theme anywhere in Reference silently dumped you on the
+    review queue. The reference paths are read from the routing table instead
+    of copied out of it, so a sixth page is on this list by existing.
+
+    Everything else about it is unchanged - it is an allow-list because `back`
+    arrives in a query string, and an unchecked one is an open redirect. */
+const BACK_PATHS = new Set(
+    ['/', '/review', '/listings', '/rules', '/teach'].concat(Object.keys(REFERENCE_PATHS))
+)
+
 function safeBack (value) {
     if (typeof value !== 'string' || !value.startsWith('/')) { return '/review' }
     if (value.startsWith('//')) { return '/review' }
-    const path = value.split('?')[0]
-    return ['/review', '/listings', '/rules', '/'].includes(path) ? value : '/review'
+    return BACK_PATHS.has(value.split('?')[0]) ? value : '/review'
 }
 
 /*
