@@ -7,6 +7,7 @@ const { newDatabase } = require('../src/store/db.js')
 const { newRepository } = require('../src/store/repo.js')
 const SPOT = require('../src/spot/spot.js')
 const MARKET = require('../src/analytics/market.js')
+const INSTRUMENTS = require('../src/catalogue/instruments.js')
 const SERVER = require('../src/web/server.js')
 const SERIES = require('../src/catalogue/series/index.js')
 const LEARNED = require('../src/catalogue/learned.js')
@@ -3345,5 +3346,130 @@ test('a filter nobody set is not a filter', async () => {
     assert.strictEqual(rows('/?band=any&series=../etc'), rows('/?band=any'),
         'a malformed series filtered the list instead of being ignored')
     assert.strictEqual(pages['/?band=any&sale=nonsense'].status, 200)
+    opened.db.close()
+})
+
+/*
+    THE OWNER'S QUESTION ABOUT THE STRIP: what is "median finish vs spot"
+    telling me - sovereigns only? fulls? halfs? everything?
+
+    Two things were wrong beneath it. The near-spot cell counted rows on
+    SCREEN, so it could never exceed the forty the list shows however many
+    qualified. And the median counted each sale once per level of the key
+    hierarchy - `instruments(0, 3)` returns four levels and a listing is filed
+    under every level it belongs to, so a sale filed four deep voted four
+    times and the figure was a median over sale-key pairs, not over sales.
+*/
+/*  A store with MORE lots than the list shows, and each listing filed under
+    several levels of the key hierarchy - the two conditions under which the
+    strip's two faults are visible at all. The first fixture I wrote had
+    neither, so both mutations passed against it. */
+function deepStore (liveCount) {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 7200000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    /*  Every listing filed at four levels, built by the catalogue rather than
+        invented - keys the instrument table does not hold are not returned by
+        instruments(0, 3) at all, so hand-written ones silently collapse the
+        ladder to a single entry and the double-count cannot be reproduced.
+        That is how the first version of this test passed against the bug. */
+    const KEYS = [0, 1, 2, 3].map(level => ({
+        key: INSTRUMENTS.keyAt({
+            denomination: 'FULL', pool: 'BULLION', portrait: 'EDWARD_VII',
+            year: 1905, mint: 'LONDON', gradeBand: 'UNC'
+        }, level, SERIES.forKey('GB.SOV.BULLION.FULL').pack),
+        level
+    }))
+    const add = (id, price, sold) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: 'Gold Sovereign ' + id,
+            buyingOptions: 'AUCTION', endTime: soon,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, bidCount: 3, observedAt: now })
+        repository.setListingSeries(browseId, 'GB.SOV')
+        repository.saveClassification(browseId, KEYS, 0.9, 'title', 0.2354, {})
+        if (sold) {
+            repository.saveOutcome(browseId, {
+                endTime: now, sold: true, finalPrice: price, shipping: 0, bidCount: 5,
+                saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+            })
+        }
+        return browseId
+    }
+
+    /*  A Buy-It-Now so lastSweepAt has an anchor. */
+    repository.saveListing({ browseId: 'v1|anchor|0', legacyId: 'anchor',
+        title: 'Gold Sovereign anchor', buyingOptions: 'FIXED_PRICE', endTime: null }, now)
+    repository.saveSnapshot('v1|anchor|0', { price: 800, shipping: 0, observedAt: now })
+
+    for (let n = 0; n < liveCount; n++) { add('live' + n, 780 + n, false) }
+    for (let n = 0; n < 6; n++) { add('sold' + n, 820 + n * 10, true) }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the near-spot figure counts lots, not rows on the screen', async () => {
+    /*  55 qualifying lots against a list that shows 40. The figure used to be
+        `shown.length`, so it could never say more than 40 however many there
+        were - two cells side by side on different populations. */
+    const opened = deepStore(55)
+    const body = (await fetchAll(opened, ['/?band=any']))['/?band=any'].body
+
+    const strip = (/<div class="summary">[\s\S]*?<div class="filters">/.exec(body) || [''])[0]
+    const figure = Number((/cell-figure accent">(\d+)</.exec(strip) || [])[1])
+    const rows = (body.match(/<td class="pick-cell">/g) || []).length
+
+    assert.strictEqual(rows, 40, 'the list should be capped at 40, showed ' + rows)
+    assert.ok(figure > 40,
+        'the strip says ' + figure + ' with 55 lots qualifying - it is counting the ' +
+        'rows on screen rather than the lots that matched')
+    opened.db.close()
+})
+
+test('the median finish counts each sale once, not once per key level', async () => {
+    /*  Every listing here is filed under four levels, so before the dedupe
+        each of the six sales voted up to four times. */
+    const opened = deepStore(4)
+    const body = (await fetchAll(opened, ['/']))['/'].body
+
+    const tip = (/title="([^"]*middle result of[^"]*)"/.exec(body) || [])[1]
+    assert.ok(tip !== undefined, 'the median cell does not say what it is over')
+
+    const claimed = Number(/middle result of (\d+)/.exec(tip)[1])
+    const actual = opened.db.prepare(
+        "SELECT COUNT(*) n FROM listing_outcome WHERE sold = 1 AND sale_type = 'AUCTION' AND censored = 0"
+    ).get().n
+
+    assert.strictEqual(actual, 6, 'the fixture should hold six sold auctions')
+    assert.strictEqual(claimed, actual,
+        'the median claims ' + claimed + ' sales from a store holding ' + actual +
+        ' - it is counting each one once per level of the key hierarchy')
+    assert.match(tip, /180 days/, 'the tooltip does not say what window it covers')
+    opened.db.close()
+})
+
+test('every figure on the strip says what it is over', async () => {
+    /*  The owner's complaint was that none of them did, and that they are all
+        over different things - which they are: one is pre-filter and capped,
+        three follow the filters, and one has no window at all. In tooltips,
+        never in page prose - the standing rule for this UI. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/']))['/'].body
+    const strip = (/<div class="summary">[\s\S]*?<div class="filters">/.exec(body) || [''])[0]
+
+    const labels = strip.match(/<div class="cell-label"[^>]*>/g) || []
+    assert.strictEqual(labels.length, 5, 'expected five cells, found ' + labels.length)
+    labels.forEach((label, i) => {
+        assert.match(label, /title="[^"]{40,}"/,
+            'cell ' + i + ' carries no explanation of what it counts: ' + label)
+    })
     opened.db.close()
 })

@@ -146,6 +146,39 @@ const BANDS = {
 }
 const BAND_ORDER = ['under', 'near', 'mid', 'any']
 const SALE_NOUN = { auction: 'Auctions', bin: 'Buy-It-Now lots', all: 'Live lots' }
+
+/*
+    What each figure on the strip is actually over.
+
+    The owner's question - "what is the median finish telling me? sovereigns
+    only? fulls? halfs? everything?" - and it is fair of all five, because no
+    two of them are over the same thing. One is pre-filter and capped at 500.
+    Three are post-freshness and follow the filters above them. The last has
+    no window and no filter at all.
+
+    In tooltips rather than on the page: explanations go in the hint, never in
+    page prose. That is the owner's standing rule and it is the whole of what
+    they have been objecting to.
+*/
+const STRIP_SCOPE = {
+    checked: (sale) => 'Every live ' +
+        (sale === 'auction' ? 'auction' : (sale === 'bin' ? 'Buy-It-Now lot' : 'lot')) +
+        ' filed under a coin type and seen by a recent sweep, before any filter on ' +
+        'this page. Capped at the 500 closest to selling.',
+    matching: (band) => 'Of those, the ones ' + BAND_PHRASE[band].replace(/^at /, '') +
+        ' - after the metal, coin and search filters above, and after dropping ' +
+        'anything you have already judged not to be the coin it claims. The list ' +
+        'below shows the first 40.',
+    underSpot: 'Costing less than the metal in them, all in - price, postage and the ' +
+        'buyer fee. A subset of the figure to the left, on the same filters.',
+    medianFinish: (n) => 'The middle result of ' + n + ' completed auctions across every ' +
+        'coin type on this page, over the last 180 days. Sold auctions only: a Buy-It-Now ' +
+        'asking price is an opinion. Each is measured against the metal price at the moment ' +
+        'it closed, not today\'s. Not affected by the filters above.',
+    review: 'Coins queued for a decision that are still being counted in a clearing price. ' +
+        'The whole queue, with no time window and no filter - not the 25,000 rows of ' +
+        'deliberate exclusions, which are not waiting on anybody.'
+}
 const BAND_PHRASE = {
     near: 'at or near spot', mid: 'within 15% of spot',
     under: 'under spot', any: 'at any price'
@@ -1360,10 +1393,27 @@ function marketPage (opened, url, reference) {
         medians would weight a coin type with three sales the same as one
         with three hundred.
     */
-    const medianFinish = medianOf(markets.flatMap(entry =>
-        (entry.market.outcomes || [])
-            .filter(o => o.sold && o.saleType === 'AUCTION' && !o.censored)
-            .map(o => o.clearingPremium)))
+    /*  ONE VOTE PER SALE.
+
+        `instruments(0, 3)` returns four levels of the key hierarchy and a
+        listing is filed under every level it belongs to, so the same sale
+        arrived here once per level and the median was over sale-key pairs
+        rather than over sales. A coin type filed four deep counted four
+        times; one whose deeper keys fell outside the per-series cap counted
+        fewer. Neither is a median of what somebody paid.
+
+        Deduped on browseId, which is the listing - the thing that sold. */
+    const seenSales = new Set()
+    const finishSamples = []
+    for (const entry of markets) {
+        for (const outcome of entry.market.outcomes || []) {
+            if (!outcome.sold || outcome.saleType !== 'AUCTION' || outcome.censored) { continue }
+            if (seenSales.has(outcome.browseId)) { continue }
+            seenSales.add(outcome.browseId)
+            finishSamples.push(outcome.clearingPremium)
+        }
+    }
+    const medianFinish = medianOf(finishSamples)
 
     const reviewWaiting = repository.reviewAffectingCount()
 
@@ -1576,23 +1626,25 @@ what it has already found.">Rescan</a>
 
 <div class="summary">
   <div class="cell">
-    <div class="cell-label">${sale === 'auction' ? 'Auctions' : 'Lots'} checked</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.checked(sale))}">${
+      sale === 'auction' ? 'Auctions' : 'Lots'} checked</div>
     <div class="cell-figure">${considered}</div>
   </div>
   <div class="cell">
-    <div class="cell-label">At or near spot</div>
-    <div class="cell-figure accent">${shown.length}</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.matching(band))}">${
+      escapeHtml(BANDS[band].label)}</div>
+    <div class="cell-figure accent">${scanned.length}</div>
   </div>
   <div class="cell">
-    <div class="cell-label">Under spot by 5%+</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.underSpot)}">Under spot by 5%+</div>
     <div class="cell-figure accent">${underSpot}</div>
   </div>
   <div class="cell">
-    <div class="cell-label">Median finish vs spot</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.medianFinish(finishSamples.length))}">Median finish vs spot</div>
     <div class="cell-figure">${medianFinish === null ? '—' : pct(medianFinish)}</div>
   </div>
   <div class="cell">
-    <div class="cell-label">Needs review</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.review)}">Needs review</div>
     <div class="cell-figure-row">
       <div class="cell-figure">${reviewWaiting}</div>
       <a href="/review">open</a>
