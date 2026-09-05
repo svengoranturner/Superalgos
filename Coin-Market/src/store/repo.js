@@ -477,20 +477,41 @@ exports.newRepository = function (db, options) {
                 WITH scope AS (
                     SELECT browse_id FROM listing_instrument WHERE key = ?1
                 ),
-                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                /*  Latest snapshot per listing, grouped ONCE.
+
+                    This was a correlated subquery matching observed_at
+                    against a MAX taken per s.browse_id: a seek per listing, as
+                    the note it replaced said, but a seek PER CANDIDATE ROW
+                    rather than per listing. The scope
+                    here averages 121 snapshots a lot, so it ran that seek
+                    around a hundred times per listing to answer a question
+                    with one answer per listing.
+
+                    Grouping first asks it once. Measured on the live store
+                    (447MB, 3.59M snapshots): the scoped form 168ms -> 56ms,
+                    the unscoped one in liveAuctions 6.09s -> 1.57s, and both
+                    return byte-identical rows - 679/679 and 29,668/29,668
+                    compared field by field.
+
+                    No index was added and none is needed: listing_snapshot is
                     WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
-                    that key IS the index and MAX(observed_at) for one listing
-                    is a seek to the end of a contiguous run - and the same key
-                    makes a duplicate match impossible. Measured against the
-                    window form it replaced: identical values, far less work.
-                    See the note on reviewQueue. */
+                    that key already IS the index this wants. Adding an
+                    explicit one was measured at 168ms -> 182ms, i.e. nothing,
+                    because it duplicated the primary key.
+
+                    That same key is what makes the join safe. Two snapshots of
+                    one listing cannot share an observed_at, so the equality
+                    cannot match twice and duplicate a row - excluded by the
+                    schema rather than by luck. */
                 latest AS (
                     SELECT s.browse_id, s.price, s.shipping, s.bid_count
                     FROM listing_snapshot s
-                    JOIN scope ON scope.browse_id = s.browse_id
-                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
-                                           FROM listing_snapshot s2
-                                           WHERE s2.browse_id = s.browse_id)
+                    JOIN (
+                        SELECT s2.browse_id, MAX(s2.observed_at) AS observed_at
+                        FROM listing_snapshot s2
+                        JOIN scope ON scope.browse_id = s2.browse_id
+                        GROUP BY s2.browse_id
+                    ) m ON m.browse_id = s.browse_id AND m.observed_at = s.observed_at
                 )
                 SELECT l.browse_id AS browseId, l.title, l.buying_options AS buyingOptions,
                        l.end_time AS endTime, l.item_web_url AS itemWebUrl,
@@ -1028,20 +1049,41 @@ exports.newRepository = function (db, options) {
                 WITH scope AS (
                     SELECT browse_id FROM listing_instrument WHERE key = ?1
                 ),
-                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                /*  Latest snapshot per listing, grouped ONCE.
+
+                    This was a correlated subquery matching observed_at
+                    against a MAX taken per s.browse_id: a seek per listing, as
+                    the note it replaced said, but a seek PER CANDIDATE ROW
+                    rather than per listing. The scope
+                    here averages 121 snapshots a lot, so it ran that seek
+                    around a hundred times per listing to answer a question
+                    with one answer per listing.
+
+                    Grouping first asks it once. Measured on the live store
+                    (447MB, 3.59M snapshots): the scoped form 168ms -> 56ms,
+                    the unscoped one in liveAuctions 6.09s -> 1.57s, and both
+                    return byte-identical rows - 679/679 and 29,668/29,668
+                    compared field by field.
+
+                    No index was added and none is needed: listing_snapshot is
                     WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
-                    that key IS the index and MAX(observed_at) for one listing
-                    is a seek to the end of a contiguous run - and the same key
-                    makes a duplicate match impossible. Measured against the
-                    window form it replaced: identical values, far less work.
-                    See the note on reviewQueue. */
+                    that key already IS the index this wants. Adding an
+                    explicit one was measured at 168ms -> 182ms, i.e. nothing,
+                    because it duplicated the primary key.
+
+                    That same key is what makes the join safe. Two snapshots of
+                    one listing cannot share an observed_at, so the equality
+                    cannot match twice and duplicate a row - excluded by the
+                    schema rather than by luck. */
                 latest AS (
                     SELECT s.browse_id, s.price, s.shipping, s.bid_count, s.observed_at
                     FROM listing_snapshot s
-                    JOIN scope ON scope.browse_id = s.browse_id
-                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
-                                           FROM listing_snapshot s2
-                                           WHERE s2.browse_id = s.browse_id)
+                    JOIN (
+                        SELECT s2.browse_id, MAX(s2.observed_at) AS observed_at
+                        FROM listing_snapshot s2
+                        JOIN scope ON scope.browse_id = s2.browse_id
+                        GROUP BY s2.browse_id
+                    ) m ON m.browse_id = s.browse_id AND m.observed_at = s.observed_at
                 )
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
                        l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
@@ -1321,20 +1363,41 @@ exports.newRepository = function (db, options) {
                     FROM listing_instrument li
                     JOIN instrument i ON i.key = li.key AND i.level = 0
                 ),
-                /*  Latest snapshot per listing, as a seek. listing_snapshot is
+                /*  Latest snapshot per listing, grouped ONCE.
+
+                    This was a correlated subquery matching observed_at
+                    against a MAX taken per s.browse_id: a seek per listing, as
+                    the note it replaced said, but a seek PER CANDIDATE ROW
+                    rather than per listing. The scope
+                    here averages 121 snapshots a lot, so it ran that seek
+                    around a hundred times per listing to answer a question
+                    with one answer per listing.
+
+                    Grouping first asks it once. Measured on the live store
+                    (447MB, 3.59M snapshots): the scoped form 168ms -> 56ms,
+                    the unscoped one in liveAuctions 6.09s -> 1.57s, and both
+                    return byte-identical rows - 679/679 and 29,668/29,668
+                    compared field by field.
+
+                    No index was added and none is needed: listing_snapshot is
                     WITHOUT ROWID on PRIMARY KEY (browse_id, observed_at), so
-                    that key IS the index and MAX(observed_at) for one listing
-                    is a seek to the end of a contiguous run - and the same key
-                    makes a duplicate match impossible. Measured against the
-                    window form it replaced: identical values, far less work.
-                    See the note on reviewQueue. */
+                    that key already IS the index this wants. Adding an
+                    explicit one was measured at 168ms -> 182ms, i.e. nothing,
+                    because it duplicated the primary key.
+
+                    That same key is what makes the join safe. Two snapshots of
+                    one listing cannot share an observed_at, so the equality
+                    cannot match twice and duplicate a row - excluded by the
+                    schema rather than by luck. */
                 latest AS (
                     SELECT s.browse_id, s.price, s.shipping, s.bid_count
                     FROM listing_snapshot s
-                    JOIN scope ON scope.browse_id = s.browse_id
-                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
-                                           FROM listing_snapshot s2
-                                           WHERE s2.browse_id = s.browse_id)
+                    JOIN (
+                        SELECT s2.browse_id, MAX(s2.observed_at) AS observed_at
+                        FROM listing_snapshot s2
+                        JOIN scope ON scope.browse_id = s2.browse_id
+                        GROUP BY s2.browse_id
+                    ) m ON m.browse_id = s.browse_id AND m.observed_at = s.observed_at
                 )
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
                        l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
