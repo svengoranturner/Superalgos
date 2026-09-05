@@ -475,7 +475,13 @@ nav.bar .rates {
   color: color-mix(in srgb, var(--color-text) 55%, transparent);
 }
 
-.menu { position: relative }
+/*  `details { margin:16px 0 }` further up is for content folds, which want
+    the space. A menu is not one: inherited here it made every item in the bar
+    a 58px flex line around 26px of text, so on a phone the four menus wrapped
+    to two lines 72px apart and the bar took 176px of an 800px screen with a
+    visible hole above "Reference". Measured, not guessed - the item was 26px
+    and the line was 58px, which is 26 + 16 + 16. */
+.menu { position: relative; margin: 0 }
 .menu > summary {
   display: flex; align-items: center; gap: 5px; cursor: pointer; list-style: none;
   color: color-mix(in srgb, var(--color-text) 75%, transparent);
