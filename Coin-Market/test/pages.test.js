@@ -3115,3 +3115,134 @@ test('a batch button says what it acts on in its tooltip, not on its face', asyn
     }
     opened.db.close()
 })
+
+/*
+    THE MENU BAR MUST NOT PROMISE ROWS THE PAGE WILL NOT SHOW.
+
+    The owner's report: the bar said 2 ending within the hour and the page was
+    empty. They were two different populations. The bar counted every fresh
+    live auction closing in the window; the page counted only those that had
+    ALSO survived the near-spot cut, so any hour in which nothing cheap
+    happened to be closing produced a number in the bar and nothing under it.
+
+    The view is built from every fresh live auction now - a lot closing in ten
+    minutes at 12% over spot is still the last chance to act on it, and its
+    chip already says what it costs. This pins the two counts together.
+
+    There was no test on this view at all before, which is how it shipped.
+*/
+function endingStore (offsetsHours) {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    /*  One Buy-It-Now lot, and it is load-bearing. `lastSweepAt` is
+        MAX(last_seen) over listings with NO end time, so a store of pure
+        auctions has no sweep clock at all - and FRESHNESS.isActionable then
+        rejects every row, leaving the page empty for a reason that has
+        nothing to do with what is being tested. */
+    repository.saveListing({
+        browseId: 'v1|anchor|0', legacyId: 'anchor', title: 'Gold Sovereign anchor',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot('v1|anchor|0', { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries('v1|anchor|0', 'GB.SOV')
+    repository.saveClassification('v1|anchor|0', [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+        0.9, 'title', 0.2354, {})
+
+    /*  Also load-bearing: marketPage returns "Nothing tracked yet" when no
+        coin type qualifies, and a type needs three listings to qualify. These
+        close in a week, so they are in every count that has no window and in
+        none of the windows under test. */
+    for (let n = 0; n < 3; n++) {
+        const filler = 'v1|filler' + n + '|0'
+        repository.saveListing({
+            browseId: filler, legacyId: 'filler' + n, title: 'Gold Sovereign filler ' + n,
+            buyingOptions: 'AUCTION',
+            endTime: new Date(Date.now() + 168 * 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(filler, { price: 2000, shipping: 5, bidCount: 1, observedAt: now })
+        repository.setListingSeries(filler, 'GB.SOV')
+        repository.saveClassification(filler, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+    }
+
+    offsetsHours.forEach((hours, n) => {
+        const browseId = 'v1|end' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 'end' + n, title: 'Gold Sovereign ' + n,
+            buyingOptions: 'AUCTION',
+            endTime: new Date(Date.now() + hours * 3600000).toISOString(),
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        /*  Priced WELL ABOVE spot on purpose. Under the old code every one of
+            these was invisible to the page and counted by the bar, which is
+            the exact disagreement being pinned. */
+        repository.saveSnapshot(browseId, { price: 2000, shipping: 5, bidCount: 2, observedAt: now })
+        repository.setListingSeries(browseId, 'GB.SOV')
+        repository.saveClassification(browseId, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+    })
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the ending-soon count in the bar is the number of rows on the page', async () => {
+    /*  Lots at 0.5h, 3h, 8h and 20h out, all dear. The default window is six
+        hours, so exactly two qualify. */
+    const opened = endingStore([0.5, 3, 8, 20])
+    const body = (await fetchAll(opened, ['/?view=ending']))['/?view=ending'].body
+
+    const nav = (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+    const barCount = Number((/Ending soon<span class="n">(\d+)<\/span>/.exec(nav) || [])[1])
+    const rows = (body.match(/<tr[^>]*>[\s\S]*?name="genuine"/g) || []).length
+
+    assert.strictEqual(barCount, 2,
+        'the bar counted ' + barCount + ' inside six hours; two lots are')
+    assert.strictEqual(rows, barCount,
+        'the bar promises ' + barCount + ' but the page shows ' + rows)
+    opened.db.close()
+})
+
+test('a dear lot closing soon is still shown', async () => {
+    /*  The heart of it. Every lot in this store is priced at 2000 against a
+        sovereign's ~775 of gold, so none of them is anywhere near spot. */
+    const opened = endingStore([0.5, 3])
+    const body = (await fetchAll(opened, ['/?view=ending']))['/?view=ending'].body
+
+    assert.ok(body.includes('Gold Sovereign'),
+        'a lot closing within the hour was hidden because it was not cheap')
+    opened.db.close()
+})
+
+test('the window changes what ending soon means', async () => {
+    const opened = endingStore([0.5, 3, 8, 20])
+    const paths = ['/?view=ending&within=1', '/?view=ending', '/?view=ending&within=12',
+        '/?view=ending&within=24']
+    const pages = await fetchAll(opened, paths)
+    const shown = path => (pages[path].body.match(/<tr[^>]*>[\s\S]*?name="genuine"/g) || []).length
+
+    assert.strictEqual(shown('/?view=ending&within=1'), 1, 'one lot closes inside an hour')
+    assert.strictEqual(shown('/?view=ending'), 2, 'two close inside the default six hours')
+    assert.strictEqual(shown('/?view=ending&within=12'), 3, 'three close inside twelve hours')
+    assert.strictEqual(shown('/?view=ending&within=24'), 4, 'all four close inside a day')
+
+    /*  And the control shows which one you are on. */
+    assert.match(pages['/?view=ending&within=12'].body, /class="seg-opt on"[^>]*>12h</,
+        'the window control does not mark the chosen window')
+    opened.db.close()
+})
+
+test('an unknown window falls back rather than showing nothing', async () => {
+    const opened = endingStore([0.5, 3, 8, 20])
+    const pages = await fetchAll(opened, ['/?view=ending&within=99', '/?view=ending&within=abc'])
+    for (const path of Object.keys(pages)) {
+        const rows = (pages[path].body.match(/<tr[^>]*>[\s\S]*?name="genuine"/g) || []).length
+        assert.strictEqual(rows, 2, path + ' did not fall back to the default window')
+    }
+    opened.db.close()
+})

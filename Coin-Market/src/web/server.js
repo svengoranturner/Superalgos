@@ -110,12 +110,52 @@ function setTheme (url, response) {
     count in the menu that opens it, so the two cannot drift apart. */
 const NEAR_SPOT = 1.05
 
+/*
+    How far ahead "ending soon" looks.
+
+    An hour was the only option and it was usually empty - two lots on the
+    live store against ten at six hours and forty at a day. Six is the
+    default because it is the window in which a decision is still a decision:
+    long enough to have something in it, short enough that everything in it
+    closes today.
+
+    The menu bar counts the DEFAULT window and links to it without a
+    parameter, so the number in the bar is the number of rows you land on.
+    That is the whole of the bug this fixes.
+*/
+const WITHIN_HOURS = [1, 6, 12, 24]
+const WITHIN_DEFAULT = 6
+
+function withinFrom (url) {
+    const asked = url === undefined ? null : Number(url.searchParams.get('within'))
+    return WITHIN_HOURS.includes(asked) ? asked : WITHIN_DEFAULT
+}
+
+/*  Closing inside the window, and not already closed. Shared by the list and
+    by the count in the menu that opens it, so the two cannot drift - which is
+    exactly how they drifted before: the bar counted every live auction and
+    the page counted only the ones already within 5% of spot. */
+function closingWithin (rows, hours, at) {
+    const until = at + hours * 3600000
+    return rows.filter(row => {
+        const ends = Date.parse(row.endTime === undefined ? row.row.endTime : row.endTime)
+        return Number.isFinite(ends) && ends > at && ends <= until
+    })
+}
+
 const SCAN_TTL_MS = 30000
 let scanCache = null
 
 function scanCounts (opened, nowMs) {
     const at = nowMs === undefined ? Date.now() : nowMs
-    if (scanCache !== null && at - scanCache.at < SCAN_TTL_MS) { return scanCache.value }
+    /*  Keyed on the store, not only on the clock. The cache is module-level
+        and was keyed on nothing, so a process serving two stores would answer
+        the second from the first's numbers. One dashboard means one store in
+        production, which is why it never showed - but the test suite runs
+        several stores in one process and read another store's counts, which is
+        the same bug wearing a smaller hat. */
+    if (scanCache !== null && scanCache.opened === opened &&
+        at - scanCache.at < SCAN_TTL_MS) { return scanCache.value }
 
     const value = { nearSpot: null, offers: null, endingHour: null, sold: null, review: null }
     try {
@@ -133,15 +173,19 @@ function scanCounts (opened, nowMs) {
             .filter(entry => Number.isFinite(entry.ratio))
             .filter(entry => FRESHNESS.isActionable(entry.row.lastSeen, sweepAt))
 
-        value.nearSpot = live.filter(entry => entry.ratio <= NEAR_SPOT).length
+        /*  The same verdict cut the page makes. Without it the bar counted
+            coins the reader had already dismissed, which is a second way for
+            these two numbers to disagree. */
+        const judged = live.filter(entry => entry.row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
 
-        /*  Within the hour, off the same rows: an auction carries a real end
-            time, so this needs no second query. */
-        const hour = at + 3600000
-        value.endingHour = live.filter(entry => {
-            const ends = Date.parse(entry.row.endTime)
-            return Number.isFinite(ends) && ends > at && ends <= hour
-        }).length
+        value.nearSpot = judged.filter(entry => entry.ratio <= NEAR_SPOT).length
+
+        /*  Every auction closing in the default window, at any price. It used
+            to be every auction closing within the hour while the page showed
+            only those ALSO within 5% of spot, so the bar said 2 and the page
+            said nothing - the owner's report. Same rows, same predicate,
+            same window now. */
+        value.endingHour = closingWithin(judged, WITHIN_DEFAULT, at).length
 
         value.sold = repository.soldCount()
         value.review = repository.reviewAffectingCount()
@@ -151,7 +195,7 @@ function scanCounts (opened, nowMs) {
             number beside a menu item. */
     }
 
-    scanCache = { at, value }
+    scanCache = { at, opened, value }
     return value
 }
 
@@ -784,7 +828,10 @@ function marketPage (opened, url, reference) {
             since it decides how much of the page the search is filtering. */
         carry: Object.assign(
             scanView === 'nearSpot' ? {} : { view: scanView },
-            url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {}),
+            url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {},
+            /*  And the window, or searching inside "closing in 12 hours" would
+                silently put you back on six. */
+            url.searchParams.get('within') ? { within: url.searchParams.get('within') } : {}),
         allowed: SOLD_SORTS,
         fallback: 'newest'
     })
@@ -994,6 +1041,7 @@ function marketPage (opened, url, reference) {
     const now = new Date().toISOString()
 
     let opportunities = []
+    let fresh = []
     let considered = 0
     {
         opportunities = repository.liveAuctions(500)
@@ -1014,11 +1062,17 @@ function marketPage (opened, url, reference) {
             Buy-It-Now can - but one the sweep has stopped seeing has usually
             been pulled, and telling you to bid on it is the same failure. */
         opportunities = opportunities.filter(row => FRESHNESS.isActionable(row.lastSeen, sweepAt))
-        opportunities = opportunities
-            .filter(row => row.ratio <= NEAR_SPOT)
-            /*  A coin you have already judged not to be a sovereign is not an
-                opportunity, whatever its price. */
-            .filter(row => row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
+        /*  A coin you have already judged not to be a sovereign is not an
+            opportunity, whatever its price. */
+        opportunities = opportunities.filter(row => row.verdict !== LEARNED.VERDICT.NOT_SOVEREIGN)
+        /*  EVERY fresh live auction, before the near-spot cut. "Ending soon"
+            is built from this rather than from the near-spot list: a lot
+            closing in ten minutes at 12% over spot is still the last chance
+            to act on it, and its chip already says what it costs. Filtering
+            that list by price is what made the menu bar promise rows the page
+            would not show. */
+        fresh = opportunities
+        opportunities = opportunities.filter(row => row.ratio <= NEAR_SPOT)
 
         /*
             Ending soonest by default. The premium badge already tells you
@@ -1042,13 +1096,14 @@ function marketPage (opened, url, reference) {
         merely worth watching. */
     const underSpot = scanned.filter(row => Number.isFinite(row.ratio) && row.ratio <= 0.95).length
 
-    /*  Closing within the hour. Off the same rows, because an auction carries
-        a real end time and needs no second query. */
-    const inAnHour = Date.now() + 3600000
-    const endingSoon = scanned.filter(row => {
-        const ends = Date.parse(row.endTime)
-        return Number.isFinite(ends) && ends > Date.now() && ends <= inAnHour
-    })
+    /*  Closing inside the chosen window, off every fresh live auction rather
+        than off the near-spot list. The reader's own search and metal filters
+        still apply - those they asked for. */
+    const within = withinFrom(url)
+    const endingSoon = closingWithin(
+        fresh.filter(row => matchesSearch(row, pageTerms)).filter(inMetals),
+        within, Date.now())
+    endingSoon.sort((a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     for (const row of shown) { row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
@@ -1226,8 +1281,23 @@ function marketPage (opened, url, reference) {
         if (scanView !== 'nearSpot') { params.push('view=' + scanView) }
         if (value !== null) { params.push('sort=' + value) }
         if (metals.length === 1) { params.push('metal=' + metals[0]) }
+        if (within !== WITHIN_DEFAULT) { params.push('within=' + within) }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
+
+    /*  How far ahead to look, on the ending view only. Four options because
+        the hour it used to be is usually empty and a day is usually too many;
+        the two in between are where a decision still is one. */
+    const withinHref = (hours) => {
+        const params = ['view=ending']
+        if (sort === 'spot') { params.push('sort=spot') }
+        if (metals.length === 1) { params.push('metal=' + metals[0]) }
+        if (hours !== WITHIN_DEFAULT) { params.push('within=' + hours) }
+        return '/?' + params.join('&amp;')
+    }
+    const withinControl = '<span class="seg">' + WITHIN_HOURS.map(hours =>
+        '<a class="seg-opt' + (hours === within ? ' on' : '') + '" href="' + withinHref(hours) +
+        '">' + hours + 'h</a>').join('') + '</span>'
     const viewSort = '<span class="seg">' +
         '<a class="seg-opt' + (sort === 'ending' ? ' on' : '') + '" href="' + sortHref(null) +
         '">Ending soonest</a>' +
@@ -1366,10 +1436,11 @@ what it has already found.">Rescan</a>
   ${pill('nearSpot', 'Near spot', shown.length)}
   ${pill('offers', 'Open to an offer', offers.length)}
   ${pill('sold', 'Actually sold', soldTotal)}
-  ${pill('ending', 'Ending within the hour', endingSoon.length)}
+  ${pill('ending', 'Ending soon', endingSoon.length)}
   <span class="filter-divider"></span>
   ${metalToggle('XAG', 'Silver')}
   ${metalToggle('XAU', 'Gold')}
+  ${scanView === 'ending' ? '<span class="filter-label">Closing within</span>' + withinControl : ''}
   <span class="filter-label right">Sort</span>
   ${viewSort}
 </div>
