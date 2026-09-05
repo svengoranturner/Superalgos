@@ -527,7 +527,10 @@ function marketPage (opened, url, reference) {
     const seriesBlocks = []
     for (const [id, group] of grouped) {
         const shownRows = group.rows.slice(0, PER_SERIES)
-        const entries = shownRows.map(row => ({ row, market: view.forInstrument(row.key) }))
+        /*  One watermark for the whole block rather than one per coin
+            type - see marketsFor. */
+        const blockMarkets = view.marketsFor(shownRows.map(r => r.key))
+        const entries = shownRows.map(row => ({ row, market: blockMarkets.get(row.key) }))
             .filter(e => e.market.fairValue.sufficient || e.market.liquidity.askSampleSize > 0)
         if (entries.length === 0) { continue }
         seriesBlocks.push({

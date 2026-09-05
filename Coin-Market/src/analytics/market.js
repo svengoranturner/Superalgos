@@ -57,7 +57,43 @@ exports.newMarketView = function (repository, spotAt, options) {
         per process - there is one dashboard. */
     let curveMemo = null
 
+    /*  Markets, kept until something they are computed from changes.
+
+        Keyed on the watermark AND on the minute, because these are not a pure
+        function of the store: activeListings admits a lot only while
+        end_time is still in the future, so an auction ending drops out with
+        the clock rather than with a write. A minute bounds how long a lot can
+        look live after it has ended, against an hourly sweep behind it.
+
+        The stamp is taken ONCE per batch and handed down. Taking it per
+        instrument would cost 80 x 37ms and lose more than the memo saves,
+        which is the whole reason marketsFor exists rather than a cache
+        hidden inside forInstrument. */
+    let marketMemo = { stamp: null, byKey: new Map() }
+
     return {
+        /*  Several coin types at once, computed once per change.
+
+            forInstrument is left uncached: it is called by the CLI and the
+            report builder, one key at a time in a fresh process, where a memo
+            would only add a watermark query to a single use. This is for the
+            caller that asks for eighty in a row.
+        */
+        marketsFor (keys, now) {
+            const asOf = now === undefined ? Date.now() : new Date(now).getTime()
+            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / 60000)
+            if (marketMemo.stamp !== stamp) { marketMemo = { stamp, byKey: new Map() } }
+
+            const out = new Map()
+            for (const key of keys) {
+                if (!marketMemo.byKey.has(key)) {
+                    marketMemo.byKey.set(key, this.forInstrument(key, now))
+                }
+                out.set(key, marketMemo.byKey.get(key))
+            }
+            return out
+        },
+
         forInstrument (key, now) {
             const asOf = now === undefined ? Date.now() : new Date(now).getTime()
             const since = new Date(asOf - config.windowDays * DAY_MS).toISOString()

@@ -885,3 +885,124 @@ test('the watermark notices a deletion, not only an arrival', () => {
         'the watermark did not move when an outcome was deleted, so a stale curve would survive it')
     db.close()
 })
+
+/*
+    THE MARKET MEMO, AND THE ONE THING IT MUST NEVER DO.
+
+    A coin type's market costs about 28ms and the front page needs eighty,
+    which was 2.2s of a 3.3s render. It is also the same answer between page
+    loads unless something it reads has changed, so it is cached on a watermark
+    of exactly those things.
+
+    The failure that matters is not a slow page, it is a stale one. A verdict
+    POSTs and redirects to a GET within about fifty milliseconds, and the whole
+    point of that loop - stated in the router's own comments - is that the
+    front page changes when you make a call. A cache that outlived a verdict
+    would show the reader their own decision not having happened, which is
+    worse than the 2.2s it saves. So every one of these tests is an
+    invalidation test; only the first is about the cache working at all.
+*/
+function marketStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const view = MARKET.newMarketView(repository, spotAt, {})
+    const now = new Date().toISOString()
+    const KEY = 'GB.SOV.BULLION.FULL'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    for (let n = 0; n < 5; n++) {
+        const browseId = 'v1|mm' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 'mm' + n, title: 'Gold Sovereign ' + n,
+            buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 900 + n, shipping: 0, bidCount: 3, observedAt: now })
+        repository.saveClassification(browseId, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+    return { db, repository, spotAt, view, KEY, now }
+}
+
+test('the market memo returns the same objects until something changes', () => {
+    const { db, view, KEY } = marketStore()
+
+    const first = view.marketsFor([KEY]).get(KEY)
+    const second = view.marketsFor([KEY]).get(KEY)
+
+    assert.strictEqual(second, first,
+        'the market was recomputed with nothing changed; the memo is doing nothing')
+    db.close()
+})
+
+test('recording a verdict invalidates the market memo', () => {
+    /*  THE ONE THAT MATTERS. Judging a coin changes which listings feed a
+        clearing price, and the reader is looking at the answer half a second
+        later. */
+    const { db, repository, view, KEY } = marketStore()
+
+    const before = view.marketsFor([KEY]).get(KEY)
+    repository.label({
+        legacyId: 'mm0', title: 'Gold Sovereign 0', verdict: 'NOT_TRACKED',
+        denomination: null, note: null, source: 'test', quantity: 1, series: 'GB.SOV'
+    })
+    const after = view.marketsFor([KEY]).get(KEY)
+
+    assert.notStrictEqual(after, before,
+        'a verdict did not invalidate the market; the reader would see their own ' +
+        'decision not having happened')
+    db.close()
+})
+
+test('a reclassification invalidates the market memo', () => {
+    /*  A coin moving from one type to another. Covered directly by
+        listing_instrument.assigned_at rather than by reasoning about which of
+        verdicts, learned rules or a changed country filter caused it. */
+    const { db, repository, view, KEY } = marketStore()
+
+    const before = view.marketsFor([KEY]).get(KEY)
+    repository.saveClassification('v1|mm1|0', [{ key: 'GB.SOV.BULLION.HALF', level: 0 }],
+        0.9, 'title', 0.1177, {})
+    const after = view.marketsFor([KEY]).get(KEY)
+
+    assert.notStrictEqual(after, before, 'a reclassification did not invalidate the market')
+    db.close()
+})
+
+test('a resolved sale and a new spot reading each invalidate the market memo', () => {
+    const { db, repository, view, KEY, now } = marketStore()
+
+    const before = view.marketsFor([KEY]).get(KEY)
+    repository.saveOutcome('v1|mm2|0', {
+        endTime: now, sold: true, finalPrice: 905, shipping: 0, bidCount: 6,
+        saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+    })
+    const afterSale = view.marketsFor([KEY]).get(KEY)
+    assert.notStrictEqual(afterSale, before, 'a resolved sale did not invalidate the market')
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(new Date(Date.now() + 1000).toISOString(), 'XAU', 3400, null, 'test')
+    const afterSpot = view.marketsFor([KEY]).get(KEY)
+    assert.notStrictEqual(afterSpot, afterSale,
+        'a new spot price did not invalidate the market, so every premium on the page is stale')
+    db.close()
+})
+
+test('the market memo expires with the clock, not only with writes', () => {
+    /*  These are not a pure function of the store. A live lot is admitted only
+        while its end_time is in the future, so an auction ending drops out
+        with the clock and no write happens at all. The memo is keyed to the
+        minute so a lot cannot look live for longer than that. */
+    const { db, view, KEY } = marketStore()
+    const t = Date.now()
+
+    const first = view.marketsFor([KEY], new Date(t).toISOString()).get(KEY)
+    const sameMinute = view.marketsFor([KEY], new Date(t + 1000).toISOString()).get(KEY)
+    assert.strictEqual(sameMinute, first, 'the memo did not survive one second')
+
+    const laterMinute = view.marketsFor([KEY], new Date(t + 61000).toISOString()).get(KEY)
+    assert.notStrictEqual(laterMinute, first,
+        'the memo survived a minute, so an auction can look live after it has ended')
+    db.close()
+})

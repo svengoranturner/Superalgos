@@ -1301,6 +1301,53 @@ exports.newRepository = function (db, options) {
             with another; a MAX alone would miss a deletion. Together they
             change whenever the population does, which is the whole job.
         */
+        /*  Everything a coin type's market is computed from, in one row.
+
+            The market for one coin type costs about 28ms and the front page
+            needs eighty of them, which was 2.2s of a 3.3s render - and the
+            answer is identical between two page loads unless something it
+            reads has changed underneath. This says whether anything has.
+
+            A COUNT AND A MAX PER TABLE, and the tables are chosen to cover
+            every input rather than every trigger. listing_instrument.assigned_at
+            is the important one: reclassification stamps it, so a coin moving
+            from one type to another is visible here directly, without anyone
+            having to reason about which of verdicts, learned rules or a
+            changed country filter caused it. The count catches a deletion the
+            MAX would miss, and the MAX catches a correction the count would.
+
+            37ms on the live store, against the 2.2s it decides whether to
+            spend. It reads no snapshot table: listing.last_seen already moves
+            on every sweep, and that is what admits or drops an active lot.
+
+            NOT A TTL, and not memoised on one either. A verdict POSTs and
+            redirects to a GET within about fifty milliseconds, and the whole
+            point of that loop is that the front page changes when you make a
+            call. Any cache with a clock in it would show the reader their own
+            decision not having happened.
+        */
+        marketWatermark () {
+            const r = db.prepare(`
+                SELECT
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(resolved_at), '-')
+                     FROM listing_outcome) AS outcomes,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(labelled_at), '-')
+                     FROM listing_label) AS labels,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(created_at), '-')
+                     FROM learned_rule) AS rules,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(assigned_at), '-')
+                     FROM listing_instrument) AS classified,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(observed_at), '-')
+                     FROM spot) AS spot,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '-')
+                     FROM setting) AS settings,
+                  (SELECT COUNT(*) || ':' || COALESCE(MAX(last_seen), '-')
+                     FROM listing) AS listings
+            `).get()
+            return [r.outcomes, r.labels, r.rules, r.classified,
+                r.spot, r.settings, r.listings].join('|')
+        },
+
         outcomeWatermark () {
             return db.prepare(`
                 SELECT COUNT(*) AS n, MAX(ended_at) AS newest
