@@ -269,6 +269,50 @@ function closingWithin (rows, hours, at) {
 const SCAN_TTL_MS = 30000
 let scanCache = null
 
+/*
+    EVERY TRACKED COIN TYPE, KEPT UNTIL THE STORE CHANGES.
+
+    /types is the one page that reads all 746 rather than the capped 80, and
+    on the Pi that is 5.8s of cold work against 2.4s. Once an hour that would
+    be the honest price of a complete page. It is not once an hour:
+    marketsFor's stamp carries a MINUTE bucket as well as the watermark - so
+    an auction ending drops out of the live count with the clock rather than
+    with a write - and the memo behind it is therefore empty a few seconds
+    into every minute. Measured back to back: 5.8s, then 0.14s, then 0.14s
+    within the same minute, and 5.8s again in the next one.
+
+    So this holds the assembled set on the watermark ALONE. Nothing in the
+    table is minute-sensitive: the clearing figures are over 180 days, the
+    sell-through over 90, and the live count is a count of listings the
+    hourly sweep last saw - a page about six-month price distributions does
+    not need its row count to be four seconds fresh.
+
+    Deliberately NOT the shared market memo. That one is keyed per key under
+    one stamp, and calling it with a rounded clock would reset it wholesale
+    every time /types was opened, evicting the eighty entries the scanner
+    depends on. This sits beside it and fills it, never fights it.
+*/
+let typesCache = null
+
+function trackedTypes (opened, minSample) {
+    const mark = opened.repository.marketWatermark()
+    if (typesCache !== null && typesCache.opened === opened &&
+        typesCache.mark === mark && typesCache.minSample === minSample) {
+        return typesCache.entries
+    }
+
+    const rows = opened.repository.instruments(0, 3).filter(r => r.listingCount >= minSample)
+    const found = opened.view.marketsFor(rows.map(r => r.key))
+    const entries = rows.map(row => ({ row, market: found.get(row.key) }))
+        .filter(e => e.market.fairValue.sufficient || e.market.liquidity.askSampleSize > 0)
+
+    /*  On the store as well as the mark: one dashboard means one store in
+        production, but the test suite runs several in one process and would
+        otherwise answer the second from the first's rows. */
+    typesCache = { opened, mark, minSample, entries }
+    return entries
+}
+
 function scanCounts (opened, nowMs) {
     const at = nowMs === undefined ? Date.now() : nowMs
     /*  Keyed on the store, not only on the clock. The cache is module-level
@@ -844,19 +888,14 @@ function marketPage (opened, url, reference) {
         it. A filter that cannot reach two thirds of the data is worse than no
         filter, because it looks like an answer.
 
-        Measured on the Pi, cold: 80 keys 2.4s, 746 keys 4.8s. The memo inside
+        Measured on the Pi, cold: 80 keys 2.4s, 746 keys 5.8s. The memo inside
         marketsFor is per key under one stamp, so this warms the other pages
         rather than competing with them - and it is a thunk, so a page that
-        never renders the table never pays for it. Warm, both are 0.08s. */
-    let allTypesMemo = null
-    const allTypes = () => {
-        if (allTypesMemo !== null) { return allTypesMemo }
-        const rows = repository.instruments(0, 3).filter(r => r.listingCount >= minSample)
-        const found = view.marketsFor(rows.map(r => r.key))
-        allTypesMemo = rows.map(row => ({ row, market: found.get(row.key) }))
-            .filter(e => e.market.fairValue.sufficient || e.market.liquidity.askSampleSize > 0)
-        return allTypesMemo
-    }
+        never renders the table never pays for it.
+
+        The set is held between requests on the watermark alone; see
+        trackedTypes for why that is not the same key the market memo uses. */
+    const allTypes = () => trackedTypes(opened, minSample)
 
     /*  WHICH SALES THE CLEARING COLUMNS ARE BUILT FROM.
 

@@ -3148,7 +3148,7 @@ test('a coin type past the cap is on the page, and in the filter', async () => {
 /*  More coin types in one series than the per-series cap allows, each with a
     live shelf and no sales - which is the cheapest row that still qualifies,
     and the kind the cap cuts first. */
-function manyTypesStore (types) {
+function manyTypesStore (types, prefix) {
     const db = newDatabase(':memory:')
     const repository = newRepository(db, { sellerSalt: 'test' })
     const now = new Date().toISOString()
@@ -3156,14 +3156,15 @@ function manyTypesStore (types) {
     db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
         .run(now, 'XAU', 3290, null, 'test')
 
+    const tag = prefix || 'TYPE'
     for (let t = 0; t < types; t++) {
-        const key = 'GB.SOV.TYPE_' + t + '.FULL'
+        const key = 'GB.SOV.' + tag + '_' + t + '.FULL'
         /*  Descending listing counts, so the LAST type is the one the cap
             would cut - instruments() hands them back busiest first. */
         for (let n = 0; n < 3 + (types - t); n++) {
-            const id = 'v1|t' + t + 'n' + n + '|0'
+            const id = 'v1|' + tag + t + 'n' + n + '|0'
             repository.saveListing({
-                browseId: id, legacyId: 't' + t + 'n' + n, title: key + ' example ' + n,
+                browseId: id, legacyId: tag + t + 'n' + n, title: key + ' example ' + n,
                 buyingOptions: 'FIXED_PRICE', endTime: null,
                 imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
             }, now)
@@ -3175,6 +3176,77 @@ function manyTypesStore (types) {
     const spotAt = SPOT.newSpotLookup(db, {})
     return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
 }
+
+/*
+    THE SET IS HELD BETWEEN REQUESTS, SO IT HAS TO BE LET GO OF.
+
+    Uncapping /types made it 5.8s cold, and marketsFor's stamp carries a
+    minute bucket - so without a cache of its own the page paid that once a
+    minute rather than once a sweep. It is therefore kept on the watermark,
+    which puts it in the same class as scanCounts and inherits both of that
+    cache's bugs unless they are tested for: a set that outlives the write
+    that changed it, and one store answered from another's rows.
+*/
+test('a new coin type appears without waiting for a cache to expire', async () => {
+    const opened = manyTypesStore(3)
+    const before = (await fetchAll(opened, ['/types']))['/types'].body
+    assert.ok(!before.includes('Type 9'), 'the fixture already has the type under test')
+
+    const now = new Date().toISOString()
+    const key = 'GB.SOV.TYPE_9.FULL'
+    for (let n = 0; n < 4; n++) {
+        const id = 'v1|late' + n + '|0'
+        opened.repository.saveListing({
+            browseId: id, legacyId: 'late' + n, title: key + ' example ' + n,
+            buyingOptions: 'FIXED_PRICE', endTime: null,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        opened.repository.saveSnapshot(id, { price: 950 + n, shipping: 4, observedAt: now })
+        opened.repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+
+    const after = (await fetchAll(opened, ['/types']))['/types'].body
+    assert.ok(after.includes('Type 9'),
+        'a coin type the store now holds is missing from a page that says it shows every one')
+    opened.db.close()
+})
+
+test('one store is never answered from another store rows', async () => {
+    /*  One dashboard means one store in production, which is why a cache
+        keyed on nothing never showed this - and the test suite runs several
+        stores in one process, which is the same bug wearing a smaller hat.
+
+        THE WATERMARKS ARE MADE TO COLLIDE, and that is the whole test. Two
+        arbitrary stores have different watermarks, so dropping the store from
+        the key still passes - the mark catches it, and the assertion proves
+        nothing about the thing it names. These two hold the same counts and
+        are stamped to the same instant, so only the store identity can tell
+        them apart. */
+    /*  A moment ago, not an arbitrary date: the spot reading has to stay
+        recent enough to price a listing seen today, or both stores render
+        empty and the assertions below pass for the wrong reason. */
+    const stamp = new Date(Date.now() - 60000).toISOString()
+    const align = (opened) => {
+        opened.db.exec("UPDATE listing_instrument SET assigned_at = '" + stamp + "'")
+        opened.db.exec("UPDATE spot SET observed_at = '" + stamp + "'")
+    }
+
+    const first = manyTypesStore(3)
+    const second = manyTypesStore(3, 'OTHER')
+    align(first)
+    align(second)
+    assert.strictEqual(second.repository.marketWatermark(), first.repository.marketWatermark(),
+        'the two fixtures did not collide, so this proves nothing about the store key')
+
+    await fetchAll(first, ['/types'])
+    const body = (await fetchAll(second, ['/types']))['/types'].body
+
+    assert.ok(!body.includes('GB.SOV.TYPE_0.FULL'),
+        'the second store was served the first store rows')
+    assert.ok(body.includes('GB.SOV.OTHER_0.FULL'), 'the second store own rows are missing')
+    first.db.close()
+    second.db.close()
+})
 
 test('a coin types column reorders the table', async () => {
     /*  twoSeriesStore is the wrong fixture for this and passed anyway: only
