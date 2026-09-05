@@ -1389,15 +1389,22 @@ exports.newRepository = function (db, options) {
                     one listing cannot share an observed_at, so the equality
                     cannot match twice and duplicate a row - excluded by the
                     schema rather than by luck. */
+                /*  MEASURED BACK. The grouped form three functions up is
+                    3x faster where the scope is one instrument; here, where
+                    the scope is every tracked listing, it was 3x SLOWER -
+                    1.6s to 5.2s a call, and the front page went from 10.3s to
+                    16.3s. Grouping 3.59M snapshots against a CTE of 15,069
+                    beats the planner's ability to drive the seek from scope,
+                    and the correlated form keeps that plan. The lesson is that
+                    the shape is not the win; the SIZE OF THE SCOPE decides
+                    which shape wins, so both live here on purpose. */
                 latest AS (
                     SELECT s.browse_id, s.price, s.shipping, s.bid_count
                     FROM listing_snapshot s
-                    JOIN (
-                        SELECT s2.browse_id, MAX(s2.observed_at) AS observed_at
-                        FROM listing_snapshot s2
-                        JOIN scope ON scope.browse_id = s2.browse_id
-                        GROUP BY s2.browse_id
-                    ) m ON m.browse_id = s.browse_id AND m.observed_at = s.observed_at
+                    JOIN scope ON scope.browse_id = s.browse_id
+                    WHERE s.observed_at = (SELECT MAX(s2.observed_at)
+                                           FROM listing_snapshot s2
+                                           WHERE s2.browse_id = s.browse_id)
                 )
                 SELECT l.browse_id AS browseId, l.legacy_id AS legacyId, l.title,
                        l.item_web_url AS itemWebUrl, l.image_url AS imageUrl,
