@@ -678,6 +678,94 @@ test('the text columns are left and the figures are right', () => {
     assert.strictEqual(body(['verdict-cell'], false), 'right', 'the verdict buttons are not right-aligned')
 })
 
+/*
+    A CELL THAT LEAVES THE TABLE TAKES ITS COLUMN WIDTH WITH IT.
+
+    Same shape of fault as the toggle dot below, one layout mode along. The
+    pickers column was given `width: 20%` and `display: flex` in the same
+    rule, which reads correctly and is not: `display: flex` on a <td> takes it
+    out of the table's column algorithm entirely, so the percentage stopped
+    applying. Measured at 1280px, the column came out 40px wide holding three
+    <select> elements.
+
+    Invisible to reading the CSS, which plainly says 20%. The fix was to flex
+    a wrapper inside the cell instead - so the invariant is: while its table
+    is still a table, a cell stays a table-cell.
+
+    Scoped per block, because the phone layout breaks this deliberately and
+    correctly - it turns the whole table into blocks, cells included. That is
+    the difference the test has to keep: changing a cell's display is only
+    safe when its table's display changes with it.
+*/
+test('a table cell stays a table cell while its table is a table', () => {
+    const css = STATIC.css()
+
+    /*  Each layout context, which is a media CONDITION and not a block: two
+        `@media (max-width: 620px)` blocks in different parts of the sheet
+        both apply at 619px, so a cell in one and its table in the other are
+        the same context. Keying on the block would have reported the queue's
+        own stacking rules as a fault - they sit in a second 620px block
+        beside the scanner's. */
+    const byCondition = new Map()
+    const add = (condition, text) => {
+        byCondition.set(condition, (byCondition.get(condition) || '') + text)
+    }
+    let i = 0
+    while (i < css.length) {
+        const at = css.indexOf('@media', i)
+        add('', css.slice(i, at === -1 ? css.length : at))
+        if (at === -1) { break }
+        let depth = 0
+        let j = css.indexOf('{', at)
+        const condition = css.slice(at, j).replace(/\s+/g, ' ').trim()
+        const from = j + 1
+        do {
+            if (css[j] === '{') { depth++ } else if (css[j] === '}') { depth-- }
+            j++
+        } while (j < css.length && depth > 0)
+        add(condition, css.slice(from, j - 1))
+        i = j
+    }
+    const blocks = [...byCondition.values()]
+
+    const displays = (block) => {
+        const out = []
+        const rule = /([^{}]+)\{([^}]*)\}/g
+        let m
+        while ((m = rule.exec(block)) !== null) {
+            const decl = /(?:^|[;{\s])display:\s*([\w-]+)/.exec(m[2])
+            if (decl === null) { continue }
+            for (const sel of m[1].split(',')) { out.push({ sel: sel.trim(), value: decl[1] }) }
+        }
+        return out
+    }
+
+    let checked = 0
+    for (const block of blocks) {
+        const rules = displays(block)
+        /*  Does this block take the table itself out of table layout? */
+        const tableIsBlock = rules.some(r =>
+            /^table\.scan(\.[\w-]+)?$/.test(r.sel) && r.value !== 'table')
+
+        for (const rule of rules) {
+            /*  A cell rule: the last simple selector is a td, or a th. */
+            const own = rule.sel.split(/\s+/).pop()
+            if (!/^t[dh](\.[\w-]+)*$/.test(own)) { continue }
+            checked++
+            if (tableIsBlock) { continue }
+            /*  `none` is the exception and a deliberate one: dropping a
+                column whole is how the narrow breakpoints shed the ones that
+                carry least, and a hidden cell has no width to lose. */
+            if (rule.value === 'none') { continue }
+            assert.ok(/^table-(cell|row)$/.test(rule.value),
+                rule.sel + ' sets display:' + rule.value + ' on a cell whose table is still ' +
+                'a table - the column algorithm stops applying to it and any width it was ' +
+                'given is silently discarded')
+        }
+    }
+    assert.ok(checked > 0, 'no cell display rules found; the test has lost its target')
+})
+
 test('a filter toggle is a box, not an inline sliver', () => {
     /*
         THE OWNER'S REPORT: you cannot tell whether Silver and Gold are on or

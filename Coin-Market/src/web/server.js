@@ -3558,7 +3558,7 @@ function queueTableRow (row, verdictCell) {
         (verdictCell === undefined || verdictCell === '' ? '' : '<div>' + verdictCell + '</div>') +
         '</td>' +
         '<td class="figure when">' + when + '</td>' +
-        '<td class="set">' + callPickers(row) + '</td>' +
+        '<td class="set"><div class="setters">' + callPickers(row) + '</div></td>' +
         '<td class="verdict-cell">' + callVerdict(row) + '</td>' +
         '</tr>'
 }

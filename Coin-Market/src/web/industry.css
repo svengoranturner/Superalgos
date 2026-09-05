@@ -802,13 +802,20 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
    ───────────────────────────────────────────────────────────────────────── */
 
 /*  The pickers - which kind, which denomination, how many. Three controls in
-    one cell, so they wrap rather than forcing the column wide enough to hold
-    them in a line. */
+    one cell, wrapping rather than forcing the column wide enough to hold them
+    in a line.
+
+    The flex goes on a wrapper inside the cell, not on the cell. `display:
+    flex` on a <td> takes it out of the table's column algorithm entirely, so
+    the 20% below stopped applying and the column measured 40px with three
+    selects hanging out of it - the same class of mistake as the verdict
+    column's `width: 10%` holding two 44px buttons, one layout mode along. */
 table.scan.queue th.set, table.scan.queue td.set { width: 20% }
-table.scan.queue td.set {
+table.scan.queue td.set .setters {
   display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
 }
 table.scan.queue td.set select { max-width: 100%; font-size: 12px }
+table.scan.queue td.set input.qty { width: 48px }
 
 table.scan.queue th.when, table.scan.queue td.when {
   width: 9%; color: color-mix(in srgb, var(--color-text) 60%, transparent);
