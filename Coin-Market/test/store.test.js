@@ -858,6 +858,140 @@ test('the uplift curve is recomputed when an outcome resolves, and not otherwise
     db.close()
 })
 
+/*
+    THE COLLECTOR WAS INVALIDATING EVERY MEMO EVERY TWO SECONDS.
+
+    listing_instrument was written with INSERT OR REPLACE, so re-classifying a
+    listing the sweep had seen before rewrote the row whatever it held and
+    moved assigned_at with it. marketWatermark reads MAX(assigned_at) over
+    that table - deliberately, so a re-filed coin invalidates the figures
+    computed from it - and the collector therefore looked, to every cache in
+    the application, like a continuous stream of changes.
+
+    Measured on the live store: the watermark moved 16 times in 60 seconds
+    while the row count stood at 15,295 exactly, not once. Every market memo,
+    every composition, the menu-bar counts and the tracked-type set were being
+    thrown away and rebuilt from cold at that rate.
+*/
+test('re-seeing a listing with the same answer changes nothing', () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    const browseId = 'v1|same|0'
+    repository.saveListing({
+        browseId, legacyId: 'same', title: 'Sovereign', buyingOptions: 'AUCTION', endTime: now
+    }, now)
+    const classify = (confidence, quantity, key) => repository.saveClassification(
+        browseId, [{ key: key || 'GB.SOV.BULLION.FULL', level: 0 }], confidence, 'title',
+        0.2354, quantity === undefined ? {} : { quantity })
+
+    /*
+        BACKDATED BETWEEN THE CALLS, AND THAT IS THE TEST.
+
+        The obvious version compares the watermark before and after, and it
+        cannot fail: saveClassification stamps assigned_at with its own clock,
+        two calls land in the same millisecond, and the string is identical
+        whether the row was rewritten or not. It passed against INSERT OR
+        REPLACE - the very thing it was written to catch - and then failed
+        intermittently on a real change for the same reason.
+
+        So the row is moved to a date no clock will produce, and the question
+        becomes whether the write happened at all rather than whether two
+        timestamps differ.
+    */
+    const LONG_AGO = '2020-01-01T00:00:00.000Z'
+    const backdate = () => db.prepare('UPDATE listing_instrument SET assigned_at = ?')
+        .run(LONG_AGO)
+    const stampedAt = () => db.prepare(
+        'SELECT assigned_at FROM listing_instrument WHERE browse_id = ?').get(browseId).assigned_at
+
+    classify(0.9)
+    backdate()
+    const mark = repository.marketWatermark()
+
+    /*  The sweep, coming round again on a listing nothing has changed about.
+        This is the ordinary case: most of what a sweep re-sees is exactly
+        what it saw last time. */
+    classify(0.9)
+    assert.strictEqual(stampedAt(), LONG_AGO,
+        'a listing re-classified to the same answer was rewritten anyway, which moves the ' +
+        'watermark and throws away every memo keyed on it')
+    assert.strictEqual(repository.marketWatermark(), mark,
+        'the watermark moved on a listing nothing had changed about')
+    db.close()
+})
+
+test('a listing whose answer changed is written, whatever changed', () => {
+    /*  The other half. Skipping a write when nothing differs is only correct
+        if every way a row CAN differ is in the test - a guard that forgets
+        one field trades a slow tool for a wrong one, silently. One case per
+        column the row carries. */
+    const LONG_AGO = '2020-01-01T00:00:00.000Z'
+
+    const CHANGES = [
+        {
+            what: 'a lower confidence',
+            apply: (r, id) => r.saveClassification(id,
+                [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.4, 'title', 0.2354, {})
+        },
+        {
+            what: 'a different method',
+            apply: (r, id) => r.saveClassification(id,
+                [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'aspects', 0.2354, {})
+        },
+        {
+            what: 'a multi-coin lot',
+            apply: (r, id) => r.saveClassification(id,
+                [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, { quantity: 3 })
+        }
+    ]
+
+    for (const change of CHANGES) {
+        const db = newDatabase(':memory:')
+        const repository = newRepository(db, { sellerSalt: 'test' })
+        const now = new Date().toISOString()
+        const browseId = 'v1|changed|0'
+        repository.saveListing({
+            browseId, legacyId: 'changed', title: 'Sovereign', buyingOptions: 'AUCTION', endTime: now
+        }, now)
+        repository.saveClassification(browseId,
+            [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+        db.prepare('UPDATE listing_instrument SET assigned_at = ?').run(LONG_AGO)
+
+        change.apply(repository, browseId)
+
+        const row = db.prepare('SELECT assigned_at FROM listing_instrument WHERE browse_id = ?')
+            .get(browseId)
+        assert.notStrictEqual(row.assigned_at, LONG_AGO,
+            change.what + ' did not rewrite the row, so the figures behind it go stale and ' +
+            'stay stale')
+        db.close()
+    }
+})
+
+test('a re-filed coin still invalidates what was computed from it', () => {
+    /*  At the level that matters: a coin moving to a different key is exactly
+        what the watermark exists to catch. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    const browseId = 'v1|moved|0'
+    repository.saveListing({
+        browseId, legacyId: 'moved', title: 'Sovereign', buyingOptions: 'AUCTION', endTime: now
+    }, now)
+    repository.saveClassification(browseId,
+        [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+    const before = repository.marketWatermark()
+
+    repository.saveClassification(browseId,
+        [{ key: 'GB.SOV.PROOF.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+    assert.notStrictEqual(repository.marketWatermark(), before,
+        'a coin filed under a new key left the watermark alone')
+    db.close()
+})
+
 test('the watermark notices a deletion, not only an arrival', () => {
     /*  A count alone would miss a correction that swapped one outcome for
         another; a MAX alone would miss a deletion. The pair is the point. */

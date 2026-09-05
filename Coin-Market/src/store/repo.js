@@ -116,10 +116,43 @@ exports.newRepository = function (db, options) {
                 (browse_id, ended_at, resolved_at, sold, final_price, shipping, bid_count, sale_type, censored, source)
             VALUES (?,?,?,?,?,?,?,?,?,?)
         `),
+        /*
+            A RE-SEEN LISTING WITH THE SAME ANSWER IS NOT A CHANGE.
+
+            This was INSERT OR REPLACE, which rewrites the row whatever it
+            held - so the collector, re-classifying every listing it re-sees
+            on its poll, moved assigned_at on 15,295 rows that had not
+            changed at all.
+
+            That is not a wasted write, it is the invalidation signal for
+            every memo in the application. marketWatermark reads
+            MAX(assigned_at) over this table precisely so a re-filed coin
+            invalidates the figures computed from it; measured on the live
+            store, that value moved 16 times in 60 seconds while the row
+            count sat at 15,295 exactly. Every market memo, every composition,
+            the menu-bar counts and the tracked-type set were being thrown
+            away every two seconds and rebuilt from cold - which is most of
+            the reason the pages are slow.
+
+            So the row is written only when one of its answers differs.
+            `verified` is included for completeness; nothing reads it yet, and
+            REPLACE was resetting it to 0 on every sweep, which would have
+            been a real bug the moment something did.
+        */
         assignInstrument: db.prepare(`
-            INSERT OR REPLACE INTO listing_instrument
+            INSERT INTO listing_instrument
                 (browse_id, key, confidence, method, verified, assigned_at, quantity)
             VALUES (?,?,?,?,?,?,?)
+            ON CONFLICT(browse_id, key) DO UPDATE SET
+                confidence  = excluded.confidence,
+                method      = excluded.method,
+                verified    = excluded.verified,
+                assigned_at = excluded.assigned_at,
+                quantity    = excluded.quantity
+            WHERE listing_instrument.confidence IS NOT excluded.confidence
+               OR listing_instrument.method     IS NOT excluded.method
+               OR listing_instrument.verified   IS NOT excluded.verified
+               OR listing_instrument.quantity   IS NOT excluded.quantity
         `),
         upsertInstrument: db.prepare(`
             INSERT INTO instrument (key, level, display_name, metal, fine_oz, attributes)
