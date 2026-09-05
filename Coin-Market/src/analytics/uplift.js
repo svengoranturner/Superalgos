@@ -91,6 +91,22 @@ exports.buildCurve = function (samples, options) {
         /* One number per auction, however many times we looked at it. */
         const ratios = [...auctions.values()].map(rs => STATS.median(rs))
 
+        /*  HOW OFTEN IT JUMPS, not just where the middle lands.
+
+            The median in the final bucket is 1.00, which reads as "the price
+            does not move in the last fifteen minutes" - the owner did not
+            believe it, and was right not to. Measured on the live store, of
+            422 lots seen inside that window 132 rose more than 5% and 52 more
+            than 20%. The median is true and it is the least useful true thing
+            to say: what a bidder needs is the chance of being outbid late,
+            and that lives in the tail the median hides.
+
+            `project` still reads the quantiles, so nothing about the alerts
+            changes. These are additions. */
+        const share = (threshold) => ratios.length === 0
+            ? null
+            : ratios.filter(r => r > threshold).length / ratios.length
+
         curve[bucket.code] = ratios.length >= config.minSamples
             ? {
                 sufficient: true,
@@ -98,9 +114,14 @@ exports.buildCurve = function (samples, options) {
                 p25: STATS.quantile(ratios, 0.25),
                 median: STATS.median(ratios),
                 p75: STATS.quantile(ratios, 0.75),
-                p90: STATS.quantile(ratios, 0.90)
+                p90: STATS.quantile(ratios, 0.90),
+                rose5: share(1.05),
+                rose20: share(1.20)
             }
-            : { sufficient: false, n: ratios.length, p25: null, median: null, p75: null, p90: null }
+            : {
+                sufficient: false, n: ratios.length, p25: null, median: null,
+                p75: null, p90: null, rose5: null, rose20: null
+            }
     }
     return curve
 }

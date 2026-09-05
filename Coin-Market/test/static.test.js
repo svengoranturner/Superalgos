@@ -708,3 +708,81 @@ test('a filter toggle is a box, not an inline sliver', () => {
     assert.match(css, /\.filters \.radio\.on \{[^}]*color\s*:/,
         'only the dot changes between on and off; the control itself says nothing')
 })
+
+test('the late-bidding chart is drawn on a fixed scale, not on its own maximum', () => {
+    /*
+        THE FAULT THIS REPLACES. The old chart scaled bar height by
+        (median - 1) / (max - 1), so the tallest bar was always full height
+        whatever it represented - a x1.02 bucket beside a x1.10 one drew at a
+        quarter the height rather than 93%, and a chart of uniformly tiny
+        movements looked like a chart of enormous ones.
+
+        A share is already a fraction of one and needs no normalising. Pinned
+        by rendering the same bucket in two different companies: if the scale
+        moved with the data, the identical bucket would draw at two different
+        heights.
+    */
+    const UPLIFT = require('../src/analytics/uplift.js')
+    const code = UPLIFT.bucketFor(600)
+
+    const build = (jumpers, total) => {
+        const samples = []
+        for (let n = 0; n < total; n++) {
+            samples.push({
+                browseId: 'lot' + n, secondsToEnd: 600, price: 100,
+                finalPrice: n < jumpers ? 130 : 101
+            })
+        }
+        return UPLIFT.buildCurve(samples)
+    }
+
+    /*  The same 30% bucket, once alone and once beside a 90% one. */
+    const quiet = build(3, 10)
+    const loud = build(9, 10)
+    const mixed = Object.assign({}, quiet)
+    mixed[UPLIFT.BUCKETS[0].code] = loud[code]
+
+    /*  THE SAME bucket in both charts, not any bar against any bar - an
+        any-to-any comparison passes trivially, because the tallest bar of a
+        self-scaling chart is full height in every chart it appears in. That
+        is how the first version of this test missed the mutation it exists
+        for. */
+    const label = UPLIFT.BUCKETS.find(b => b.code === code).label
+    const heightOfBucket = (svg) => {
+        const group = svg.split('<g>').find(g => g.includes('>' + label + '<'))
+        assert.ok(group !== undefined, 'no group for bucket ' + label)
+        const rects = group.match(/<rect[^>]*height="([\d.]+)"/g) || []
+        assert.ok(rects.length > 0, 'bucket ' + label + ' drew no bar')
+        return Number(/height="([\d.]+)"/.exec(rects[0])[1])
+    }
+
+    const alone = heightOfBucket(RENDER.upliftChart(quiet))
+    const beside = heightOfBucket(RENDER.upliftChart(mixed))
+
+    assert.ok(Math.abs(alone - beside) < 0.5,
+        'the 30% bucket drew at ' + alone.toFixed(1) + ' alone and ' + beside.toFixed(1) +
+        ' beside a 90% one, so the scale is still moving with the data')
+
+    /*  And the axis says what the scale is, which a self-scaling one cannot. */
+    const svg = RENDER.upliftChart(quiet)
+    for (const mark of ['25%', '50%', '75%', '100%']) {
+        assert.ok(svg.includes('>' + mark + '<'), 'the axis has no ' + mark + ' gridline')
+    }
+})
+
+test('a bucket with too little data is named, not deleted', () => {
+    /*  The old chart filtered thin buckets out entirely, so a reader could not
+        tell a quiet bucket from one nobody has data for. */
+    const UPLIFT = require('../src/analytics/uplift.js')
+    const samples = []
+    /*  One bucket well populated, another with two auctions in it. */
+    for (let n = 0; n < 10; n++) {
+        samples.push({ browseId: 'a' + n, secondsToEnd: 600, price: 100, finalPrice: 120 })
+    }
+    samples.push({ browseId: 'b1', secondsToEnd: 30, price: 100, finalPrice: 120 })
+    samples.push({ browseId: 'b2', secondsToEnd: 30, price: 100, finalPrice: 120 })
+
+    const svg = RENDER.upliftChart(UPLIFT.buildCurve(samples))
+    assert.ok(svg.includes('too few'), 'the thin bucket was dropped rather than named')
+    assert.ok(svg.includes('n=2'), 'the thin bucket does not say how thin it is')
+})

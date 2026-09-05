@@ -93,9 +93,16 @@ exports.fairValue = function (observations, options) {
         n: usable.length,
         censored: censoredCount,
         bound,
+        /*  p10 and p90 exist for the chart, which drew only the middle half
+            and hid the tails. The owner's objection was exactly right for
+            somebody buying: "why wouldn't I be interested in anything above
+            or below those thresholds?" - the cheap quarter is the quarter
+            they are hunting, and it was the part not drawn. */
+        p10: STATS.weightedQuantile(usable, 0.10),
         p25: STATS.weightedQuantile(usable, 0.25),
         p50: STATS.weightedQuantile(usable, 0.50),
         p75: STATS.weightedQuantile(usable, 0.75),
+        p90: STATS.weightedQuantile(usable, 0.90),
         band: STATS.medianConfidenceBand(values),
         dispersion: STATS.medianAbsoluteDeviation(values),
         effectiveWeight: usable.reduce((sum, p) => sum + p.weight, 0)

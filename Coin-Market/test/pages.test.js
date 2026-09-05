@@ -2883,7 +2883,7 @@ const REFERENCE = [
     ['/premiums', 'Premiums'],
     ['/types', 'Coin types'],
     ['/composition', 'Composition'],
-    ['/uplift', 'Bid uplift'],
+    ['/uplift', 'Late bidding'],
     ['/gaps', 'Gaps']
 ]
 

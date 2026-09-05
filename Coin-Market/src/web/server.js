@@ -724,9 +724,11 @@ function marketPage (opened, url, reference) {
         .slice(0, 12)
         .map(e => ({
             label: INSTRUMENTS.displayName(e.row.key),
+            p10: e.market.fairValue.p10,
             p25: e.market.fairValue.p25,
             p50: e.market.fairValue.p50,
             p75: e.market.fairValue.p75,
+            p90: e.market.fairValue.p90,
             ask: e.market.liquidity.medianAskPremium,
             n: e.market.fairValue.n
         }))
@@ -861,10 +863,10 @@ function marketPage (opened, url, reference) {
             body: () => compositionBlocks
         },
         uplift: {
-            title: 'Bid uplift',
-            lead: 'How far an auction climbs between the last quiet hour and the hammer, ' +
-                'learned from this tool\'s own snapshots. It is why an alert can reach you ' +
-                'while there is still time to act.',
+            title: 'Late bidding',
+            lead: 'How often an auction is still rising with this much time left, over a ' +
+                'year of this tool\'s own snapshots. A median says the price does not move ' +
+                'in the last few minutes; the share that jumps says what waiting risks.',
             body: () => '<div class="card">' + RENDER.upliftChart(curveOf()) + '</div>'
         },
         gaps: {

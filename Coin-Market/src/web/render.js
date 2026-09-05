@@ -151,7 +151,7 @@ const MENUS = [
         [null, [
             ['/?view=sold', 'Sold', 'sold'],
             ['/premiums', 'Premiums', null],
-            ['/uplift', 'Bid uplift', null]
+            ['/uplift', 'Late bidding', null]
         ]]
     ]],
     ['Identification', [
@@ -389,10 +389,27 @@ exports.premiumChart = function (rows) {
 
         parts.push(`<text x="0" y="${y + 4}" fill="var(--ink)" font-size="12.5">${escapeHtml(row.label.slice(0, 52))}</text>`)
 
-        /* Interquartile range of clearing prices - what patience is worth. */
+        /*  THE WHOLE SPREAD, not just the middle of it.
+
+            This drew p25 to p75 alone, and the owner's objection was exactly
+            right for somebody buying: "why wouldn't I be interested in
+            anything above or below those thresholds?" The cheap quarter is
+            the quarter they are hunting, and it was the part not drawn - the
+            chart showed where the market is comfortable and hid where the
+            bargains are.
+
+            A hairline from p10 to p90 for the range, the heavy bar kept for
+            the middle half, and a tick at p10 because that is the number
+            somebody is trying to beat. */
+        if (Number.isFinite(row.p10) && Number.isFinite(row.p90)) {
+            parts.push(`<line x1="${x(row.p10).toFixed(1)}" y1="${y}" x2="${x(row.p90).toFixed(1)}" y2="${y}"
+                stroke="var(--clearing)" stroke-width="1" opacity="0.22" stroke-linecap="round"/>`)
+            parts.push(`<line x1="${x(row.p10).toFixed(1)}" y1="${y - 5}" x2="${x(row.p10).toFixed(1)}" y2="${y + 5}"
+                stroke="var(--clearing)" stroke-width="1.5" opacity="0.55"/>`)
+        }
         if (Number.isFinite(row.p25) && Number.isFinite(row.p75)) {
             parts.push(`<line x1="${x(row.p25).toFixed(1)}" y1="${y}" x2="${x(row.p75).toFixed(1)}" y2="${y}"
-                stroke="var(--clearing)" stroke-width="2" opacity="0.32" stroke-linecap="round"/>`)
+                stroke="var(--clearing)" stroke-width="4" opacity="0.32" stroke-linecap="round"/>`)
         }
         if (Number.isFinite(row.p50)) {
             parts.push(`<circle cx="${x(row.p50).toFixed(1)}" cy="${y}" r="5"
@@ -410,14 +427,14 @@ exports.premiumChart = function (rows) {
                     text-anchor="middle">+${((row.ask - row.p50) * 100).toFixed(0)}pp</text>`)
             }
         }
-        parts.push(`<title>${escapeHtml(row.label)}: clears ${pct(row.p50)}, asks ${pct(row.ask)} (n=${row.n})</title>`)
+        parts.push(`<title>${escapeHtml(row.label)}: clears ${pct(row.p50)}, cheapest tenth at ${pct(row.p10)}, asks ${pct(row.ask)} (n=${row.n})</title>`)
         return '<g>' + parts.join('') + '</g>'
     })
 
     return `
 <div class="legend">
-  <span><span class="swatch" style="background:var(--clearing)"></span>Auction clearing premium (bar = p25–p75)</span>
-  <span><span class="swatch" style="background:var(--ask)"></span>Buy-It-Now asking premium</span>
+  <span><span class="swatch" style="background:var(--clearing)"></span>Where auctions cleared &mdash; dot is the middle one, bar the middle half, tick the cheapest tenth</span>
+  <span><span class="swatch" style="background:var(--ask)"></span>What Buy-It-Now lots are asking now &mdash; a different set of listings, not these sales</span>
 </div>
 <div class="scroll"><svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
   role="img" aria-label="Clearing premium versus asking premium by coin type">
@@ -428,44 +445,109 @@ exports.premiumChart = function (rows) {
 }
 
 /* Uplift curve: one series, magnitude across ordered buckets -> bars. */
+/*
+    HOW OFTEN A LOT JUMPS LATE, and by how much.
+
+    This drew one bar per bucket at the MEDIAN ratio, and in the final bucket
+    that median is 1.00 - which reads as "the price does not move in the last
+    fifteen minutes". The owner did not believe it and was right not to: of
+    422 lots seen inside that window on the live store, 132 rose more than 5%
+    and 52 more than 20%. The median was true and the least useful true thing
+    the data had to say.
+
+    Two more faults went with it. Bar height was (median - 1) / (max - 1), so
+    a x1.02 bucket beside a x1.10 one drew at a quarter the height rather than
+    93% - a scale that exaggerates whatever it is given. And buckets below the
+    sample floor were dropped from the chart entirely, so a reader could not
+    tell a quiet bucket from one nobody has data for.
+
+    What is drawn now is the share of auctions that rose past each threshold,
+    on a fixed 0-100% scale that cannot flatter anything, with thin buckets
+    named rather than hidden.
+*/
 exports.upliftChart = function (curve) {
-    const buckets = UPLIFT.BUCKETS.filter(b => curve[b.code] && curve[b.code].sufficient)
-    if (buckets.length === 0) {
-        return '<p class="thin">Not learned yet — needs completed auctions with snapshots. ' +
+    const buckets = UPLIFT.BUCKETS.filter(b => curve[b.code])
+    const usable = buckets.filter(b => curve[b.code].sufficient)
+    if (usable.length === 0) {
+        return '<p class="thin">Not learned yet &mdash; needs completed auctions with snapshots. ' +
             'Until then the tool stays silent on projections rather than assuming lots do not move.</p>'
     }
 
     const width = 1000
-    const height = 210
-    const left = 90
-    const bottom = 42
-    const max = Math.max(...buckets.map(b => curve[b.code].median))
-    const scale = (value) => (value - 1) / (max - 1 || 1)
-    const barWidth = (width - left - 30) / buckets.length - 14
+    const height = 230
+    const left = 60
+    const bottom = 46
+    const top = 18
+    const plot = height - bottom - top
+    const step = (width - left - 30) / buckets.length
+    const barWidth = Math.min(64, step - 16)
+
+    /*  Fixed scale, defined ONCE. A share is already a fraction of one, so
+        nothing here needs normalising against the tallest bar - which is what
+        let the old chart make a two-percent difference look like a landslide.
+
+        The height is derived from the same function as the position rather
+        than recomputed beside it. Written the other way first, and the two
+        expressions could then disagree: a change to the scale moved the bars
+        without resizing them, which draws a chart that is wrong in a way
+        nothing would notice. */
+    const baseline = height - bottom
+    const yOf = (share) => top + plot * (1 - share)
+    const heightOf = (share) => baseline - yOf(share)
 
     const bars = buckets.map((bucket, index) => {
         const entry = curve[bucket.code]
-        const x = left + index * ((width - left - 30) / buckets.length)
-        const h = Math.max(2, scale(entry.median) * (height - bottom - 30))
-        const y = height - bottom - h
-        return `<g>
-      <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${h.toFixed(1)}"
-        rx="4" fill="var(--clearing)"/>
-      <text x="${(x + barWidth / 2).toFixed(1)}" y="${(y - 7).toFixed(1)}" fill="var(--ink-2)"
-        font-size="11.5" text-anchor="middle">×${entry.median.toFixed(2)}</text>
-      <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - bottom + 16}" fill="var(--muted)"
-        font-size="11" text-anchor="middle">${escapeHtml(bucket.label)}</text>
+        const x = left + index * step + (step - barWidth) / 2
+        const label = `<text x="${(x + barWidth / 2).toFixed(1)}" y="${height - bottom + 16}"
+        fill="var(--muted)" font-size="11" text-anchor="middle">${escapeHtml(bucket.label)}</text>`
+
+        if (!entry.sufficient) {
+            /*  Named, not dropped. A bucket with four auctions in it is a
+                different thing from one nobody has looked at, and the old
+                chart rendered both as absent. */
+            return `<g>
+      <text x="${(x + barWidth / 2).toFixed(1)}" y="${(height - bottom - 8).toFixed(1)}"
+        fill="var(--muted)" font-size="10.5" text-anchor="middle">too few</text>
+      ${label}
       <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - bottom + 30}" fill="var(--muted)"
         font-size="10" text-anchor="middle">n=${entry.n}</text>
-      <title>${escapeHtml(bucket.label)} before close: lots finish ×${entry.median.toFixed(3)} higher (n=${entry.n})</title>
+      <title>${escapeHtml(bucket.label)} before close: only ${entry.n} auctions, too few to say</title>
+    </g>`
+        }
+
+        const five = Number.isFinite(entry.rose5) ? entry.rose5 : 0
+        const twenty = Number.isFinite(entry.rose20) ? entry.rose20 : 0
+        const pctOf = (share) => (share * 100).toFixed(0) + '%'
+
+        return `<g>
+      <rect x="${x.toFixed(1)}" y="${yOf(five).toFixed(1)}" width="${barWidth.toFixed(1)}"
+        height="${heightOf(five).toFixed(1)}" fill="var(--clearing)" opacity="0.35"/>
+      <rect x="${x.toFixed(1)}" y="${yOf(twenty).toFixed(1)}" width="${barWidth.toFixed(1)}"
+        height="${heightOf(twenty).toFixed(1)}" fill="var(--clearing)"/>
+      <text x="${(x + barWidth / 2).toFixed(1)}" y="${(yOf(five) - 6).toFixed(1)}" fill="var(--ink-2)"
+        font-size="11.5" text-anchor="middle">${pctOf(five)}</text>
+      ${label}
+      <text x="${(x + barWidth / 2).toFixed(1)}" y="${height - bottom + 30}" fill="var(--muted)"
+        font-size="10" text-anchor="middle">n=${entry.n}</text>
+      <title>${escapeHtml(bucket.label)} before close: ${pctOf(five)} of ${entry.n} auctions rose more than 5% after this point, ${pctOf(twenty)} rose more than 20%</title>
     </g>`
     }).join('')
 
-    return `<div class="scroll"><svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
-   role="img" aria-label="How much auctions rise before the hammer, by time remaining">
-  <line x1="${left - 14}" y1="${height - bottom}" x2="${width - 20}" y2="${height - bottom}"
+    const gridlines = [0.25, 0.5, 0.75, 1].map(share => `
+  <line x1="${left - 10}" y1="${yOf(share).toFixed(1)}" x2="${width - 20}" y2="${yOf(share).toFixed(1)}"
+    stroke="var(--grid)" stroke-width="1"/>
+  <text x="0" y="${(yOf(share) + 4).toFixed(1)}" fill="var(--muted)" font-size="10.5">${(share * 100).toFixed(0)}%</text>`).join('')
+
+    return `
+<div class="legend">
+  <span><span class="swatch" style="background:var(--clearing);opacity:.35"></span>Rose more than 5% after this point</span>
+  <span><span class="swatch" style="background:var(--clearing)"></span>Rose more than 20%</span>
+</div>
+<div class="scroll"><svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
+   role="img" aria-label="How often an auction rises after each point before it closes">
+  ${gridlines}
+  <line x1="${left - 10}" y1="${height - bottom}" x2="${width - 20}" y2="${height - bottom}"
     stroke="var(--axis)" stroke-width="1"/>
-  <text x="0" y="${height - bottom - 6}" fill="var(--muted)" font-size="11">final ÷ observed</text>
   ${bars}
 </svg></div>`
 }

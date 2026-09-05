@@ -268,3 +268,71 @@ test('a bid ceiling is quoted without the fee eBay will add to it', () => {
     /*  And it is genuinely lower than the old arithmetic, not a no-op. */
     assert.ok(ceiling.maxBid < ceiling.allInValue - 4.50)
 })
+
+/*
+    THE MEDIAN IS TRUE AND USELESS IN THE LAST FIFTEEN MINUTES.
+
+    The uplift chart drew one bar per bucket at the median ratio, and in the
+    final bucket that median is 1.00 - which reads as "the price does not move
+    before the hammer". The owner did not believe it. Measured on the live
+    store, of 422 lots seen inside that window 132 rose more than 5% and 52
+    more than 20%: the median is correct and hides exactly the thing a bidder
+    needs, which is the chance of being outbid late.
+*/
+test('the curve says how often a lot jumps, not only where the middle lands', () => {
+    /*  Twenty auctions in one bucket. Fourteen barely move; six jump 30%. The
+        median is 1.01 - "nothing happens" - while nearly a third jumped. */
+    const samples = []
+    for (let n = 0; n < 20; n++) {
+        samples.push({
+            browseId: 'lot' + n, secondsToEnd: 600, price: 100,
+            finalPrice: n < 6 ? 130 : 101
+        })
+    }
+    const bucket = UPLIFT.buildCurve(samples)[UPLIFT.bucketFor(600)]
+
+    assert.ok(bucket.median < 1.05,
+        'the fixture does not reproduce the flat median: ' + bucket.median)
+    assert.ok(bucket.rose5 > 0.25 && bucket.rose5 < 0.35,
+        'six of twenty rose more than 5%, reported ' + bucket.rose5)
+    assert.strictEqual(bucket.rose20, bucket.rose5,
+        'the same six rose more than 20%, so the two shares should agree here')
+
+    /*  The point of the whole change, stated as an assertion: a reader
+        looking only at the median would conclude nothing happens. */
+    assert.ok(bucket.rose5 > (bucket.median - 1) * 4,
+        'the share that jumps is not telling you more than the median is')
+})
+
+test('a share is null when the bucket has too little to say', () => {
+    /*  Below the sample floor the curve reports nothing rather than a
+        confident fraction of four auctions. */
+    const bucket = UPLIFT.buildCurve([
+        { browseId: 'a', secondsToEnd: 600, price: 100, finalPrice: 150 },
+        { browseId: 'b', secondsToEnd: 600, price: 100, finalPrice: 150 }
+    ])[UPLIFT.bucketFor(600)]
+
+    assert.strictEqual(bucket.sufficient, false)
+    assert.strictEqual(bucket.rose5, null, 'a two-auction bucket reported a share anyway')
+    assert.strictEqual(bucket.n, 2, 'the count should still be reported, so thin reads as thin')
+})
+
+test('fair value carries the tails the chart used to hide', () => {
+    /*  The chart drew p25 to p75 and nothing else, so the cheap quarter - the
+        quarter somebody buying is hunting - was the part not drawn. */
+    const now = Date.now()
+    const observations = []
+    for (let n = 0; n < 40; n++) {
+        observations.push({
+            premium: n / 100, soldAt: new Date(now - n * 3600000).toISOString(), censored: false
+        })
+    }
+    const fair = FAIRVALUE.fairValue(observations, { now })
+
+    assert.ok(fair.sufficient)
+    for (const q of ['p10', 'p25', 'p50', 'p75', 'p90']) {
+        assert.ok(Number.isFinite(fair[q]), q + ' is missing from fair value')
+    }
+    assert.ok(fair.p10 < fair.p25, 'p10 is not below p25')
+    assert.ok(fair.p90 > fair.p75, 'p90 is not above p75')
+})
