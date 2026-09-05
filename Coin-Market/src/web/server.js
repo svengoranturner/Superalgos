@@ -12,6 +12,7 @@ const RECLASSIFY = require('../catalogue/reclassify.js')
 const PREMIUM = require('../analytics/premium.js')
 const SERIES = require('../catalogue/series/index.js')
 const FRESHNESS = require('../analytics/freshness.js')
+const UPLIFT = require('../analytics/uplift.js')
 
 const { escapeHtml, pct, gbp } = RENDER
 
@@ -1630,6 +1631,32 @@ function marketPage (opened, url, reference) {
         within, Date.now())
     const endingSoon = endingBeforeMetal.filter(inMetals)
     endingSoon.sort((a, b) => String(a.endTime).localeCompare(String(b.endTime)))
+
+    /*  BANDED FROM THE ROWS THAT RENDER, NOT THE ROWS THAT WERE READ.
+
+        marketsFor memoises per key under one stamp and fills rather than
+        evicts, so a type already priced for the instrument table costs
+        nothing here and one outside it costs a single forInstrument. Measured
+        on the live store: 500 scanned rows hold 21 distinct types, and the
+        whole join takes 31ms warm against 1,256ms on a cold memo.
+
+        Off the rendered rows anyway, because that is the tighter bound and
+        the number that matters is what a page costs, not what a query
+        returned. `endingSoon` is capped here for the first time for the same
+        reason - it was handed to scanTable unsliced, which was already a
+        latent cost and would now be a structural one. */
+    const endingShown = endingSoon.slice(0, 40)
+    {
+        const banded = shown.concat(endingShown)
+        const keys = [...new Set(banded.map(r => r.instrumentKey).filter(Boolean))]
+        if (keys.length > 0) {
+            const found = view.marketsFor(keys)
+            const curve = curveOf()
+            for (const row of banded) {
+                row.typeBand = bandFor(row, found.get(row.instrumentKey), curve)
+            }
+        }
+    }
     for (const row of shown) { row.sweepAt = sweepAt }
 
     /*  Keep any min= the owner arrived with, so switching the ordering does
@@ -1983,7 +2010,7 @@ function marketPage (opened, url, reference) {
             empty list is empty is the kind of prose this UI keeps growing. */
         ending: endingSoon.length === 0
             ? ''
-            : scanTable(endingSoon, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
+            : scanTable(endingShown, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
                 (key) => filterHref({ order: key }))
     }
     const viewBody = VIEW_BODIES[scanView]
@@ -3483,6 +3510,121 @@ function listedFor (iso) {
     Reversing that decision is the one thing in the redesign that undoes
     something measured, and it is done with its eyes open.
 */
+/*
+    WHERE THIS LOT SITS IN WHAT ITS OWN COIN TYPE ACTUALLY FETCHES.
+
+    The chip has always printed a premium over spot, and spot is the wrong
+    yardstick for the question the owner asks of it. A sovereign four per cent
+    under spot is ordinary; a proof four per cent under spot is extraordinary.
+    The number stays as it was - it is a fact and a useful one - and the
+    COLOUR now says the thing the number cannot: whether this is cheap or dear
+    for this coin.
+
+    Three bands, against the distribution of what this type has really cleared
+    at on its own channel. Below the cheapest quarter, above the dearest, or
+    ordinary and left alone. Most rows are ordinary, which is the point: a
+    colour that fires on everything says nothing.
+
+    TWO ASYMMETRIES, and both are real rather than hedging.
+
+    A LIVE AUCTION'S BID IS NOT ITS PRICE. The chip's number is what somebody
+    has bid so far; the distribution is what lots FINISHED at. Measured on the
+    live store, of the 96 auctions a naive comparison would paint green, 82
+    end more than a day out and none inside the hour - so green would mean
+    "nobody has bid yet" and would send the reader at lots that finish dear.
+    UPLIFT.project exists for exactly this and says so in its own comment, so
+    green is judged on where the bid is heading and red on where it already
+    is. A bid past the dearest quarter only rises.
+
+    AND EBAY WITHHOLDS WHAT AN ACCEPTED OFFER WENT FOR. fairByChannel's
+    Buy-It-Now distribution keeps those rows deliberately (market.js) with
+    every quantile marked as a ceiling. Measured: of the eleven types with
+    enough Buy-It-Now sales to say anything, ten are 'mixed' and one 'upper' -
+    not one is exact. Above a ceiling is definitely above, so red holds; below
+    a ceiling is not necessarily below, so green comes from the fixed-price
+    sales alone, where the price is a price somebody paid. Six types have
+    enough of those. The same doctrine as every other 'at most' on this site.
+*/
+function bandFor (row, market, curve) {
+    if (market === undefined || market === null) { return null }
+    if (!Number.isFinite(row.ratio) || !Number.isFinite(row.metalValue)) { return null }
+
+    const channels = market.fairByChannel || {}
+    const auction = /AUCTION/i.test(String(row.buyingOptions || ''))
+    /*  Its own channel, never the page's filter: under "Both" the two kinds
+        sit in one list, and an ask judged against auction clearing would be
+        reporting the gap between the two markets rather than anything about
+        the lot. */
+    const dearAgainst = auction ? channels.AUCTION : channels.BUY_IT_NOW
+    const cheapAgainst = auction ? channels.AUCTION : channels.FIXED_PRICE
+    const premium = row.ratio - 1
+
+    if (dearAgainst && dearAgainst.sufficient && premium > dearAgainst.p75) {
+        return { verdict: 'dear', against: dearAgainst, premium }
+    }
+    if (!cheapAgainst || !cheapAgainst.sufficient) {
+        return { verdict: null, against: cheapAgainst || dearAgainst || null, premium }
+    }
+
+    if (!auction) {
+        return premium < cheapAgainst.p25
+            ? { verdict: 'cheap', against: cheapAgainst, premium }
+            : { verdict: null, against: cheapAgainst, premium }
+    }
+
+    /*  No end time, or a curve that has not learned this stretch of the
+        clock: say nothing rather than guess an uplift of 1.0, which is the
+        assumption that makes every young auction look like a bargain. */
+    const ends = Date.parse(row.endTime)
+    if (!Number.isFinite(ends)) { return { verdict: null, against: cheapAgainst, premium } }
+    const projected = UPLIFT.project(PREMIUM.totalCost(row.price, row.shipping),
+        (ends - Date.now()) / 1000, curve)
+    if (projected === null) {
+        return { verdict: null, against: cheapAgainst, premium, unprojected: true }
+    }
+
+    const finish = projected.expected / row.metalValue - 1
+    return finish < cheapAgainst.p25
+        ? { verdict: 'cheap', against: cheapAgainst, premium, finish }
+        : { verdict: null, against: cheapAgainst, premium, finish }
+}
+
+/*  What the colour is saying, in words, on every chip - a fill with no
+    explanation is a fill nobody trusts. Four different reasons for no
+    colour, and they are not the same reason. */
+function bandTitle (row, band) {
+    const name = row.instrumentKey ? INSTRUMENTS.displayName(row.instrumentKey) : 'This coin type'
+    if (band === null) { return 'No coin type, so nothing to compare this against.' }
+
+    const against = band.against
+    if (!against || !against.sufficient) {
+        const n = against ? against.n : 0
+        return name + ' has ' + n + ' completed ' + (n === 1 ? 'sale' : 'sales') +
+            ' of this kind on record - three are needed before the tool will say what is ' +
+            'normal for it, so this is left uncoloured.'
+    }
+
+    const range = pct(against.p25) + ' to ' + pct(against.p75)
+    const sits = name + ' usually goes for ' + range + ' over spot. This one is ' +
+        pct(band.premium) + '.'
+
+    if (band.verdict === 'dear') { return sits + ' Dearer than three quarters of them.' }
+    if (band.verdict === 'cheap') {
+        return sits + (band.finish === undefined
+            ? ' Cheaper than three quarters of them.'
+            : ' On this tool\'s own record of how far auctions rise, it is heading for ' +
+              pct(band.finish) + ' - inside the cheapest quarter.')
+    }
+    if (band.unprojected) {
+        return sits + ' Too little known about how auctions move with this long left to say ' +
+            'where it will finish.'
+    }
+    if (band.finish !== undefined) {
+        return sits + ' Heading for about ' + pct(band.finish) + ', which is an ordinary price.'
+    }
+    return sits
+}
+
 function scanRow (row, verdictCell, sweepAt) {
     const id = escapeHtml(String(row.legacyId))
     const total = PREMIUM.totalCost(row.price, row.shipping)
@@ -3490,13 +3632,17 @@ function scanRow (row, verdictCell, sweepAt) {
     const ratio = Number.isFinite(row.ratio) ? row.ratio : null
 
     /*  Signed, and against spot rather than against the ask: "−4%" means the
-        metal in it is worth more than the current bid. Filled with the accent
-        only at −5% or better, which is the design's way of saying this one is
-        worth acting on rather than merely worth watching. */
+        metal in it is worth more than the current bid.
+
+        The fill used to mean "5% or more under spot", which the digits beside
+        it already said. It means "cheap or dear for this coin type" now - see
+        bandFor - which is the thing the digits cannot say. */
     const delta = ratio === null ? null : ratio - 1
+    const band = row.typeBand === undefined ? null : row.typeBand
     const chip = delta === null
         ? '<span class="chip">—</span>'
-        : '<span class="chip' + (delta <= -0.05 ? ' hot' : '') + '">' +
+        : '<span class="chip' + (band && band.verdict ? ' ' + band.verdict : '') +
+          '" title="' + escapeHtml(bandTitle(row, band)) + '">' +
           (delta > 0 ? '+' : '') + (delta * 100).toFixed(1) + '%</span>'
 
     /*  The tick that replaces five words. "Counted in the statistics" was a

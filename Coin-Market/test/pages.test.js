@@ -3102,11 +3102,20 @@ test('a row with no tick still keeps the gutter', async () => {
     opened.db.close()
 })
 
-test('a lot well under spot is marked, one merely near it is not', async () => {
-    /*  The chip is filled at five per cent under or better. That threshold is
-        the design saying which lots are worth acting on rather than merely
-        worth watching, so a chip that never fills makes the column decorative.
-        £690 against £775 of gold is about eleven per cent under; £770 is one. */
+/*
+    THE CHIP SAYS CHEAP OR DEAR FOR THIS COIN, NOT AGAINST SPOT.
+
+    The owner: green for under and red for over, "in relation to what coins in
+    that lot's allocated category go for". The number is unchanged - it is
+    still the premium over the metal - and only the fill moves.
+
+    This test used to assert the old meaning: a fill at five per cent under
+    spot. Its fixture has no completed sales at all, so under the new meaning
+    there is nothing to compare against and nothing should be coloured. That
+    is worth keeping as a test rather than deleting, because saying nothing is
+    the behaviour a cold store must have.
+*/
+test('a coin type with no completed sales is left uncoloured, and says why', async () => {
     const opened = scannerStore()
     const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
 
@@ -3115,11 +3124,355 @@ test('a lot well under spot is marked, one merely near it is not', async () => {
         assert.ok(at > -1, 'row missing: ' + title)
         return body.slice(body.lastIndexOf('<tr>', at), body.indexOf('</tr>', at))
     }
-    assert.match(rowFor('well under spot'), /class="chip hot"/,
-        'a lot eleven per cent under spot is not marked')
-    assert.ok(!/class="chip hot"/.test(rowFor('near spot')),
-        'a lot one per cent under spot is marked as a bargain')
+    /*  Eleven per cent under spot, which the old rule painted. With no sales
+        on record the tool cannot know whether that is cheap for this coin. */
+    const deep = rowFor('well under spot')
+    assert.ok(!/class="chip (cheap|dear)"/.test(deep),
+        'a coin type with no sales behind it was still coloured')
+    assert.match(deep, /completed sales? of this kind on record/,
+        'the chip does not say why it is uncoloured')
     opened.db.close()
+})
+
+/*  Two coin types, priced decades apart, and the SAME lot price sitting in
+    opposite quarters of each. Bullion sells around a tenth over its metal
+    here and proofs around three quarters over, which is roughly the real
+    spread between them.
+
+    Fixed-price throughout: a live auction's band is judged on where the bid is
+    heading rather than where it is, and that is a separate question with its
+    own test below. This one is only about whose distribution is used. */
+function bandedStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const add = (id, key, price, options, endTime) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: options, endTime,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, observedAt: now })
+        repository.saveClassification(browseId, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        return browseId
+    }
+    const sale = (id, key, price, saleType, censored) => {
+        const browseId = add(id, key, price, 'FIXED_PRICE', null)
+        repository.saveOutcome(browseId, {
+            endTime: now, sold: true, finalPrice: price, shipping: 0, bidCount: null,
+            saleType, censored, source: 'trading_getitem'
+        })
+    }
+
+    /*  Metal is 0.2354 oz at GBP 3,290 = GBP 774.55. */
+    const BULLION = 'GB.SOV.BULLION.FULL'
+    const PROOF = 'GB.SOV.PROOF.FULL'
+    const prices = { bullion: [810, 840, 870, 930], proof: [1250, 1290, 1330, 1400] }
+    prices.bullion.forEach((p, n) => sale('bs' + n, BULLION, p, 'FIXED_PRICE', false))
+    prices.proof.forEach((p, n) => sale('ps' + n, PROOF, p, 'FIXED_PRICE', false))
+
+    add('cheap bullion', BULLION, 700, 'FIXED_PRICE', null)
+    add('ordinary bullion', BULLION, 850, 'FIXED_PRICE', null)
+    /*  THE PAIR THAT MATTERS: the same price on both types. */
+    add('dear bullion', BULLION, 1120, 'FIXED_PRICE', null)
+    add('cheap proof', PROOF, 1120, 'FIXED_PRICE', null)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+function chipRow (body, title) {
+    const at = body.indexOf('>' + title + '<')
+    assert.ok(at > -1, 'row missing: ' + title)
+    return body.slice(body.lastIndexOf('<tr>', at), body.indexOf('</tr>', at))
+}
+function chipClass (row) {
+    const found = /<span class="chip([^"]*)"/.exec(row)
+    assert.ok(found !== null, 'no chip in the row at all')
+    return found[1].trim()
+}
+
+test('the chip bands against the coin type, not against a threshold', async () => {
+    const opened = bandedStore()
+    const path = '/?min=1&sale=bin&band=any'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.strictEqual(chipClass(chipRow(body, 'cheap bullion')), 'cheap',
+        'a lot below everything this type has sold for is not marked cheap')
+    assert.strictEqual(chipClass(chipRow(body, 'ordinary bullion')), '',
+        'an ordinary price for this type was coloured')
+    assert.strictEqual(chipClass(chipRow(body, 'dear bullion')), 'dear',
+        'a lot above everything this type has sold for is not marked dear')
+
+    /*  THE ASSERTION THE WHOLE TEST IS FOR.
+
+        'dear bullion' and 'cheap proof' are the same price, the same metal
+        and the same weight, so they carry the identical premium over spot -
+        which is what the chip prints on both. Any rule that colours from a
+        threshold on that number, however it is tuned, must give them the same
+        verdict. Only a rule that asks what each COIN TYPE goes for can call
+        one dear and the other cheap. */
+    assert.strictEqual(chipClass(chipRow(body, 'cheap proof')), 'cheap',
+        'the same price that is dear for a bullion sovereign is not cheap for a proof, so the ' +
+        'colour is coming from a threshold on the premium rather than from the coin type')
+    opened.db.close()
+})
+
+test('a live auction is not called cheap on a bid that has not finished rising', async () => {
+    /*  The chip prints a current bid; the distribution is finished prices.
+        Measured on the live store, 82 of the 96 auctions a naive comparison
+        would paint green end more than a day out - so green would mean
+        "nobody has bid yet". UPLIFT.project answers that, and returns null
+        rather than guessing when it has not learned the stretch of clock -
+        which is the state this fixture is in, with no snapshot history.
+
+        So: no green. Red still holds, because a bid already past the dearest
+        quarter only rises. */
+    const opened = bandedStore()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+
+    /*  THE TYPE NEEDS AN AUCTION DISTRIBUTION, or this test proves nothing.
+
+        Without one the band is withheld a step earlier - no sample, no
+        verdict - and the projection guard below is never reached at all. The
+        first version of this test passed for exactly that reason, and the
+        mutation that removes the guard survived it. */
+    const stamp = new Date().toISOString()
+    ;[820, 850, 880, 940].forEach((price, n) => {
+        const id = 'v1|as' + n + '|0'
+        opened.repository.saveListing({
+            browseId: id, legacyId: 'as' + n, title: 'auction sale ' + n,
+            buyingOptions: 'AUCTION', endTime: stamp,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, stamp)
+        opened.repository.saveSnapshot(id, { price, shipping: 0, observedAt: stamp })
+        opened.repository.saveClassification(id,
+            [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+        opened.repository.saveOutcome(id, {
+            endTime: stamp, sold: true, finalPrice: price, shipping: 0, bidCount: 5,
+            saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+        })
+    })
+
+    opened.repository.saveListing({
+        browseId: 'v1|young|0', legacyId: 'young bullion', title: 'young bullion',
+        buyingOptions: 'AUCTION', endTime: soon,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, new Date().toISOString())
+    opened.repository.saveSnapshot('v1|young|0',
+        { price: 700, shipping: 0, observedAt: new Date().toISOString() })
+    opened.repository.saveClassification('v1|young|0',
+        [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const path = '/?min=1&sale=auction&band=any'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const row = chipRow(body, 'young bullion')
+
+    /*  The type HAS an auction band - an auction lot above it is still
+        painted dear - so the green being withheld below is the projection
+        guard doing it, not a missing sample. */
+    opened.repository.saveListing({
+        browseId: 'v1|dearauction|0', legacyId: 'dear auction', title: 'dear auction',
+        buyingOptions: 'AUCTION', endTime: soon,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, new Date().toISOString())
+    opened.repository.saveSnapshot('v1|dearauction|0',
+        { price: 1400, shipping: 0, observedAt: new Date().toISOString() })
+    opened.repository.saveClassification('v1|dearauction|0',
+        [{ key: 'GB.SOV.BULLION.FULL', level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const again = (await fetchAll(opened, [path]))[path].body
+    assert.strictEqual(chipClass(chipRow(again, 'dear auction')), 'dear',
+        'this coin type has no auction band at all, so withholding green below proves nothing')
+
+    assert.strictEqual(chipClass(row), '',
+        'an auction bid below the cheap quarter was called cheap without any idea where it ' +
+        'will finish')
+
+    /*  And the same fixture DOES paint a fixed-price lot at the same price
+        green, or this passes for an implementation where green never works. */
+    const shelf = '/?min=1&sale=bin&band=any'
+    const shelfBody = (await fetchAll(opened, [shelf]))[shelf].body
+    assert.strictEqual(chipClass(chipRow(shelfBody, 'cheap bullion')), 'cheap',
+        'nothing is being coloured cheap at all, so the assertion above proves nothing')
+    opened.db.close()
+})
+
+test('the projection decides the verdict, not the bid it started from', async () => {
+    /*  THE ASSERTION THAT PROVES THE PROJECTION IS DOING WORK.
+
+        Every other test here is satisfied by an implementation that computes
+        the expected finish and then bands on the current bid anyway, because
+        in those fixtures the curve has learned nothing and the projection is
+        withheld before it can matter.
+
+        Here it has learned: five resolved auctions, each seen with half an
+        hour to run at a price well under what it went on to fetch, so the
+        tool's own record says a lot at this stage roughly doubles. The live
+        lot's bid is far below the cheap quarter and its projected finish is
+        far above it. One number says cheap, the other says ordinary, and the
+        chip has to follow the second.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    /*  Two readings, and the earlier one is not optional: a sale is priced
+        against the metal price at the moment it CLOSED, so an outcome dated
+        yesterday against a spot table that starts today gets no premium at
+        all and the coin type reads as having no sales. */
+    const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
+    for (const at of [daysAgo(3), now]) {
+        db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+            .run(at, 'XAU', 3290, null, 'test')
+    }
+
+    const KEY = 'GB.SOV.BULLION.FULL'
+    const HALF_HOUR = new Date(Date.now() + 1800000).toISOString()
+
+    const auctionSale = (id, key, closed, snapshotPrice, finalPrice, seenSecondsOut) => {
+        const out = seenSecondsOut === undefined ? 1800 : seenSecondsOut
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: 'AUCTION', endTime: closed,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        /*  Seen with half an hour left, which is the bucket the live lot below
+            will fall in. seconds_to_end is derived from endTime, so the
+            snapshot has to carry it. */
+        repository.saveSnapshot(browseId, {
+            price: snapshotPrice,
+            shipping: 0,
+            observedAt: new Date(new Date(closed).getTime() - out * 1000).toISOString(),
+            endTime: closed
+        })
+        repository.saveClassification(browseId, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(browseId, {
+            endTime: closed, sold: true, finalPrice, shipping: 0, bidCount: 8,
+            saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+        })
+    }
+
+    /*  The band for this type: four sales between about +8% and +24% over
+        its metal, which is GBP 774.55. */
+    const closed = new Date(Date.now() - 86400000).toISOString()
+    ;[840, 870, 900, 960].forEach((price, n) =>
+        auctionSale('band' + n, KEY, closed, price, price))
+
+    /*  And the curve: five OTHER auctions, filed elsewhere so they do not
+        move the band, each roughly doubling in its last half hour. The curve
+        is built across every auction rather than per coin type, so these
+        teach it without touching the distribution above. Five, because
+        buildCurve wants five distinct auctions in a bucket before it will
+        speak. */
+    for (let n = 0; n < 5; n++) {
+        auctionSale('rise' + n, 'GB.SOV.UNATTRIBUTED.FULL', closed, 480 + n, 940 + n, 1800)
+    }
+
+    /*  AND A SECOND BUCKET, TAUGHT THE OPPOSITE.
+
+        With only one stretch of the clock in the curve, reading the wrong one
+        is indistinguishable from reading the right one - a projection that
+        always asked for the final minute would be withheld for want of data
+        and the row would come out the same way by accident. So the last
+        minute is taught too, and taught that a lot there barely moves: five
+        auctions seen thirty seconds out at very nearly what they fetched.
+
+        The live lot below has half an hour left. Read correctly it roughly
+        doubles; read as though it were closing it hardly moves and stays in
+        the cheap quarter. One fixture, two answers, and only one of them can
+        be right. */
+    for (let n = 0; n < 5; n++) {
+        auctionSale('settled' + n, 'GB.SOV.UNATTRIBUTED.FULL', closed, 900 + n, 906 + n, 30)
+    }
+
+    /*  Bid at 620 with half an hour left. Against its metal that is about 18%
+        UNDER - comfortably inside the cheap quarter. Doubled, it finishes far
+        above the dear end. */
+    const live = 'v1|rising|0'
+    repository.saveListing({
+        browseId: live, legacyId: 'rising lot', title: 'rising lot',
+        buyingOptions: 'AUCTION', endTime: HALF_HOUR,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(live, { price: 620, shipping: 0, observedAt: now, endTime: HALF_HOUR })
+    repository.saveClassification(live, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    /*  The curve has to have learned this bucket, or the projection is
+        withheld and the test is back to proving nothing. */
+    const curve = opened.view.upliftCurve()
+    assert.ok(curve.T_1H !== undefined && curve.T_1H.sufficient,
+        'the fixture taught the curve nothing about this stretch of the clock')
+    assert.ok(curve.T_60S !== undefined && curve.T_60S.sufficient,
+        'the fixture taught the curve nothing about the final minute, so reading the wrong ' +
+        'bucket would be indistinguishable from reading the right one')
+    assert.ok(curve.T_1H.median > curve.T_60S.median * 1.5,
+        'the two buckets are too close to tell apart: ' + curve.T_60S.median + ' vs ' +
+        curve.T_1H.median)
+
+    const path = '/?min=1&sale=auction&band=any'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const row = chipRow(body, 'rising lot')
+
+    /*  The printed number is unchanged and still says the bid is under spot -
+        the owner asked for the number to stay put. Only the colour follows
+        the projection. */
+    assert.match(row, /class="chip[^"]*"[^>]*>-\d/,
+        'the chip no longer prints the bid as under spot')
+    assert.strictEqual(chipClass(row), '',
+        'the chip was coloured cheap on a bid the tool\'s own record says will roughly ' +
+        'double before the hammer')
+    db.close()
+})
+
+test('a price eBay withheld never makes a lot look cheap', async () => {
+    /*  A Buy-It-Now lot whose only sales on record went through Best Offer:
+        eBay publishes the asking price, not what was accepted, so every
+        quantile is a ceiling. Above a ceiling is definitely above and red
+        holds; below one is not necessarily below, so green is withheld. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const KEY = 'GB.SOV.BULLION.FULL'
+    const add = (id, price, outcome) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: 'FIXED_PRICE|BEST_OFFER',
+            endTime: null, imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, observedAt: now })
+        repository.saveClassification(browseId, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+        if (outcome) {
+            repository.saveOutcome(browseId, {
+                endTime: now, sold: true, finalPrice: price, shipping: 0, bidCount: null,
+                saleType: 'BEST_OFFER', censored: true, source: 'trading_getitem'
+            })
+        }
+    }
+    for (const [n, price] of [[0, 900], [1, 940], [2, 980], [3, 1040]]) { add('withheld' + n, price, true) }
+    add('below the ceiling', 700, false)
+    add('above the ceiling', 1400, false)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const path = '/?min=1&sale=bin&band=any'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.strictEqual(chipClass(chipRow(body, 'below the ceiling')), '',
+        'a lot was called cheap against prices eBay never published')
+    assert.strictEqual(chipClass(chipRow(body, 'above the ceiling')), 'dear',
+        'red was withheld too - above a ceiling IS above, and dropping that throws away the ' +
+        'half of the comparison that still holds')
+    db.close()
 })
 
 test('a view nobody offers falls back rather than falling over', async () => {
