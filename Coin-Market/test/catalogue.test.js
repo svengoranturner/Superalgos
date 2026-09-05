@@ -4,6 +4,7 @@ const test = require('node:test')
 const assert = require('node:assert')
 
 const { classify } = require('../src/catalogue/classify.js')
+const CLASSIFY = require('../src/catalogue/classify.js')
 const EXCLUSIONS = require('../src/catalogue/exclusions.js')
 const INSTRUMENTS = require('../src/catalogue/instruments.js')
 const COINS = require('../src/catalogue/coins.js')
@@ -630,4 +631,74 @@ test('genuinely mounted coins are still dropped', () => {
     ]) {
         assert.strictEqual(classify({ title }).excluded.code, 'JEWELLERY', title)
     }
+})
+
+/*
+    FACE VALUE, WHEN THE SELLER NEVER WROTE THE WORD.
+
+    The owner's listing:
+
+        SCARCE GOLD 2POUND 1902 Edward VII Head Dragon London Spink 3967 UNC
+
+    Every double-sovereign branch in extractDenomination anchors on the token
+    "sov", so a coin whose denomination is stated plainly in pounds matched
+    nothing. Their framing is the rule: a sovereign is face value one pound,
+    so a double is two.
+
+    Pinned here rather than left to the golden fixture. That fixture is a
+    sample of the live store and rotates with it - the very title that proved
+    this change had already left the store by the time the fixture was
+    regenerated, taking the evidence with it. A behaviour worth having is
+    worth a test that does not depend on a listing still being for sale.
+*/
+test('a double sovereign is recognised by its face value', () => {
+    const DOUBLE = [
+        'SCARCE GOLD 2POUND 1902 Edward VII Head Dragon London Spink 3967 UNC Numisb517',
+        '1893 Victoria Gold Proof TwoPounds Old Head - Cameo',
+        'Two Pound Gold Coin 1887 Victoria Jubilee',
+        '£2 gold 1902 Edward VII'
+    ]
+    for (const title of DOUBLE) {
+        const r = CLASSIFY.extractDenomination(title)
+        assert.strictEqual(r.denomination, 'DOUBLE', 'not read as a double: ' + title)
+        /*  Below one on purpose: a title that never says sovereign is weaker
+            evidence than one that does, so it earns a look rather than being
+            priced silently. */
+        assert.ok(r.confidence < 1 && r.confidence > 0.5,
+            'face value should be uncertain, got ' + r.confidence + ' on: ' + title)
+    }
+})
+
+test('face value does not swallow the coins it must not', () => {
+    const NOT_DOUBLE = [
+        /*  The 2009 commemorative. ABOUT_A_SOVEREIGN excludes it later, but
+            this must not be proposing a denomination for it in the meantime. */
+        ['2009 Two Pound Coin Commemorative gold', 'the £2 commemorative'],
+        /*  Not gold, so not this coin whatever its face value. */
+        ['£2 silver proof 2015', 'a silver two-pound piece'],
+        ['Two Pounds 1986 Commonwealth Games silver', 'a silver commemorative'],
+        /*  Gold, and reaching this branch, but saying nothing about two
+            pounds. Without it a mutation that drops the face-value test
+            entirely - making every gold coin that gets this far a double -
+            passed every case above, because all of them fail on the metal or
+            on the commemorative shape rather than on the value. */
+        ['1oz Gold Britannia 2017 bullion coin', 'a gold coin with no face value stated'],
+        ['Gold half crown 1902 Edward VII', 'a gold coin of another denomination']
+    ]
+    for (const [title, what] of NOT_DOUBLE) {
+        assert.notStrictEqual(CLASSIFY.extractDenomination(title).denomination, 'DOUBLE',
+            what + ' was read as a double sovereign: ' + title)
+    }
+})
+
+test('an explicit denomination still beats the face value reading', () => {
+    /*  The face-value branch sits after every other, so a title that says
+        what it is keeps its certainty. */
+    const explicit = CLASSIFY.extractDenomination('Gold Double Sovereign 1902 two pounds')
+    assert.strictEqual(explicit.denomination, 'DOUBLE')
+    assert.strictEqual(explicit.confidence, 1,
+        'an explicit double sovereign was demoted to the face-value confidence')
+
+    const full = CLASSIFY.extractDenomination('1905 Gold Sovereign')
+    assert.strictEqual(full.denomination, 'FULL', 'a plain sovereign changed meaning')
 })

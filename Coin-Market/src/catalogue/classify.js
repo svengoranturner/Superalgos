@@ -179,6 +179,33 @@ function extractDenomination (title) {
         return { denomination: null, confidence: 0 }
     }
     if (/\bsovereign\b|\bsov\b/.test(t)) { return { denomination: 'FULL', confidence: 0.9 } }
+
+    /*  FACE VALUE, when the seller never wrote the word.
+
+        The owner's framing, and it is the right one: a sovereign is face
+        value one pound, so a double is two. Their listing read "2POUND 1902
+        Edward VII Head Dragon" and every branch above anchors on the token
+        sov - so a coin whose denomination is stated plainly, in pounds,
+        matched nothing at all.
+
+        Reached only after all of them, so an explicit denomination always
+        wins. And only for a listing already known to be a sovereign: this
+        runs through the pack, which is now reachable from a human label.
+        GOLD is required too - a two-pound piece that is not gold is not this
+        coin.
+
+        Confidence 0.75, not 1. A title that never says sovereign is weaker
+        evidence than one that does, so this queues the coin for a look rather
+        than pricing it silently. The 2009 commemorative that calls itself a
+        "2 pound coin" is excluded here by shape rather than left to the
+        ABOUT_A_SOVEREIGN rule, because that rule runs later and this should
+        not be proposing a denomination for it in the meantime. */
+    const facePound = /(£\s*2|\b2\s*pounds?\b|\btwo\s*pounds?\b)/.test(t)
+    const commemorative = /\b(two|2)\s*pounds?\s+coin\b/.test(t)
+    if (facePound && !commemorative && /\bgold\b/.test(t)) {
+        return { denomination: 'DOUBLE', confidence: 0.75 }
+    }
+
     return { denomination: null, confidence: 0 }
 }
 
