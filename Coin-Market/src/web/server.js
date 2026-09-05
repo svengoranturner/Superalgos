@@ -225,6 +225,17 @@ function medianOf (values) {
     return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+/*  The reference pages, by path. Short names: these were folds on the front
+    page whose summaries read like sentences, and a nav label is not the place
+    to argue a point. */
+const REFERENCE_PATHS = {
+    '/premiums': 'premiums',
+    '/types': 'types',
+    '/composition': 'composition',
+    '/uplift': 'uplift',
+    '/gaps': 'gaps'
+}
+
 const HTML_HEADERS = {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store, must-revalidate'
@@ -314,6 +325,11 @@ exports.start = function (opened, options) {
                 html = confirmRulePage(opened, url)
             } else if (url.pathname === '/rules') {
                 html = rulesPage(opened, url)
+            } else if (REFERENCE_PATHS[url.pathname] !== undefined) {
+                /*  Five short pages built from the same tracked-market
+                    assembly the scanner uses, which is why they go through
+                    marketPage rather than having a function each. */
+                html = marketPage(opened, url, REFERENCE_PATHS[url.pathname])
             } else {
                 html = marketPage(opened, url)
             }
@@ -424,7 +440,11 @@ exports.start = function (opened, options) {
     return server
 }
 
-function marketPage (opened, url) {
+/*  `reference` names one of the five reference pages, or is absent for the
+    scanner. One function because they are one query: every reference page is
+    built from the same tracked-market assembly the front page already does,
+    and splitting them would mean doing it twice. */
+function marketPage (opened, url, reference) {
     const { repository, view } = opened
     const minSample = Number(url.searchParams.get('min')) || 3
 
@@ -546,6 +566,131 @@ function marketPage (opened, url) {
         block,
         composition: repository.marketComposition(seriesBlocks.length > 1 ? block.id : null)
     }))
+
+    /*  The reference pages are built from these and nothing else, so they
+        are defined before the scanner does its own work - pricing every
+        live auction and evaluating every offer to answer a question about
+        composition would be most of a page load spent on nothing. */
+    const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
+    const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
+
+    /*  One table per series. A single table ordered by listing count would
+        bury a new coin under an established one, which is the same eviction
+        the cap used to cause - just further down the page instead of off it. */
+    const TABLE_HEAD = `<thead><tr>
+      <th>Coin type</th>
+      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
+      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
+      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
+      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
+      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
+      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
+      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
+      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
+      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
+    </tr></thead>`
+    const compositionBlocks = compositions().map(({ block, composition }) => {
+        const live = composition.liveBin + composition.liveAuction
+        const completed = composition.auctionSold + composition.auctionUnsold
+        return '<div class="card">' +
+            (seriesBlocks.length > 1
+                ? '<h3 style="margin:0 0 10px">' + escapeHtml(block.label) + '</h3>' : '') +
+            RENDER.compositionChart(composition) +
+            '<p class="thin" style="margin:14px 0 0">' +
+            '<strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing ' +
+            "is Good-'Til-Cancelled and carries no end time, so it never becomes eligible for " +
+            'outcome resolution &mdash; every one of the ' + completed + ' completed lots here ' +
+            'is an auction. So the clearing prices describe the auction market, the asking ' +
+            'prices are ' + (live > 0 ? Math.round(100 * composition.liveBin / live) : 0) + '% ' +
+            'Buy-It-Now, and the spread between them compares two markets rather than two ends ' +
+            'of one.' +
+            (composition.binVanished > 0
+                ? ' <strong>' + composition.binVanished + '</strong> Buy-It-Now listings have ' +
+                  'gone quiet without being resolved; each has either sold or been withdrawn ' +
+                  'and we cannot yet tell which.'
+                : '') +
+            '</p></div>'
+    }).join('')
+
+    const instrumentTables = seriesBlocks.map(block =>
+        (seriesBlocks.length > 1
+            ? '<h3 style="margin:18px 0 8px">' + escapeHtml(block.label) + '</h3>'
+            : '') +
+        '<div class="card scroll"><table>' + TABLE_HEAD +
+        '<tbody>' + instrumentRows(block.entries) + '</tbody></table></div>' +
+        (block.hidden > 0
+            /*  Named, not hidden. A capped table and a complete one look
+                identical, and the ones left out are the smallest - which is
+                where a coin type nobody has looked at yet would sit. */
+            ? '<p class="thin" style="margin:-10px 0 14px">' + block.hidden +
+              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series ' +
+              (block.hidden === 1 ? 'is' : 'are') + ' tracked but not listed here; the ones with ' +
+              'the most listings are shown first.</p>'
+            : '')
+    ).join('')
+
+    /*
+        THE REFERENCE PAGES.
+
+        These five were folds stacked under a heading called "The evidence
+        behind these" on the front page, each with a summary written like a
+        sentence - "How much auctions rise before the hammer / why an alert can
+        fire while you can still act". The owner's verdict was fair: a title
+        that needs a subtitle to explain the title is not a title. They are
+        pages now, and they are called what they are.
+
+        The explanation did not go away; it moved inside, where somebody who
+        opened the page is asking for it. A nav label is not the place to
+        argue a point.
+    */
+    const REFERENCE = {
+        premiums: {
+            title: 'Premiums',
+            lead: 'Where each coin type actually clears, against what sellers are asking. ' +
+                'The gap between the two is the room you have to buy inside.',
+            body: () => '<div class="card">' + RENDER.premiumChart(chartRows) + '</div>'
+        },
+        types: {
+            title: 'Coin types',
+            lead: 'Every type this tool tracks, with where it clears and the most worth bidding.',
+            body: () => instrumentTables
+        },
+        composition: {
+            title: 'Composition',
+            lead: 'What the tracked market is made of &mdash; and what is missing from it.',
+            body: () => compositionBlocks
+        },
+        uplift: {
+            title: 'Bid uplift',
+            lead: 'How far an auction climbs between the last quiet hour and the hammer, ' +
+                'learned from this tool\'s own snapshots. It is why an alert can reach you ' +
+                'while there is still time to act.',
+            body: () => '<div class="card">' + RENDER.upliftChart(curve) + '</div>'
+        },
+        gaps: {
+            title: 'Gaps',
+            lead: 'Sales this tool holds but will not price, and why.',
+            body: () => '<div class="card"><p class="thin" style="margin:0">' +
+                '<strong>' + censored + '</strong> ended listings stay out of every clearing ' +
+                'price: eBay never publishes what an accepted Best Offer sold for, and counting ' +
+                'those at their asking price would overstate the whole market.' +
+                (spotGaps > 0
+                    ? '<br><br><strong>' + spotGaps + '</strong> sales carry no premium because ' +
+                      'the metals feed had a gap at the moment they closed. They are withheld ' +
+                      'rather than priced against a stale figure.'
+                    : '') +
+                '</p></div>'
+        }
+    }
+
+    if (reference !== undefined && REFERENCE[reference] !== undefined) {
+        const page = REFERENCE[reference]
+        return RENDER.page(page.title + ' - Coin Market',
+            '<h1>' + escapeHtml(page.title) + '</h1>' +
+            '<p class="sub">' + page.lead + '</p>' + page.body(),
+            url.pathname)
+    }
+
     /*
         FIFTEEN WAS TOO FEW, and the owner said so.
 
@@ -1010,63 +1155,6 @@ function marketPage (opened, url) {
               n => 'Show the other ' + n + ' auction' + (n === 1 ? '' : 's')) +
           '</form>'
 
-    const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
-    const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
-
-    /*  One table per series. A single table ordered by listing count would
-        bury a new coin under an established one, which is the same eviction
-        the cap used to cause - just further down the page instead of off it. */
-    const TABLE_HEAD = `<thead><tr>
-      <th>Coin type</th>
-      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
-      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
-      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
-      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
-      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
-      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
-      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
-      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
-      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
-    </tr></thead>`
-    const compositionBlocks = compositions().map(({ block, composition }) => {
-        const live = composition.liveBin + composition.liveAuction
-        const completed = composition.auctionSold + composition.auctionUnsold
-        return '<div class="card">' +
-            (seriesBlocks.length > 1
-                ? '<h3 style="margin:0 0 10px">' + escapeHtml(block.label) + '</h3>' : '') +
-            RENDER.compositionChart(composition) +
-            '<p class="thin" style="margin:14px 0 0">' +
-            '<strong>Buy-It-Now outcomes are not observed at all.</strong> A Buy-It-Now listing ' +
-            "is Good-'Til-Cancelled and carries no end time, so it never becomes eligible for " +
-            'outcome resolution &mdash; every one of the ' + completed + ' completed lots here ' +
-            'is an auction. So the clearing prices describe the auction market, the asking ' +
-            'prices are ' + (live > 0 ? Math.round(100 * composition.liveBin / live) : 0) + '% ' +
-            'Buy-It-Now, and the spread between them compares two markets rather than two ends ' +
-            'of one.' +
-            (composition.binVanished > 0
-                ? ' <strong>' + composition.binVanished + '</strong> Buy-It-Now listings have ' +
-                  'gone quiet without being resolved; each has either sold or been withdrawn ' +
-                  'and we cannot yet tell which.'
-                : '') +
-            '</p></div>'
-    }).join('')
-
-    const instrumentTables = seriesBlocks.map(block =>
-        (seriesBlocks.length > 1
-            ? '<h3 style="margin:18px 0 8px">' + escapeHtml(block.label) + '</h3>'
-            : '') +
-        '<div class="card scroll"><table>' + TABLE_HEAD +
-        '<tbody>' + instrumentRows(block.entries) + '</tbody></table></div>' +
-        (block.hidden > 0
-            /*  Named, not hidden. A capped table and a complete one look
-                identical, and the ones left out are the smallest - which is
-                where a coin type nobody has looked at yet would sit. */
-            ? '<p class="thin" style="margin:-10px 0 14px">' + block.hidden +
-              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series ' +
-              (block.hidden === 1 ? 'is' : 'are') + ' tracked but not listed here; the ones with ' +
-              'the most listings are shown first.</p>'
-            : '')
-    ).join('')
 
     /*
         Where auctions actually finish, against the metal in the coin.
@@ -1248,47 +1336,7 @@ ${pageSearch}
 ${pageNarrowed}
 ${viewBody}
 
-<h2 id="evidence" class="sub" style="margin:34px 0 4px">The evidence behind these</h2>
-
-<details class="fold">
-  <summary>Where each coin type clears, against what sellers ask
-    <span class="why">the gap you are trying to buy inside</span></summary>
-  <div class="card">${RENDER.premiumChart(chartRows)}</div>
-</details>
-
-<details class="fold">
-  <summary>Every tracked coin type <span class="why">${markets.length} across ${seriesBlocks.length} series, with what to bid</span></summary>
-  ${instrumentTables}
-</details>
-
-<details class="fold">
-  <summary>What the tracked market is made of
-    <span class="why">and the hole in it</span></summary>
-  ${compositionBlocks}
-</details>
-
-<details class="fold">
-  <summary>How much auctions rise before the hammer
-    <span class="why">why an alert can fire while you can still act</span></summary>
-  <div class="card">
-    ${RENDER.upliftChart(curve)}
-    <p class="thin">Learned from this tool's own snapshots. It is why an alert can fire while
-    you can still act, instead of after the lot has gone.</p>
-  </div>
-</details>
-
-<details class="fold">
-  <summary>What this cannot see
-    <span class="why">${censored} sales withheld${spotGaps > 0 ? ', ' + spotGaps + ' unpriced' : ''}</span></summary>
-  <div class="card">
-    <p class="thin" style="margin:0">
-      <strong>${censored}</strong> ended listings are excluded from clearing prices because eBay never
-      publishes what an accepted Best Offer sold for &mdash; counting those at list price would
-      systematically overstate the market.
-      ${spotGaps > 0 ? '<br><strong>' + spotGaps + '</strong> sales have no premium because the gold feed had a gap at the moment they closed; they are withheld rather than priced against a stale figure.' : ''}
-    </p>
-  </div>
-</details>`
+`
 
     return RENDER.page('Coin Market', body, url.pathname, scanView)
 }

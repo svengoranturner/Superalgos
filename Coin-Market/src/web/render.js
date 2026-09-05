@@ -149,20 +149,22 @@ const MENUS = [
     ]],
     ['Sold prices', [
         [null, [
-            ['/?view=sold', 'What has actually sold', 'sold'],
-            ['/#evidence', 'The evidence behind these', null]
+            ['/?view=sold', 'Sold', 'sold'],
+            ['/premiums', 'Premiums', null],
+            ['/uplift', 'Bid uplift', null]
         ]]
     ]],
     ['Identification', [
         [null, [
             ['/review', 'Needs review', 'review'],
-            ['/rules', "What you've taught it", null]
+            ['/rules', 'Rules', null]
         ]]
     ]],
     ['Reference', [
         [null, [
-            ['/rules#why', 'Why this and not a model', null],
-            ['/#countries', 'Where you will buy from', null]
+            ['/types', 'Coin types', null],
+            ['/composition', 'Composition', null],
+            ['/gaps', 'Gaps', null]
         ]]
     ]]
 ]

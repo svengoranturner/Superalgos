@@ -128,9 +128,12 @@ test('every page renders, with two series in the store', async () => {
 /*  UI-12. The cap used to be global and ordered by listing count, so a new
     series got a share proportional to its size - which is backwards, since a
     new series is both the smallest and the one you most need to see. */
-test('both series appear on the market page, neither crowded out', async () => {
+test('both series appear on the coin types page, neither crowded out', async () => {
+    /*  The per-series tables moved off the front page onto /types when the
+        five reference folds became five pages. The claim is unchanged: a
+        second series must not be crowded out by an established one. */
     const opened = twoSeriesStore()
-    const { '/': page } = await fetchAll(opened, ['/'])
+    const { '/types': page } = await fetchAll(opened, ['/types'])
 
     assert.ok(page.body.includes('British Gold Sovereigns'), 'sovereigns are missing')
     assert.ok(page.body.includes('Morgan') && page.body.includes('Dollars'),
@@ -2842,5 +2845,104 @@ test('a view nobody offers falls back rather than falling over', async () => {
     assert.strictEqual(pages[repeated].status, 200)
     assert.ok(pages[repeated].body.includes('What has actually sold'),
         'a repeated parameter should take the first value, not fall back')
+    opened.db.close()
+})
+
+/*
+    The reference pages.
+
+    Five folds used to sit on the front page under "The evidence behind these",
+    each with a summary written as a sentence and a second sentence explaining
+    the first - "How much auctions rise before the hammer / why an alert can
+    fire while you can still act". The owner's verdict, verbatim: "it's the
+    curse of AI putting grossly long winded titles and explanations in a UI."
+
+    They are pages now, with names. The explanation moved inside them, where
+    somebody who opened the page is asking for it.
+*/
+const REFERENCE = [
+    ['/premiums', 'Premiums'],
+    ['/types', 'Coin types'],
+    ['/composition', 'Composition'],
+    ['/uplift', 'Bid uplift'],
+    ['/gaps', 'Gaps']
+]
+
+test('each reference page exists and is called what it is', async () => {
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, REFERENCE.map(([path]) => path))
+
+    for (const [path, title] of REFERENCE) {
+        assert.strictEqual(pages[path].status, 200, path + ' does not render')
+        assert.ok(pages[path].body.includes('<h1>' + title + '</h1>'),
+            path + ' is not headed "' + title + '"')
+        assert.ok(!/TypeError|ReferenceError|is not a function/.test(pages[path].body),
+            path + ' rendered an error')
+    }
+    opened.db.close()
+})
+
+test('a reference title is a name, not a sentence', async () => {
+    /*
+        The rule the old summaries broke. A nav label and a page heading are
+        read at a glance and have to survive being one item in a menu of four -
+        so: no clause explaining the title, no verb, and short enough to sit in
+        a dropdown.
+
+        Asserted rather than described, because prose in a UI grows back.
+    */
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, REFERENCE.map(([path]) => path))
+
+    for (const [path, title] of REFERENCE) {
+        assert.ok(title.split(/\s+/).length <= 2,
+            title + ' is ' + title.split(/\s+/).length + ' words; a label is one or two')
+        assert.ok(!/[,;:—-]/.test(title), title + ' carries a clause')
+
+        /*  And the old sentence-shaped summaries are gone from the app
+            entirely, not merely moved. */
+        assert.ok(!pages[path].body.includes('why an alert can fire while you can still act'),
+            'the explanation is still being used as a title on ' + path)
+    }
+    opened.db.close()
+})
+
+test('the front page no longer carries the evidence folds', async () => {
+    /*  They were five collapsed <details> under a sixth heading, which is a
+        page pretending to be a section. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/']))['/'].body
+
+    assert.ok(!body.includes('The evidence behind these'),
+        'the fold stack is still on the scanner')
+    assert.ok(!body.includes('How much auctions rise before the hammer'),
+        'the long-winded summaries are still on the scanner')
+    opened.db.close()
+})
+
+test('every reference page is reachable from the menu bar', async () => {
+    /*  A page nothing links to is a page nobody finds. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/']))['/'].body
+    const nav = (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+
+    for (const [path, title] of REFERENCE) {
+        assert.ok(nav.includes('href="' + path + '"'), path + ' is not in the menu bar')
+        assert.ok(nav.includes('>' + title + '<'), title + ' is not the label used for it')
+    }
+    opened.db.close()
+})
+
+test('a reference page costs one assembly, not the scanner as well', async () => {
+    /*  They are built from the same tracked-market data the scanner uses, and
+        they return before it prices every live auction and evaluates every
+        offer. Checked by what is NOT on the page: no summary strip, no view
+        pills, no scan table. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/gaps']))['/gaps'].body
+
+    assert.ok(!body.includes('class="summary"'), 'a reference page built the summary strip')
+    assert.ok(!body.includes('class="filters"'), 'a reference page built the filter row')
+    assert.ok(!body.includes('<table class="scan">'), 'a reference page built the scan table')
     opened.db.close()
 })
