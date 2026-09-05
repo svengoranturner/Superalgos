@@ -677,3 +677,34 @@ test('the text columns are left and the figures are right', () => {
     assert.strictEqual(body(['figure', 'spot'], false), 'right', 'spot is not right-aligned')
     assert.strictEqual(body(['verdict-cell'], false), 'right', 'the verdict buttons are not right-aligned')
 })
+
+test('a filter toggle is a box, not an inline sliver', () => {
+    /*
+        THE OWNER'S REPORT: you cannot tell whether Silver and Gold are on or
+        off. The cause was not the colours, it was the box model. `.dot` is a
+        bare <span>, so `display` was `inline`, and width and height do not
+        apply to an inline box - it rendered 3px wide against the 14 it asked
+        for, leaving fill colour as the only difference between states.
+
+        Invisible to reading the CSS, which plainly says 14px. Caught by
+        getBoundingClientRect, which said 3.
+
+        Asserted here because a stylesheet cannot be measured without a
+        browser: any rule that sets a width on `.dot` must also give it a
+        display that honours one.
+    */
+    const css = STATIC.css()
+    const rule = /\.filters \.radio \.dot \{([^}]*)\}/.exec(css)
+
+    assert.ok(rule !== null, 'the toggle dot has no rule at all')
+    const decl = rule[1]
+
+    if (/width\s*:/.test(decl) || /height\s*:/.test(decl)) {
+        assert.match(decl, /display\s*:\s*(block|inline-block|flex|inline-flex|grid)/,
+            'the dot sets a size but stays inline, so the size is ignored: ' + decl.trim())
+    }
+
+    /*  And the state must not rest on the dot alone. */
+    assert.match(css, /\.filters \.radio\.on \{[^}]*color\s*:/,
+        'only the dot changes between on and off; the control itself says nothing')
+})

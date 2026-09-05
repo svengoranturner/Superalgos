@@ -1535,6 +1535,11 @@ exports.newRepository = function (db, options) {
                        l.seller_feedback_pct AS sellerFeedbackPct,
                        l.seller_feedback_cnt AS sellerFeedbackCnt,
                        l.end_time AS endTime, l.first_seen AS firstSeen,
+                       /*  When the SELLER put it up, not when we found it. The two
+                           differ by a median 87.8 hours on this store's older rows
+                           (MKT-14), so first_seen would report our own discovery lag
+                           as the lot's age. Null on 52 of 27,936 live rows. */
+                       l.start_time AS listedAt,
                        l.last_seen AS lastSeen,
                        scope.key AS instrumentKey, scope.quantity AS lotQuantity,
                        scope.fine_oz * scope.quantity AS fineOz,

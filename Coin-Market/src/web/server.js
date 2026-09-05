@@ -1252,9 +1252,7 @@ function marketPage (opened, url, reference) {
             'somebody paid.' + (soldTotal < 30
                 ? ' There are not many yet: they only arrive as lots this tool was already ' +
                   'watching come to a close.' : '') +
-            (soldTotal > sales.length ? ' Showing the ' + sales.length + ' most recent.' : ''),
-        ending: 'The auctions above that close within the hour. This is the last chance to act ' +
-            'on one, and the only list here where waiting costs you the lot.'
+            (soldTotal > sales.length ? ' Showing the ' + sales.length + ' most recent.' : '')
     }
     const viewBlurb = VIEW_BLURBS[scanView]
 
@@ -1279,9 +1277,11 @@ function marketPage (opened, url, reference) {
               'Buy-It-Now, with no offers allowed, does carry an exact price and will appear ' +
               'here as one.</p>'
             : '') + salesHtml,
+        /*  No empty-state sentence. The pill carries the count and the window
+            control says what was asked for; a paragraph explaining that an
+            empty list is empty is the kind of prose this UI keeps growing. */
         ending: endingSoon.length === 0
-            ? '<p class="thin">Nothing closes in the next hour. The soonest is in the near-spot ' +
-              'list, ordered by how long you have left.</p>'
+            ? ''
             : scanTable(endingSoon, opportunityVerdict, sweepAt, whereYouAre(url))
     }
     const viewBody = VIEW_BODIES[scanView]
@@ -1299,7 +1299,7 @@ function marketPage (opened, url, reference) {
         nearSpot: ['Auctions at or near spot', shown.length],
         offers: ['Buy-It-Now, open to an offer', offers.length],
         sold: ['What has actually sold', soldTotal],
-        ending: ['Auctions ending within the hour', endingSoon.length]
+        ending: ['Ending soon', endingSoon.length]
     }
     const [viewTitle, viewCount] = VIEW_TITLES[scanView]
 
@@ -1325,7 +1325,6 @@ function marketPage (opened, url, reference) {
     const body = `
 <div class="page-head">
   <div>
-    <h6 class="kicker">Coin market &middot; live scan</h6>
     <h3>${escapeHtml(viewTitle)}</h3>
   </div>
   <div class="page-head-right">
@@ -2486,6 +2485,18 @@ function endsIn (iso) {
     return Math.round(minutes / 1440) + 'd'
 }
 
+/*  "listed 3d ago". Days only: an hour's precision on how long a lot has been
+    sitting is precision nobody acts on. */
+function listedFor (iso) {
+    if (!iso) { return null }
+    const then = Date.parse(iso)
+    if (!Number.isFinite(then)) { return null }
+    const days = Math.floor((Date.now() - then) / 86400000)
+    if (days < 0) { return null }
+    if (days === 0) { return 'listed today' }
+    return 'listed ' + days + 'd ago'
+}
+
 /*
     THE SCANNER TABLE.
 
@@ -2531,7 +2542,18 @@ function scanRow (row, verdictCell, sweepAt) {
         meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
     }
     const left = row.endTime ? endsIn(row.endTime) : null
-    if (left !== null) { meta.push('ends in ' + left) }
+    /*  How long it has been up. NOT how long is left - that is the Ends
+        column two cells over, and printing it twice was the owner's note.
+
+        This is the seller's listing date rather than when a sweep first found
+        it: the two differ by a median 87.8 hours on the older rows, so
+        first_seen would report the tool's own discovery lag as the lot's age.
+
+        It replaces a watcher count, which cannot be had - eBay returns
+        WatchCount only to the seller of the item. How long something has sat
+        unsold is the nearest honest signal of the same thing. */
+    const listed = listedFor(row.listedAt)
+    if (listed !== null) { meta.push(listed) }
     if (Number.isFinite(row.sellerFeedbackPct)) {
         meta.push(row.sellerFeedbackPct.toFixed(1) + '% seller')
     }

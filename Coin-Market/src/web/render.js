@@ -144,7 +144,7 @@ const MENUS = [
                 would be a different quantity wearing the same label, and
                 would disagree with the page it opens. */
             ['/?view=offers', 'Open to an offer', null],
-            ['/?view=ending', 'Ending within the hour', 'endingHour']
+            ['/?view=ending', 'Ending soon', 'endingHour']
         ]]
     ]],
     ['Sold prices', [
