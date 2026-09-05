@@ -759,26 +759,6 @@ function marketPage (opened, url, reference) {
             n: e.market.fairValue.n
         }))
 
-    const instrumentRows = (entries) => entries.map(e => {
-        const m = e.market
-        const f = m.fairValue
-        const l = m.liquidity
-        return `<tr>
-      <td><a href="/listings?key=${encodeURIComponent(e.row.key)}"
-        title="See the individual listings behind these numbers, and dismiss any that are wrong"
-        >${escapeHtml(INSTRUMENTS.displayName(e.row.key))}</a></td>
-      <td class="mono">${f.n}</td>
-      <td class="mono">${pct(f.p50)}</td>
-      <td class="mono">${f.sufficient ? pct(f.p25) + ' – ' + pct(f.p75) : '—'}</td>
-      <td class="mono">${pct(l.medianAskPremium)}</td>
-      <td class="mono"><strong>${pct(l.askClearingSpread)}</strong></td>
-      <td class="mono">${pct(l.sellThroughRate, 0)}</td>
-      <td class="mono">${l.medianBidCount === null ? '—' : l.medianBidCount.toFixed(0)}</td>
-      <td class="mono">${l.activeListings}</td>
-      <td class="mono">${m.bidCeiling ? gbp(m.bidCeiling.maxBid) : '—'}</td>
-    </tr>`
-    }).join('')
-
     /*
         What has actually sold.
 
@@ -802,21 +782,6 @@ function marketPage (opened, url, reference) {
     const censored = markets.reduce((sum, e) => sum + e.market.liquidity.censoredOutcomes, 0)
     const spotGaps = markets.reduce((sum, e) => sum + e.market.spotGaps, 0)
 
-    /*  One table per series. A single table ordered by listing count would
-        bury a new coin under an established one, which is the same eviction
-        the cap used to cause - just further down the page instead of off it. */
-    const TABLE_HEAD = `<thead><tr>
-      <th>Coin type</th>
-      <th title="Completed auction sales this figure is built from, over 180 days and weighted so a sale 45 days old counts half as much as today's. Under three and the clearing columns stay blank.">Sales</th>
-      <th title="Where auctions actually clear, as a premium over the coin's gold content. Sold auctions only, and never accepted Best Offers, whose price eBay does not publish.">Clears at</th>
-      <th title="The middle half of those clearing prices: a quarter of sales went below the first number, a quarter above the second. A wide band means the price depends on the coin, not the type.">p25&ndash;p75</th>
-      <th title="What the Buy-It-Now shelf is asking right now, as a premium over gold. Fixed-price listings only - a running auction has no asking price, just a bid so far.">Asks</th>
-      <th title="Asks minus Clears at, in percentage points. What paying a Buy-It-Now costs you over waiting for an auction - and the room you have to make an offer.">Spread</th>
-      <th title="Of the lots that ENDED in the last 90 days, the share that sold. Low means the shelf is priced above what anyone will pay. A seller who relists doggedly pushes this down.">Sell-through</th>
-      <th title="Median number of bids on auctions that got at least one, over 90 days. Auctions that ended with no bids at all are excluded, so this says how contested a lot is once bidding starts - not how often it starts.">Bids</th>
-      <th title="Listings on sale right now: not ended, and seen by a sweep within the last 24 hours. Counts auctions as well as Buy-It-Now, so it is usually larger than the sample behind Asks.">Live</th>
-      <th title="The most you should BID, from the clearing distribution at your target quantile. This is the number to type into eBay: the buyer protection fee eBay adds on top has already been taken out of it, so winning at this bid lands you on fair value rather than 2-5% above it. Blank when there are too few sales to say.">Bid up to</th>
-    </tr></thead>`
     const compositionBlocks = compositions().map(({ block, composition }) => {
         const live = composition.liveBin + composition.liveAuction
         const completed = composition.auctionSold + composition.auctionUnsold
@@ -840,22 +805,271 @@ function marketPage (opened, url, reference) {
             '</p></div>'
     }).join('')
 
-    const instrumentTables = seriesBlocks.map(block =>
-        (seriesBlocks.length > 1
-            ? '<h3 style="margin:18px 0 8px">' + escapeHtml(block.label) + '</h3>'
-            : '') +
-        '<div class="card scroll"><table>' + TABLE_HEAD +
-        '<tbody>' + instrumentRows(block.entries) + '</tbody></table></div>' +
-        (block.hidden > 0
-            /*  Named, not hidden. A capped table and a complete one look
-                identical, and the ones left out are the smallest - which is
-                where a coin type nobody has looked at yet would sit. */
-            ? '<p class="thin" style="margin:-10px 0 14px">' + block.hidden +
-              ' more coin type' + (block.hidden === 1 ? '' : 's') + ' in this series ' +
-              (block.hidden === 1 ? 'is' : 'are') + ' tracked but not listed here; the ones with ' +
-              'the most listings are shown first.</p>'
-            : '')
-    ).join('')
+    /*
+        THE COIN TYPES TABLE.
+
+        Two tables, one per series, with no controls at all and no orderable
+        column. The standing argument against merging them was that one table
+        ordered by listing count buries a new coin under an established one -
+        the same eviction the per-series cap exists to prevent, just further
+        down the page instead of off it. That is true of a table you cannot
+        order; the series is a COLUMN now, and sorting and the coin picker do
+        what the split was doing, so a new series is one click away rather
+        than one scroll.
+
+        What the split did carry and a merged table must not lose is the
+        count of types the cap left out. It is in the line under the table.
+
+        It reads its filters straight from the url rather than from the
+        scanner's locals, which are built after this page has already been
+        returned. That is deliberate: /types renders in 70ms precisely
+        because it does not run the scanner's work, and reaching for its
+        variables would have meant hoisting that work above the return.
+    */
+    const typeSale = saleFromScan(url)
+    const typeCoin = coinFrom(url)
+    const typeMetals = metalsFrom(url)
+
+    /*  WHICH SALES THE CLEARING COLUMNS ARE BUILT FROM.
+
+        `fairByChannel` has always held one fair value per channel, computed
+        on every render of six pages and displayed on none of them. The owner
+        asked for the split; the analytics were already there.
+
+        An accepted Best Offer's price is never published, so a figure with
+        one in it is a ceiling. That is what `bound` says, and the cell prints
+        "at most" rather than passing a ceiling off as a price.
+
+        TWO OPTIONS, NOT THE SCANNER'S THREE. The scanner's filter has a
+        "Both", and it means something there: it is a filter over LISTINGS,
+        and a listing of either format is still a coin you can buy. Here the
+        thing being filtered is a clearing PRICE, and the argument at the top
+        of channels.js applies - an auction result is where a room of bidders
+        stopped, a Buy-It-Now result is what one buyer would pay on demand,
+        and the average of the two describes neither. That is why the clearing
+        figure was auction-only for as long as it has existed, and offering a
+        blend here would undo the reason rather than the implementation.
+
+        `?sale=all` still resolves rather than erroring, because it is one
+        click away on the scanner and lands here from the menu bar. */
+    const TYPE_SALES = ['auction', 'bin']
+    const typeChannel = typeSale === 'bin' ? 'BUY_IT_NOW' : 'AUCTION'
+    const channelOf = (e) => {
+        const found = e.market.fairByChannel && e.market.fairByChannel[typeChannel]
+        return found === undefined || found === null ? e.market.fairValue : found
+    }
+
+    const TYPE_SORTS = {
+        type: (a, b) => String(INSTRUMENTS.displayName(a.row.key))
+            .localeCompare(String(INSTRUMENTS.displayName(b.row.key))),
+        series: (a, b) => String(a.row.key).localeCompare(String(b.row.key)),
+        sales: (a, b) => numberDesc(channelOf(a).n, channelOf(b).n),
+        clears: (a, b) => numberDesc(channelOf(a).p50, channelOf(b).p50),
+        cheapest: (a, b) => numberAsc(channelOf(a).p50, channelOf(b).p50),
+        asks: (a, b) => numberDesc(a.market.liquidity.medianAskPremium,
+            b.market.liquidity.medianAskPremium),
+        spread: (a, b) => numberDesc(a.market.liquidity.askClearingSpread,
+            b.market.liquidity.askClearingSpread),
+        sellthrough: (a, b) => numberDesc(a.market.liquidity.sellThroughRate,
+            b.market.liquidity.sellThroughRate),
+        bidcount: (a, b) => numberDesc(a.market.liquidity.medianBidCount,
+            b.market.liquidity.medianBidCount),
+        live: (a, b) => numberDesc(a.market.liquidity.activeListings,
+            b.market.liquidity.activeListings),
+        ceiling: (a, b) => numberDesc(a.market.bidCeiling && a.market.bidCeiling.maxBid,
+            b.market.bidCeiling && b.market.bidCeiling.maxBid)
+    }
+
+    /*  filterHref hard-codes the scanner's path and carries filters this page
+        has no equivalent of - the price band does not describe a coin TYPE,
+        and there is no "ending within" when nothing here ends. So /types
+        builds its own, over the four things it does have. */
+    const typesHref = (changes) => {
+        const now = {
+            sale: typeSale,
+            metal: typeMetals,
+            order: url.searchParams.get('order'),
+            series: typeCoin.series,
+            cond: typeCoin.condition,
+            size: typeCoin.size
+        }
+        const next = Object.assign({}, now, changes)
+        const params = []
+        if (next.sale === 'bin') { params.push('sale=bin') }
+        if (next.metal.length === 1) { params.push('metal=' + next.metal[0]) }
+        for (const name of ['order', 'series', 'cond', 'size']) {
+            if (next[name]) { params.push(name + '=' + encodeURIComponent(next[name])) }
+        }
+        return '/types' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
+    }
+
+    /*  The tooltips say which columns the format filter actually moves, and
+        the three it does not: an auction has no asking price to compare, and
+        sell-through and the live count are computed over every format at once
+        in liquidity.js with no per-channel variant. Labelling them beats
+        letting the filter appear to move a number it never touched. */
+    const TYPE_COLUMNS = [
+        { label: 'Coin type', key: 'type' },
+        { label: 'Series', key: 'series' },
+        { label: 'Sales', key: 'sales',
+            title: 'Completed sales in the format chosen above, over 180 days and weighted so ' +
+                'a sale 45 days old counts half as much as today\'s. Under three and the ' +
+                'clearing columns stay blank.' },
+        { label: 'Clears at', key: 'clears', back: 'cheapest',
+            title: 'Where sales in the chosen format actually land, as a premium over the ' +
+                'metal in the coin. Follows the format filter.' },
+        { label: 'p25\u2013p75',
+            title: 'The middle half of those clearing prices. A wide band means the price ' +
+                'depends on the coin rather than on the type.' },
+        { label: 'Asks', key: 'asks',
+            title: 'What the Buy-It-Now shelf is asking right now. Fixed-price listings only, ' +
+                'and it does NOT follow the format filter: a running auction has no asking ' +
+                'price, just a bid so far, so there is no auction figure to switch to.' },
+        { label: 'Spread', key: 'spread',
+            title: 'Asks minus Clears at, in percentage points. With Buy-It-Now selected this ' +
+                'compares the shelf against itself, which is the honest version of the ' +
+                'comparison; with Auctions it is what paying a Buy-It-Now costs over waiting.' },
+        { label: 'Sell-through', key: 'sellthrough',
+            title: 'Of the lots that ENDED in the last 90 days, the share that sold. Counts ' +
+                'every format together and does not follow the filter above.' },
+        { label: 'Bids', key: 'bidcount',
+            title: 'Median bids on auctions that got at least one, over 90 days. Auctions ' +
+                'only, whatever the filter says, because a Buy-It-Now has no bids.' },
+        { label: 'Live', key: 'live',
+            title: 'Listings on sale right now. Counts auctions as well as Buy-It-Now, so it ' +
+                'does not follow the filter either.' },
+        { label: 'Bid up to', key: 'ceiling',
+            title: 'The most you should bid, from the AUCTION clearing distribution - there is ' +
+                'nothing to bid on a Buy-It-Now. The buyer fee eBay adds on top has already ' +
+                'been taken out of it.' }
+    ]
+
+    const typesTable = () => {
+        const asked = url.searchParams.get('order')
+        const order = Object.prototype.hasOwnProperty.call(TYPE_SORTS, asked) ? asked : 'sales'
+
+        const rows = markets
+            .filter(e => typeMetals.includes(SERIES.metalForKey(e.row.key)))
+            .filter(e => {
+                const parts = coinPartsOf(e.row.key)
+                if (parts === null) { return true }
+                return (typeCoin.series === null || parts.series === typeCoin.series) &&
+                    (typeCoin.condition === null || parts.condition === typeCoin.condition) &&
+                    (typeCoin.size === null || parts.size === typeCoin.size)
+            })
+            .slice()
+            .sort(TYPE_SORTS[order])
+
+        const saleControl = '<span class="seg" title="Auctions and the Buy-It-Now shelf are ' +
+            'two markets, and averaging them gives a price that describes neither - so there ' +
+            'is no combined figure to switch to.">' + TYPE_SALES.map(id =>
+            '<a class="seg-opt' + (id === (typeSale === 'bin' ? 'bin' : 'auction') ? ' on' : '') + '" href="' +
+            typesHref({ sale: id }) + '">' + escapeHtml(SALE_LABELS[id]) + '</a>').join('') +
+            '</span>'
+
+        const metalLink = (code, label) => {
+            const on = typeMetals.includes(code)
+            const next = on ? typeMetals.filter(m => m !== code) : typeMetals.concat([code])
+            return '<a class="radio' + (on ? ' on' : '') + '" href="' +
+                typesHref({ metal: next.length === 0 ? typeMetals : next }) +
+                '"><span class="dot"></span>' + escapeHtml(label) + '</a>'
+        }
+
+        /*  The scanner's three dependent selects, over the types on hand
+            rather than over the live listings, so a choice always has rows
+            behind it here too. */
+        const options = (field, chosen) => {
+            const seen = new Map()
+            for (const e of markets) {
+                const parts = coinPartsOf(e.row.key)
+                if (parts === null) { continue }
+                if (field !== 'series' && typeCoin.series !== null &&
+                    parts.series !== typeCoin.series) { continue }
+                if (field !== 'condition' && typeCoin.condition !== null &&
+                    parts.condition !== typeCoin.condition) { continue }
+                if (field !== 'size' && typeCoin.size !== null &&
+                    parts.size !== typeCoin.size) { continue }
+                seen.set(parts[field], (seen.get(parts[field]) || 0) + 1)
+            }
+            const label = (value) => {
+                if (field !== 'series') { return coinWord(value) }
+                const found = SERIES.forKey(value + '.X')
+                return found === null ? value : found.pack.label
+            }
+            return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([value, n]) =>
+                '<option value="' + escapeHtml(value) + '"' +
+                (value === chosen ? ' selected' : '') + '>' + escapeHtml(label(value)) +
+                ' (' + n + ')</option>').join('')
+        }
+
+        const picker = '<form class="coin-picker" method="get" action="/types">' +
+            (typeSale === 'bin'
+                ? '<input type="hidden" name="sale" value="bin">' : '') +
+            (typeMetals.length === 1
+                ? '<input type="hidden" name="metal" value="' + escapeHtml(typeMetals[0]) + '">' : '') +
+            (order !== 'sales'
+                ? '<input type="hidden" name="order" value="' + escapeHtml(order) + '">' : '') +
+            ['series', 'cond', 'size'].map((name, i) => {
+                const field = ['series', 'condition', 'size'][i]
+                const blank = ['Any coin', 'Any condition', 'Any size'][i]
+                return '<select name="' + name + '"><option value="">' + blank + '</option>' +
+                    options(field, typeCoin[field]) + '</select>'
+            }).join('') +
+            '<button class="btn btn-secondary small" type="submit">Apply</button>' +
+            (typeCoin.series || typeCoin.condition || typeCoin.size
+                ? '<a class="btn btn-ghost small" href="' +
+                  typesHref({ series: null, cond: null, size: null }) + '">Clear</a>'
+                : '') +
+            '</form>'
+
+        const body = rows.map(e => {
+            const f = channelOf(e)
+            const l = e.market.liquidity
+            const found = SERIES.forKey(e.row.key)
+            const ceiling = (f.bound === 'upper' || f.bound === 'mixed') && f.p50 !== null
+            return '<tr>' +
+                '<td><a href="/listings?key=' + encodeURIComponent(e.row.key) + '"' +
+                ' title="See the individual listings behind these numbers">' +
+                escapeHtml(INSTRUMENTS.displayName(e.row.key)) + '</a></td>' +
+                '<td>' + escapeHtml(found === null ? '\u2014' : found.pack.label) + '</td>' +
+                '<td class="mono">' + f.n + '</td>' +
+                '<td class="mono"' + (ceiling
+                    ? ' title="An accepted Best Offer\'s price is never published by eBay, so ' +
+                      'this is what those lots sold AT OR BELOW."'
+                    : '') + '>' +
+                (ceiling ? 'at most ' : '') + pct(f.p50) + '</td>' +
+                '<td class="mono">' +
+                (f.sufficient ? pct(f.p25) + ' \u2013 ' + pct(f.p75) : '\u2014') + '</td>' +
+                '<td class="mono">' + pct(l.medianAskPremium) + '</td>' +
+                '<td class="mono"><strong>' + pct(l.askClearingSpread) + '</strong></td>' +
+                '<td class="mono">' + pct(l.sellThroughRate, 0) + '</td>' +
+                '<td class="mono">' +
+                (l.medianBidCount === null ? '\u2014' : l.medianBidCount.toFixed(0)) + '</td>' +
+                '<td class="mono">' + l.activeListings + '</td>' +
+                '<td class="mono">' +
+                (e.market.bidCeiling ? gbp(e.market.bidCeiling.maxBid) : '\u2014') + '</td>' +
+                '</tr>'
+        }).join('')
+
+        const hidden = seriesBlocks.reduce((sum, b) => sum + b.hidden, 0)
+        return '<div class="filters">' +
+            '<span class="filter-label">Selling as</span>' + saleControl +
+            '<span class="filter-divider"></span>' +
+            metalLink('XAG', 'Silver') + metalLink('XAU', 'Gold') +
+            '</div>' + picker +
+            '<div class="card scroll"><table>' +
+            sortableHead(TYPE_COLUMNS, order, (key) => typesHref({ order: key })) +
+            '<tbody>' + body + '</tbody></table></div>' +
+            '<p class="thin">Showing <strong>' + rows.length + '</strong> of ' + markets.length +
+            ' tracked coin types' +
+            (hidden > 0
+                ? '; ' + hidden + ' more ' + (hidden === 1 ? 'is' : 'are') +
+                  ' tracked but too thinly listed to appear'
+                : '') +
+            '. Clearing figures come from ' +
+            (typeSale === 'bin' ? 'Buy-It-Now' : 'auction') + ' sales only; the two markets ' +
+            'are not averaged.</p>'
+    }
 
     /*
         THE REFERENCE PAGES.
@@ -881,7 +1095,7 @@ function marketPage (opened, url, reference) {
         types: {
             title: 'Coin types',
             lead: 'Every type this tool tracks, with where it clears and the most worth bidding.',
-            body: () => instrumentTables
+            body: () => typesTable()
         },
         composition: {
             title: 'Composition',

@@ -222,6 +222,22 @@ exports.newMarketView = function (repository, spotAt, options) {
                 AUCTION: fair,
                 FIXED_PRICE: FAIRVALUE.fairValue(observationsIn('FIXED_PRICE'), fairOptions),
                 BEST_OFFER: FAIRVALUE.fairValue(observationsIn('BEST_OFFER'),
+                    Object.assign({ includeCensored: true }, fairOptions)),
+
+                /*  AND THE TWO OF THEM TOGETHER, WHICH IS WHAT A BUYER MEANS.
+
+                    Nobody shopping says "fixed price, offers not enabled" -
+                    they say Buy-It-Now, and eBay shows them both kinds on the
+                    same shelf. Kept apart above because the two are measured
+                    differently; joined here because the question "what does
+                    this coin go for on a Buy-It-Now" has one answer and the
+                    exact-priced half of the corpus is too thin to be it.
+
+                    `bound` comes back 'mixed' as soon as an offers-allowed
+                    sale is in the mix, and the page prints that rather than
+                    passing a ceiling off as a price. */
+                BUY_IT_NOW: FAIRVALUE.fairValue(
+                    observationsIn('FIXED_PRICE').concat(observationsIn('BEST_OFFER')),
                     Object.assign({ includeCensored: true }, fairOptions))
             }
 

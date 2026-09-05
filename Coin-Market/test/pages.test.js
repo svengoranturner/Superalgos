@@ -2973,14 +2973,210 @@ test('every reference page is reachable from the menu bar', async () => {
 test('a reference page costs one assembly, not the scanner as well', async () => {
     /*  They are built from the same tracked-market data the scanner uses, and
         they return before it prices every live auction and evaluates every
-        offer. Checked by what is NOT on the page: no summary strip, no view
-        pills, no scan table. */
-    const opened = twoSeriesStore()
-    const body = (await fetchAll(opened, ['/gaps']))['/gaps'].body
+        offer. Checked by what is NOT on the page: no summary strip, no scan
+        table.
 
-    assert.ok(!body.includes('class="summary"'), 'a reference page built the summary strip')
-    assert.ok(!body.includes('class="filters"'), 'a reference page built the filter row')
-    assert.ok(!body.includes('<table class="scan">'), 'a reference page built the scan table')
+        /types is the one to watch, because it grew a filter row of its own
+        and a filter row is what the scanner's work is FOR. It reads the same
+        four parameters from the same url and applies them to tracked types
+        rather than to live listings, so having one proves nothing about
+        whether the pipeline ran - which is why the assertions below are about
+        the pipeline's output and not about the controls. */
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, ['/gaps', '/types'])
+
+    for (const [path, page] of Object.entries(pages)) {
+        assert.ok(!page.body.includes('class="summary"'), path + ' built the summary strip')
+        assert.ok(!page.body.includes('<table class="scan">'), path + ' built the scan table')
+        assert.ok(!page.body.includes('id="offers"'), path + ' built the offers panel')
+    }
+    assert.ok(!pages['/gaps'].body.includes('class="filters"'),
+        '/gaps has no filters and should not have grown any')
+    opened.db.close()
+})
+
+/*
+    THE COIN TYPES PAGE.
+
+    Was two tables, one per series, with no controls and no orderable column.
+    The owner asked for one table with the scanner's filtering on it, and for
+    the clearing figures to follow a format filter.
+*/
+test('the coin types page is one table, with the series as a column', async () => {
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/types']))['/types'].body
+
+    const tables = (body.match(/<table/g) || []).length
+    assert.strictEqual(tables, 1, 'the types page should be one table, not ' + tables)
+
+    /*  UI-12 again, and it still has to hold: a second series must be on the
+        page. It is a column now rather than a heading, so it is checked
+        inside a cell rather than anywhere in the html - a series name in a
+        <select> would pass the old check while the table showed neither. */
+    const rows = body.split('<tbody>')[1]
+    assert.ok(rows.includes('<td>British Gold Sovereigns</td>'), 'no sovereign row')
+    assert.ok(/<td>Morgan[^<]*<\/td>/.test(rows), 'the second series has no row')
+    opened.db.close()
+})
+
+test('a coin types column reorders the table', async () => {
+    /*  twoSeriesStore is the wrong fixture for this and passed anyway: only
+        the sovereign has resolved sales, so only one row has a clearing price
+        at all, and a null sorts last in BOTH directions. Two priced rows, or
+        this proves nothing. */
+    const opened = twoPricedTypesStore()
+    const paths = ['/types?order=clears', '/types?order=cheapest']
+    const pages = await fetchAll(opened, paths)
+
+    const firstRow = (body) => body.split('<tbody>')[1].split('</tr>')[0]
+    const dear = firstRow(pages['/types?order=clears'].body)
+    const cheap = firstRow(pages['/types?order=cheapest'].body)
+
+    assert.ok(dear.includes('Sovereign (proof)'),
+        'dearest-first did not open with the dearest type: ' + dear)
+    assert.ok(cheap.includes('Sovereign (bullion)'),
+        'cheapest-first did not open with the cheapest type: ' + cheap)
+    /*  And the header says which one you are on, or the arrow is decoration. */
+    assert.ok(pages['/types?order=clears'].body.includes('class="sortable on"'),
+        'no column is marked as the one in force')
+    opened.db.close()
+})
+
+/*  Two coin types in one series, priced 30 points apart, so an ordering has
+    something to get wrong. */
+function twoPricedTypesStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const sale = (tag, n, key, price) => {
+        const id = 'v1|' + tag + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: tag + n, title: key + ' example ' + n,
+            buyingOptions: 'AUCTION', endTime: now,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 4, observedAt: now })
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: price, shipping: 4, bidCount: 7,
+            saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+        })
+    }
+    for (let n = 0; n < 4; n++) {
+        sale('bul', n, 'GB.SOV.BULLION.FULL', 820 + n)
+        sale('prf', n, 'GB.SOV.PROOF.FULL', 1090 + n)
+    }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+/*
+    THE FORMAT FILTER HAS TO MOVE THE NUMBER.
+
+    fairByChannel was computed on every render of six pages and displayed on
+    none, so a filter that read from it could look right and be wired to the
+    blended figure - which on this fixture is auction-dominated and would sit
+    within a point or two of the auction column. Hence a fixture where the two
+    channels are 30 points apart: a wiring mistake cannot hide inside that.
+*/
+function twoChannelStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const key = 'GB.SOV.BULLION.FULL'
+    const sale = (n, price, saleType, censored) => {
+        const id = 'v1|chan' + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'chan' + n, title: key + ' example ' + n,
+            buyingOptions: saleType === 'AUCTION' ? 'AUCTION' : 'FIXED_PRICE|BEST_OFFER',
+            endTime: saleType === 'AUCTION' ? now : null,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(id, { price, shipping: 4, observedAt: now })
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(id, {
+            endTime: now, sold: true, finalPrice: price, shipping: 4,
+            bidCount: saleType === 'AUCTION' ? 7 : null,
+            saleType, censored, source: 'trading_getitem'
+        })
+    }
+
+    /*  Metal is 0.2354 oz at GBP 3,290 = GBP 774. Auctions land just over it;
+        the shelf clears a third above. Four of each, so both channels pass
+        the three-sale minimum on their own. */
+    for (let n = 0; n < 4; n++) { sale(n, 820 + n, 'AUCTION', false) }
+    for (let n = 4; n < 8; n++) { sale(n, 1090 + n, 'FIXED_PRICE', false) }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the format filter switches which sales the clearing figure comes from', async () => {
+    const opened = twoChannelStore()
+    const paths = ['/types', '/types?sale=bin', '/types?sale=all']
+    const pages = await fetchAll(opened, paths)
+
+    /*  Column 4 of the row - coin type, series, sales, clears at. Read as
+        rendered rather than recomputed, because the bug this is for is a
+        rendering one. */
+    const clears = (body) => {
+        const cells = body.split('<tbody>')[1].split('</tr>')[0].split('</td>')
+        assert.ok(cells.length > 4, 'the types table has no row to read')
+        return cells[3].slice(cells[3].lastIndexOf('>') + 1).trim()
+    }
+    const auction = clears(pages['/types'].body)
+    const bin = clears(pages['/types?sale=bin'].body)
+
+    const number = (text) => Number(text.replace(/[^0-9.-]/g, ''))
+    assert.ok(number(bin) - number(auction) > 20,
+        'auctions say ' + auction + ' and Buy-It-Now says ' + bin +
+        ': the filter is not switching the channel')
+
+    /*  THERE IS NO THIRD OPTION, AND THAT IS THE POINT.
+
+        The scanner's format filter has a "Both" because it filters listings.
+        This one filters a clearing PRICE, and channels.js opens by arguing
+        that the average of two markets describes neither - which is why the
+        clearing figure has been auction-only since it existed. A blend here
+        would undo the reason rather than the implementation.
+
+        `?sale=all` still has to resolve, because the scanner links to it and
+        somebody will arrive carrying it. It falls back to auctions. */
+    assert.strictEqual(pages['/types?sale=all'].status, 200, '?sale=all did not resolve')
+    assert.strictEqual(clears(pages['/types?sale=all'].body), auction,
+        '?sale=all should fall back to auctions, not invent a blend')
+    const control = pages['/types'].body.split('class="seg"')[1].split('</span>')[0]
+    assert.ok(!control.includes('>Both<'), 'a combined clearing figure is being offered')
+    opened.db.close()
+})
+
+test('a Buy-It-Now figure built on withheld prices says so', async () => {
+    /*  eBay never publishes what an accepted Best Offer went for, so those
+        rows are ceilings. They are kept - discarding them threw away half the
+        Buy-It-Now corpus - and the cell has to say what it is showing. */
+    const opened = twoChannelStore()
+    opened.repository.saveOutcome('v1|chan4|0', {
+        endTime: new Date().toISOString(), sold: true, finalPrice: 1094, shipping: 4,
+        bidCount: null, saleType: 'BEST_OFFER', censored: true, source: 'trading_getitem'
+    })
+
+    const body = (await fetchAll(opened, ['/types?sale=bin']))['/types?sale=bin'].body
+    const row = body.split('<tbody>')[1].split('</tr>')[0]
+    assert.ok(row.includes('at most'),
+        'a clearing figure with a withheld price in it is printed as though somebody paid it')
+
+    const auction = (await fetchAll(opened, ['/types']))['/types'].body
+    assert.ok(!auction.split('<tbody>')[1].split('</tr>')[0].includes('at most'),
+        'an auction figure is exact and must not be hedged')
     opened.db.close()
 })
 
