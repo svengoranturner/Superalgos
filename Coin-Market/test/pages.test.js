@@ -1909,6 +1909,8 @@ test('a sold row says how it sold, and a Buy-It-Now says so', async () => {
 
     sell('auction-1', 'AUCTION', 7)
     sell('bin-1', 'FIXED_PRICE', null)
+    /*  One bid as well as seven, so the plural is exercised. */
+    sell('auction-2', 'AUCTION', 1)
 
     /*  A LIVE listing as well, or the coin type has no ask sample and fewer
         than the three sales a clearing figure needs - so it is dropped from
@@ -1937,10 +1939,22 @@ test('a sold row says how it sold, and a Buy-It-Now says so', async () => {
     const after = body.split('id="sold"')[1] || ''
     const table = after.split('<h2')[0]
 
-    assert.ok(table.includes('>Buy-It-Now</span>'),
+    /*  The words moved into the mark that replaced them. Asserted on the
+        accessible label rather than on the glyph: that is what a screen
+        reader is handed and what a hover reads back, so it is the part that
+        has to be right. A test that matched the path data would pin the
+        drawing and let the meaning rot. */
+    assert.ok(table.includes('aria-label="Buy-It-Now"'),
         'a Buy-It-Now sale is not distinguishable from an auction')
-    assert.ok(table.includes('>7</td>') || table.includes('>7<'),
-        'the auction lost its bid count')
+    assert.ok(table.includes('aria-label="Auction"'),
+        'an auction sale carries no mark of its own')
+    /*  With its unit. The cell used to be a bare number, which read as data
+        with no meaning beside a badge that had words - the owner could not
+        tell the two apart, which is why this cell changed in the first
+        place. Both forms, because `n + ' bid'` unconditionally would satisfy
+        a test that only ever looked at seven. */
+    assert.ok(table.includes('>7 bids<'), 'the auction lost its bid count, or its unit')
+    assert.ok(table.includes('>1 bid<'), 'a single bid is reported as "1 bids"')
 
     /*  With a Buy-It-Now sale present, the "we have none" note must be gone -
         the whole point of deriving it is that it disappears by itself. */
@@ -2027,8 +2041,8 @@ test('a Best Offer sale is never reported as a price somebody paid', async () =>
         'the asking price is presented as the price it sold for')
     assert.ok(!table.includes('What the winner actually paid'),
         'the page claims to know what an offers-allowed buyer paid')
-    assert.ok(table.includes('>Offers allowed</span>'),
-        'a lot that merely allowed offers is badged as an ordinary Buy-It-Now')
+    assert.ok(table.includes('aria-label="Buy-It-Now, offers allowed"'),
+        'a lot that merely allowed offers is marked as an ordinary Buy-It-Now')
     assert.ok(!table.includes('Bought outright at the asking price'),
         'a lot that may have been negotiated is described as paid at the asking price')
     assert.ok(!table.includes('agreed a price privately'),
@@ -3068,6 +3082,112 @@ function goldOnlyStore () {
     const spotAt = SPOT.newSpotLookup(db, {})
     return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
 }
+
+/*
+    ONE NOUN FOR ONE FACT.
+
+    The owner asked for the format to become an icon. The reason it was worth
+    doing was underneath that: the same fact had two vocabularies. The review
+    queue printed `buying_options` lowercased with the pipe swapped for a
+    slash - "fixed price / best offer" - and the sold table printed
+    `sale_type` as "Offers allowed", for the identical listing.
+*/
+test('the queue and the sold table say the same thing about the same listing', async () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const KEY = 'GB.SOV.BULLION.FULL'
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    /*  One listing, offers enabled, that went on to sell through an offer -
+        so the queue reads it off buying_options and the sold table off
+        sale_type, which is exactly where the two vocabularies used to part
+        company. */
+    const id = 'v1|both|0'
+    repository.saveListing({
+        browseId: id, legacyId: 'both', title: 'Gold Sovereign both ways',
+        buyingOptions: 'FIXED_PRICE|BEST_OFFER', endTime: null,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(id, { price: 900, shipping: 0, observedAt: now })
+    repository.setListingSeries(id, 'GB.SOV')
+    repository.saveClassification(id, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+    repository.queueForReview(id, 'worth a look', KEY, 0.5)
+    repository.saveOutcome(id, {
+        endTime: now, sold: true, finalPrice: 900, shipping: 0, bidCount: null,
+        saleType: 'BEST_OFFER', censored: true, source: 'test'
+    })
+    /*  A live lot too, or the coin type has no ask sample and no clearing
+        price and the page short-circuits before rendering a table at all. */
+    const live = 'v1|shelf|0'
+    repository.saveListing({
+        browseId: live, legacyId: 'shelf', title: 'Gold Sovereign on the shelf',
+        buyingOptions: 'FIXED_PRICE', endTime: null,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(live, { price: 1000, shipping: 0, observedAt: now })
+    repository.setListingSeries(live, 'GB.SOV')
+    repository.saveClassification(live, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+
+    const paths = ['/review?sale=all', '/?min=1&view=sold']
+    const pages = await fetchAll(opened, paths)
+    const labelIn = (body, where) => {
+        const found = /aria-label="([^"]*)"/.exec(body)
+        assert.ok(found !== null, 'no format mark on ' + where)
+        return found[1]
+    }
+
+    const queue = pages['/review?sale=all'].body.split('<tbody>')[1]
+    const sold = pages['/?min=1&view=sold'].body.split('id="sold"')[1].split('<h2')[0]
+
+    assert.strictEqual(labelIn(queue, 'the review queue'), 'Buy-It-Now, offers allowed',
+        'the queue does not name the format the way the sold table does')
+    assert.strictEqual(labelIn(sold, 'the sold table'), 'Buy-It-Now, offers allowed',
+        'the sold table does not name the format the way the queue does')
+
+    /*  Equality alone would be satisfied by both returning nothing, which is
+        why each is asserted against the literal above. And the enum must be
+        gone from both: it is the database's words, not anybody's. */
+    for (const [path, page] of Object.entries(pages)) {
+        assert.ok(!page.body.includes('fixed price / best offer'),
+            path + ' still prints the raw buying-options enum')
+    }
+    db.close()
+})
+
+test('a format mark is not a silent one', async () => {
+    /*  These replace words rather than decorating them, so hiding them from
+        the accessibility tree deletes the fact instead of de-duplicating it.
+        Scoped to the format marks: RENDER.icon emits aria-hidden SVGs all
+        over the page and legitimately so, and a page-wide assertion would
+        either fail for the wrong reason or be weakened until it proved
+        nothing. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review?sale=all']))['/review?sale=all'].body
+
+    const marks = body.split('<span class="fmt"').slice(1).map(part => part.split('</span>')[0])
+    assert.ok(marks.length > 0, 'no format marks on the page at all')
+    for (const mark of marks) {
+        assert.match(mark, /aria-label="[^"]+"/, 'a format mark carries no label')
+        assert.match(mark, /<title>[^<]+<\/title>/, 'a format mark carries no title to hover')
+        assert.ok(!mark.includes('aria-hidden'),
+            'a format mark is hidden from a screen reader, which deletes the fact it replaced')
+    }
+    opened.db.close()
+})
+
+test('an icon nobody defined is loud, not invisible', () => {
+    /*  ICON[name] for an unknown name used to yield d="undefined", which
+        draws nothing and looks exactly like a mark that is simply too faint.
+        Adding three names at once is when that bites. */
+    const RENDER = require('../src/web/render.js')
+    assert.throws(() => RENDER.icon('gavel-with-a-typo'), /unknown icon/)
+    assert.ok(RENDER.icon('gavel').includes('<path'), 'the gavel is not defined')
+})
 
 test('the tick sits beside the title, not inside it', async () => {
     const opened = scannerStore()

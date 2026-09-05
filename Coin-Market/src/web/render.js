@@ -63,17 +63,64 @@ const ICON = {
     cross: 'M6 6l12 12M18 6 6 18',
     menu: 'M4 6h16M4 12h16M4 18h16',
     sliders: 'M4 6h16M7 12h10M10 18h4',
-    moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z'
+    moon: 'M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z',
+
+    /*  HOW A LOT IS SOLD, in three marks.
+
+        A gavel for an auction: the head as a rotated bar, the shaft, and the
+        block it comes down on. A tag for a Buy-It-Now - a price ticket, which
+        is what a fixed price is - and the same tag with a plus in it for one
+        whose seller takes offers, because offers-allowed is a Buy-It-Now with
+        a button rather than a third kind of market.
+
+        Two shapes each, which is why `icon` takes a list now. TICKED and SUN
+        were written out by hand for exactly this reason and a third and
+        fourth hand-written constant would have been the point at which the
+        map stopped being worth having. */
+    gavel: ['M13.5 3.5 20.5 10.5 17.5 13.5 10.5 6.5Z', 'M12 8 6 14M4.5 12.5 8.5 16.5M3 20.5h10'],
+    tag: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z', 'M7.5 7.5h.01'],
+    tagOffer: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z', 'M7.5 7.5h.01', 'M12.5 13h5M15 10.5v5']
 }
 
-/*  A path-only icon. The check-in-circle and the sun need more than one
-    shape, so they are written out where they are used rather than bent into
-    this shape. */
+/*  One path or several. The check-in-circle and the sun need shapes a path
+    cannot give - a circle, a dozen rays - so those two stay written out; a
+    mark made of two or three strokes belongs in the map with the rest.
+
+    An unknown name throws rather than rendering `d="undefined"`, which draws
+    nothing at all and looks exactly like an icon that is simply too faint. */
+function shapesOf (name) {
+    const found = ICON[name]
+    if (found === undefined) { throw new Error('unknown icon: ' + name) }
+    return (Array.isArray(found) ? found : [found])
+        .map(d => '<path d="' + d + '"></path>').join('')
+}
+
 function icon (name, size) {
     const px = size || 14
     return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" ' +
-        'stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="' +
-        ICON[name] + '"></path></svg>'
+        'stroke="currentColor" stroke-width="1.5" aria-hidden="true">' +
+        shapesOf(name) + '</svg>'
+}
+
+/*
+    THE SAME MARK, BUT SPEAKING.
+
+    `icon` is aria-hidden, which is right where the glyph sits beside the word
+    it illustrates - a tick next to "genuine" read out twice is worse than
+    once. A format mark IS the word: it replaced "fixed price / best offer" on
+    the row, so hidden from the accessibility tree it deletes the fact rather
+    than de-duplicating it. Same treatment the charts already get.
+
+    The title element is not decoration either. These are three line drawings
+    a few pixels across standing in for three ideas somebody is making money
+    decisions on, and nobody should have to learn them from context.
+*/
+function mark (name, label, size) {
+    const px = size || 14
+    const safe = escapeHtml(label)
+    return '<svg width="' + px + '" height="' + px + '" viewBox="0 0 24 24" fill="none" ' +
+        'stroke="currentColor" stroke-width="1.5" role="img" aria-label="' + safe + '">' +
+        '<title>' + safe + '</title>' + shapesOf(name) + '</svg>'
 }
 
 /*  The one icon with a circle round it: "counted in the statistics", which
@@ -89,6 +136,7 @@ const SUN = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" ' +
     '</path></svg>'
 
 exports.icon = icon
+exports.mark = mark
 exports.TICKED = TICKED
 
 /*

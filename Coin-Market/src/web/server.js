@@ -1426,14 +1426,15 @@ function marketPage (opened, url, reference) {
                       an em dash there reads as missing data rather than as a
                       different kind of sale. The owner could not tell the two
                       apart, which is the whole reason this cell changed. */
-                  '<td class="mono">' + (sale.saleType === 'AUCTION'
-                      ? (Number.isFinite(sale.finalBidCount) ? sale.finalBidCount : '—')
-                      : sale.saleType === 'BEST_OFFER'
-                          ? '<span class="badge" title="A Buy-It-Now whose seller accepted ' +
-                            'offers. It may have sold at the asking price or below it, and eBay ' +
-                            'publishes neither which nor how much.">Offers allowed</span>'
-                          : '<span class="badge" title="Bought outright at the asking price. ' +
-                            'A Buy-It-Now has no bids.">Buy-It-Now</span>') + '</td>' +
+                  /*  The same mark the queue uses, plus the bid count where
+                      there were bids - the number was the whole cell before
+                      and read as data with no unit. A bare "1" says nothing;
+                      a gavel and "1 bid" says how contested it was. */
+                  '<td class="mono fmt-cell">' + formatMark(sale) +
+                  (sale.saleType === 'AUCTION' && Number.isFinite(sale.finalBidCount)
+                      ? ' <span class="thin">' + sale.finalBidCount +
+                        (sale.finalBidCount === 1 ? ' bid' : ' bids') + '</span>'
+                      : '') + '</td>' +
                   '<td class="mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
                       : pct(premium)) + '</td>' +
@@ -1456,10 +1457,10 @@ function marketPage (opened, url, reference) {
         { label: 'Coin type', key: 'ident' },
         { label: 'Price', key: 'dearest', back: 'cheapest' },
         { label: 'How it sold',
-            title: 'How it sold. A number is an auction and says how contested it was. ' +
-                'A Buy-It-Now was bought outright at the asking price. Offers allowed means ' +
-                'the seller took offers, so the lot went for that price or less and eBay ' +
-                'will not say which.' },
+            title: 'A gavel is an auction, with the number of bids it drew. A tag was bought ' +
+                'outright at the asking price. A tag with a plus means the seller took ' +
+                'offers, so the lot went for that price or less and eBay will not say ' +
+                'which. Hover any of them to read it back.' },
         /*  No key. The premium is worked out while the row renders and is not
             on the row, so there is nothing here to order by - and a header
             that looks clickable and does nothing is worse than a plain one. */
@@ -3543,6 +3544,70 @@ function listedFor (iso) {
     something measured, and it is done with its eyes open.
 */
 /*
+    ONE NOUN FOR ONE FACT.
+
+    Two vocabularies described the same thing in two places. The review queue
+    printed `buying_options` lowercased with the pipe swapped for a slash -
+    "fixed price / best offer" - and the sold table printed `sale_type` as
+    "Offers allowed", for the same listing. eBay calls it a Buy-It-Now with
+    offers on; so does this, in both places, from one table.
+
+    Three, because that is what a buyer is choosing between. BEST_OFFER is a
+    modifier on a Buy-It-Now rather than a third market - which is what the
+    data already says, arriving as the pipe list FIXED_PRICE|BEST_OFFER.
+
+    A mark rather than the words, which the owner asked for. It carries its
+    own label: a line drawing a few pixels across standing in for the thing
+    somebody is making a money decision on should never have to be learned
+    from context.
+*/
+const FORMATS = {
+    AUCTION: {
+        icon: 'gavel',
+        label: 'Auction',
+        title: 'An auction. The price shown is the bid so far, not what it will go for.'
+    },
+    /*  Keyed on the sale_type vocabulary channels.js already uses -
+        AUCTION / FIXED_PRICE / BEST_OFFER - rather than on a second set of
+        names. A completed sale arrives carrying one of those three, so
+        anything else here would need a translation table whose only job was
+        to be kept in step. */
+    FIXED_PRICE: {
+        icon: 'tag',
+        label: 'Buy-It-Now',
+        title: 'Bought outright at the asking price. A Buy-It-Now has no bids.'
+    },
+    BEST_OFFER: {
+        icon: 'tagOffer',
+        label: 'Buy-It-Now, offers allowed',
+        title: 'A Buy-It-Now whose seller accepts offers. One that sold may have gone at the ' +
+            'asking price or below it, and eBay publishes neither which nor how much.'
+    }
+}
+
+/*  A live listing says what it will accept in `buyingOptions`; a completed
+    one says what actually happened in `saleType`. Prefer the second where it
+    exists - a lot that COULD have taken an offer and sold outright is a
+    Buy-It-Now sale, and the row is describing the sale. */
+function formatOf (row) {
+    const settled = String(row.saleType || '')
+    if (FORMATS[settled] !== undefined) { return FORMATS[settled] }
+
+    const offered = String(row.buyingOptions || '').toUpperCase()
+    if (offered.includes('BEST_OFFER')) { return FORMATS.BEST_OFFER }
+    if (offered.includes('AUCTION')) { return FORMATS.AUCTION }
+    if (offered.includes('FIXED_PRICE')) { return FORMATS.FIXED_PRICE }
+    return null
+}
+
+function formatMark (row) {
+    const format = formatOf(row)
+    if (format === null) { return '' }
+    return '<span class="fmt" title="' + escapeHtml(format.title) + '">' +
+        RENDER.mark(format.icon, format.label) + '</span>'
+}
+
+/*
     WHERE THIS LOT SITS IN WHAT ITS OWN COIN TYPE ACTUALLY FETCHES.
 
     The chip has always printed a premium over spot, and spot is the wrong
@@ -4044,7 +4109,10 @@ function queueMeta (row) {
         meta.push('<span class="badge critical">in ' + escapeHtml(String(row.itemCountry).toUpperCase()) + '</span>')
     }
     if (row.conditionLabel) { meta.push(escapeHtml(row.conditionLabel)) }
-    if (row.buyingOptions) { meta.push(escapeHtml(String(row.buyingOptions).toLowerCase().replace(/[|,]/g, ' / ').replace(/_/g, ' '))) }
+    /*  The mark, not the enum. This line used to read "fixed price / best
+        offer", which is the database's words rather than anybody's. */
+    const format = formatMark(row)
+    if (format !== '') { meta.push(format) }
     /*  Auction-only, and present on just 7.6% of the queue for that reason -
         its absence says "not an auction" rather than "we failed to fetch
         it", so it is emitted only when there is something to say. */

@@ -833,6 +833,12 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
     No .hot any more. It filled at five per cent under spot, which the digits
     in the chip were already saying, and two fills meaning two different
     thresholds on one 40px glyph is a colour nobody can read. */
+/*  A format mark sits on the text baseline beside whatever it qualifies -
+    a bid count, the rest of a meta line - rather than floating above it. */
+.fmt { display: inline-flex; align-items: center; vertical-align: -2px }
+.fmt svg { display: block }
+.fmt-cell { white-space: nowrap }
+
 .chip.cheap { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good) }
 .chip.dear { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical) }
 
