@@ -7,6 +7,7 @@ const { newDatabase } = require('../src/store/db.js')
 const { newRepository } = require('../src/store/repo.js')
 const SPOT = require('../src/spot/spot.js')
 const MARKET = require('../src/analytics/market.js')
+const UPLIFT = require('../src/analytics/uplift.js')
 
 const DAY_MS = 86400000
 
@@ -786,5 +787,101 @@ test('the market paths price a listing at its latest snapshot', () => {
     assert.ok(one, 'the live auction panel lost the lot');
     assert.strictEqual(one.price, 905,
         'the live auction panel priced the lot at a stale snapshot')
+    db.close()
+})
+
+/*
+    THE UPLIFT CURVE IS CACHED ON ITS OWN INPUTS.
+
+    It reads a year of sold auctions - 201,616 snapshot rows for 461 auctions
+    on the live store - to produce about ten numbers, and it cost 2.1s of a
+    6.4s page load. It is also the same answer on two page loads a second
+    apart, because it can only move when the collector resolves an outcome.
+
+    So it is keyed on the outcome population rather than on a clock. The risk
+    a TTL carries is the one worth testing against: a cache that keeps serving
+    the old curve after new data lands is worse than no cache, because the
+    number it feeds - where an auction is likely to finish - is the one the
+    tool exists to produce.
+*/
+test('the uplift curve is recomputed when an outcome resolves, and not otherwise', () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const view = MARKET.newMarketView(repository, spotAt, {})
+
+    const now = new Date().toISOString()
+    const addSoldAuction = (n, finalPrice) => {
+        const browseId = 'v1|up' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 'up' + n, title: 'Gold Sovereign ' + n,
+            buyingOptions: 'AUCTION', endTime: now
+        }, now)
+        /*  Two snapshots, so the per-auction median has something to average
+            and the row count is not trivially one.
+
+            secondsToEnd is DERIVED by saveSnapshot from endTime minus
+            observedAt - passing it directly does nothing, which is how this
+            fixture first produced a curve with no samples in it at all. */
+        const ends = new Date(Date.now() + 600000).toISOString()
+        repository.saveSnapshot(browseId, { price: 100, shipping: 0, bidCount: 3, observedAt: now, endTime: ends })
+        repository.saveSnapshot(browseId, {
+            price: 110, shipping: 0, bidCount: 4, endTime: ends,
+            observedAt: new Date(Date.now() + 60000).toISOString()
+        })
+        repository.saveOutcome(browseId, {
+            endTime: now, sold: true, finalPrice, shipping: 0, bidCount: 5,
+            saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+        })
+    }
+
+    for (let n = 0; n < 8; n++) { addSoldAuction(n, 150) }
+
+    const first = view.upliftCurve()
+    const second = view.upliftCurve()
+    assert.strictEqual(second, first,
+        'the curve was rebuilt with nothing changed; the memo is not working at all')
+
+    /*  Now something DOES change. A cache keyed on time would still be
+        serving `first` here. */
+    for (let n = 100; n < 108; n++) { addSoldAuction(n, 400) }
+
+    const third = view.upliftCurve()
+    assert.notStrictEqual(third, first,
+        'a new batch of resolved auctions did not invalidate the curve')
+
+    const bucket = UPLIFT.bucketFor(600)
+    assert.ok(third[bucket].n > first[bucket].n,
+        'the rebuilt curve did not take the new auctions in: ' +
+        first[bucket].n + ' -> ' + third[bucket].n)
+
+    db.close()
+})
+
+test('the watermark notices a deletion, not only an arrival', () => {
+    /*  A count alone would miss a correction that swapped one outcome for
+        another; a MAX alone would miss a deletion. The pair is the point. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+
+    const now = new Date().toISOString()
+    const add = (n) => {
+        const browseId = 'v1|w' + n + '|0'
+        repository.saveListing({ browseId, legacyId: 'w' + n, title: 'Sovereign', buyingOptions: 'AUCTION', endTime: now }, now)
+        repository.saveOutcome(browseId, {
+            endTime: now, sold: true, finalPrice: 900, shipping: 0, bidCount: 2,
+            saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+        })
+        return browseId
+    }
+    const a = add(1)
+    add(2)
+
+    const before = repository.outcomeWatermark()
+    db.prepare('DELETE FROM listing_outcome WHERE browse_id = ?').run(a)
+    const after = repository.outcomeWatermark()
+
+    assert.notDeepStrictEqual(after, before,
+        'the watermark did not move when an outcome was deleted, so a stale curve would survive it')
     db.close()
 })

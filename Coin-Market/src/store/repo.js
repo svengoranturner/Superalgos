@@ -1268,6 +1268,27 @@ exports.newRepository = function (db, options) {
             fetch limit is a number that quietly stops being true, and this is
             the one table where the total is the whole point - it is the size
             of the evidence every clearing figure rests on. */
+        /*  When the newest resolved sale landed, and how many there are.
+
+            The uplift curve is built from every sold auction of the last year
+            and costs two seconds; it is also identical between two page loads
+            a second apart, because it can only move when the collector
+            resolves an outcome. This is the cheapest honest statement of
+            whether that has happened - MAX over an indexed column plus a
+            count, so a deletion cannot look like no change.
+
+            A count alone would miss a correction that replaced one outcome
+            with another; a MAX alone would miss a deletion. Together they
+            change whenever the population does, which is the whole job.
+        */
+        outcomeWatermark () {
+            return db.prepare(`
+                SELECT COUNT(*) AS n, MAX(ended_at) AS newest
+                FROM listing_outcome
+                WHERE sold = 1 AND sale_type = 'AUCTION' AND censored = 0
+            `).get()
+        },
+
         soldCount () {
             /*  THE SAME POPULATION recentSales draws from, joins and all.
 

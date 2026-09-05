@@ -53,6 +53,10 @@ exports.newMarketView = function (repository, spotAt, options) {
         }
     }
 
+    /*  One curve, kept until its inputs change. Per view instance, which is
+        per process - there is one dashboard. */
+    let curveMemo = null
+
     return {
         forInstrument (key, now) {
             const asOf = now === undefined ? Date.now() : new Date(now).getTime()
@@ -227,10 +231,36 @@ exports.newMarketView = function (repository, spotAt, options) {
            behaviour is a property of eBay's auction format, not of any
            one coin, and pooling gives it enough samples to be useful in
            weeks rather than years. */
+        /*  MEMOISED ON ITS OWN INPUTS, not on a clock.
+
+            This reads a year of sold auctions - 201,616 snapshot rows for 461
+            auctions on the live store - to produce about ten numbers, and it
+            cost 2.1s of a 6.4s page. It is also the same answer on two page
+            loads a second apart: the curve can only move when the collector
+            resolves another outcome.
+
+            So the key is the outcome population itself rather than a TTL. A
+            time-based cache would be wrong in both directions at once - still
+            stale the moment a sweep lands, still recomputing when nothing has
+            changed - whereas this recomputes exactly when there is something
+            new to learn from and never otherwise.
+
+            `since` is part of the key to the day. The window is the last 365
+            days, so it does move at midnight; keeping the full timestamp in
+            the key would mean every request missed, which is the same as no
+            cache at all.
+        */
         upliftCurve (now) {
             const asOf = now === undefined ? Date.now() : new Date(now).getTime()
             const since = new Date(asOf - 365 * DAY_MS).toISOString()
-            return UPLIFT.buildCurve(repository.upliftSamples(since))
+
+            const mark = repository.outcomeWatermark()
+            const key = since.slice(0, 10) + '|' + mark.n + '|' + mark.newest
+            if (curveMemo !== null && curveMemo.key === key) { return curveMemo.curve }
+
+            const curve = UPLIFT.buildCurve(repository.upliftSamples(since))
+            curveMemo = { key, curve }
+            return curve
         },
 
         config
