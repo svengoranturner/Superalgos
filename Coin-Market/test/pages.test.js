@@ -3246,3 +3246,104 @@ test('an unknown window falls back rather than showing nothing', async () => {
     }
     opened.db.close()
 })
+
+/*
+    THE THREE FILTERS THE SCANNER NEVER HAD.
+
+    Buy-It-Now was excluded in SQL, so 2,673 live lots were tracked and
+    invisible - the owner asked for them, "especially stuff that is on the
+    lower end of the overprice scale". The only price cut was the fixed 5%
+    that defined the near-spot view. And there was no way to ask for one kind
+    of coin at all.
+*/
+test('the scanner can be pointed at Buy-It-Now lots', async () => {
+    const opened = twoSeriesStore()
+    /*  band=any throughout. The fixture's fixed-price lots ask about 16% over
+        spot, which is what a Buy-It-Now normally asks, so the default 5% band
+        would empty this list for a reason that has nothing to do with the
+        filter under test. */
+    const pages = await fetchAll(opened,
+        ['/?band=any', '/?sale=bin&band=any', '/?sale=all&band=any'])
+
+    /*  twoSeriesStore lists its fixed-price lots as FIXED_PRICE|BEST_OFFER
+        and its auctions as AUCTION, so the three views are distinguishable. */
+    const rows = path => (pages[path].body.match(/<td class="pick-cell">/g) || []).length
+    assert.ok(rows('/?sale=bin&band=any') > 0, 'no Buy-It-Now lot is reachable at all')
+    assert.ok(rows('/?sale=all&band=any') > rows('/?band=any'),
+        'both together showed no more lots than auctions alone')
+
+    assert.match(pages['/?sale=bin&band=any'].body, /<h2[^>]*>Buy-It-Now lots/,
+        'the heading still calls them auctions')
+    assert.match(pages['/?sale=bin&band=any'].body, /Lots checked/,
+        'the summary strip still says auctions were checked')
+    opened.db.close()
+})
+
+test('the price band widens and narrows what counts as worth seeing', async () => {
+    const opened = twoSeriesStore()
+    const paths = ['/?band=under', '/', '/?band=mid', '/?band=any']
+    const pages = await fetchAll(opened, paths)
+    const rows = path => (pages[path].body.match(/<td class="pick-cell">/g) || []).length
+
+    /*  Open-topped and ordered, not a partition: each band contains the one
+        below it, so the counts can only rise. */
+    assert.ok(rows('/?band=under') <= rows('/'), 'under spot is not inside within 5%')
+    assert.ok(rows('/') <= rows('/?band=mid'), 'within 5% is not inside within 15%')
+    assert.ok(rows('/?band=mid') <= rows('/?band=any'), 'within 15% is not inside any price')
+    assert.ok(rows('/?band=any') > rows('/?band=under'),
+        'every band shows the same rows, so the filter does nothing')
+
+    assert.match(pages['/?band=any'].body, /<h2[^>]*>Auctions at any price/,
+        'the heading does not say which band is showing')
+    opened.db.close()
+})
+
+test('the coin picker offers only coins that are actually there', async () => {
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/?band=any']))['/?band=any'].body
+    const picker = (/<form class="coin-picker"[\s\S]*?<\/form>/.exec(body) || [''])[0]
+
+    assert.ok(picker !== '', 'there is no coin picker on the scanner')
+    assert.ok(picker.includes('British Gold Sovereigns') || picker.includes('Morgan'),
+        'the series select names no series: ' + picker.slice(0, 200))
+
+    /*  A catalogue-driven picker would offer every denomination the packs
+        define. This one is built from the rows on hand, so a size nobody is
+        selling cannot be chosen and then answer with an empty page. */
+    assert.ok(!picker.includes('QUINTUPLE'),
+        'the picker offers a size no listing in this store has')
+    opened.db.close()
+})
+
+test('choosing a coin narrows the list to it', async () => {
+    const opened = twoSeriesStore()
+    const paths = ['/?band=any', '/?band=any&series=GB.SOV', '/?band=any&series=US.MORGAN']
+    const pages = await fetchAll(opened, paths)
+    const rows = path => (pages[path].body.match(/<td class="pick-cell">/g) || []).length
+
+    assert.ok(rows('/?band=any&series=GB.SOV') > 0, 'no sovereign survived its own filter')
+    assert.ok(rows('/?band=any&series=US.MORGAN') > 0, 'no Morgan survived its own filter')
+    assert.strictEqual(rows('/?band=any&series=GB.SOV') + rows('/?band=any&series=US.MORGAN'),
+        rows('/?band=any'),
+        'the two series do not add up to the unfiltered list, so a lot is in both or neither')
+
+    /*  And a sovereign page says nothing about Morgans. */
+    const sov = pages['/?band=any&series=GB.SOV'].body
+    const table = (/<table class="scan">[\s\S]*?<\/table>/.exec(sov) || [''])[0]
+    assert.ok(!/morgan/i.test(table), 'a Morgan is in the sovereign-filtered table')
+    opened.db.close()
+})
+
+test('a filter nobody set is not a filter', async () => {
+    /*  A junk parameter must not silently empty the page - it is dropped, and
+        the list is the one you would have had. */
+    const opened = twoSeriesStore()
+    const paths = ['/?band=any', '/?band=any&series=../etc', '/?band=any&sale=nonsense']
+    const pages = await fetchAll(opened, paths)
+    const rows = path => (pages[path].body.match(/<td class="pick-cell">/g) || []).length
+
+    assert.strictEqual(rows('/?band=any&series=../etc'), rows('/?band=any'),
+        'a malformed series filtered the list instead of being ignored')
+    assert.strictEqual(pages['/?band=any&sale=nonsense'].status, 200)
+    opened.db.close()
+})

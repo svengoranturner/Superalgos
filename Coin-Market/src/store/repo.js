@@ -1445,7 +1445,24 @@ exports.newRepository = function (db, options) {
             Level 0 only, so each lot appears once rather than at every level
             of its key.
         */
-        liveAuctions (limit) {
+        /*  Live lots the scanner can price, by how they are being sold.
+
+            AUCTION only was the whole of this query, and it is why 2,673 live
+            Buy-It-Now lots were tracked and invisible - the owner asked to see
+            them, especially the ones barely over spot. saleType is one of
+            auction, bin or all.
+
+            A BUY-IT-NOW HAS NO END TIME. It is Good-'Til-Cancelled, so
+            end_time > now - which admits a live auction - would reject every
+            one of them. Both predicates below become "null or ahead", and the
+            ordering has to put the untimed ones somewhere deliberate rather
+            than wherever NULL happens to sort.
+        */
+        liveListings (limit, saleType) {
+            const format = saleType === 'bin'
+                ? "AND l.buying_options NOT LIKE '%AUCTION%'"
+                : (saleType === 'all' ? '' : "AND l.buying_options LIKE '%AUCTION%'")
+            const formatScope = format.replace(/\bl\./g, 'lf.')
             return db.prepare(`
                 WITH scope AS (
                     /*  THE METAL TRAVELS WITH THE COIN. Without it the caller
@@ -1478,9 +1495,8 @@ exports.newRepository = function (db, options) {
                         cheap, and a filter that exists for speed should not be
                         the one deciding what the answer is. */
                     JOIN listing lf ON lf.browse_id = li.browse_id
-                    WHERE lf.buying_options LIKE '%AUCTION%'
-                      AND lf.end_time IS NOT NULL
-                      AND lf.end_time > ?1
+                    WHERE (lf.end_time IS NULL OR lf.end_time > ?1)
+                      ${formatScope}
                       AND lf.last_seen > ?2
                       AND NOT EXISTS (SELECT 1 FROM listing_outcome o
                                       WHERE o.browse_id = li.browse_id)
@@ -1557,19 +1573,48 @@ exports.newRepository = function (db, options) {
                 LEFT JOIN listing_label lb ON lb.legacy_id = l.legacy_id
                 LEFT JOIN review_queue q ON q.browse_id = l.browse_id AND q.resolved_at IS NULL
                 LEFT JOIN listing_outcome o ON o.browse_id = l.browse_id
-                WHERE l.buying_options LIKE '%AUCTION%'
+                WHERE 1 = 1
+                  ${format}
                   AND o.browse_id IS NULL
-                  AND l.end_time IS NOT NULL
-                  AND l.end_time > ?1
+                  AND (l.end_time IS NULL OR l.end_time > ?1)
                   AND l.last_seen > ?2
                   AND s.price IS NOT NULL
-                ORDER BY l.end_time ASC
+                /*  Timed lots first, soonest first. A Buy-It-Now has no
+                    deadline, so putting it in the timed sequence would invent
+                    one and putting it first would lead with the least urgent
+                    lot on the page.
+
+                    UNTIMED LOTS SORT CHEAPEST AGAINST THEIR METAL, and that
+                    ordering is load-bearing rather than cosmetic: 2,673 Buy-
+                    It-Now lots are tracked and this returns 500, so whatever
+                    the ordering is decides which 81% are never seen. Dearest
+                    first would hide precisely the lots the owner asked for.
+
+                    The ratio here is price over metal, WITHOUT the buyer fee
+                    the page adds - the fee rises with the price, so it barely
+                    moves the order, and reproducing its bands in SQL would put
+                    a second definition of the premium in the codebase. This
+                    chooses which rows to fetch; the premium shown on the row
+                    is still the one PREMIUM.totalCost computes. */
+                ORDER BY l.end_time IS NULL, l.end_time ASC,
+                    (s.price + COALESCE(s.shipping, 0)) / NULLIF(
+                        scope.fine_oz * scope.quantity * (
+                            SELECT sp.gbp_per_oz FROM spot sp
+                            WHERE sp.metal = scope.metal
+                            ORDER BY sp.observed_at DESC LIMIT 1
+                        ), 0) ASC NULLS LAST
                 LIMIT ?3
             `).all(
                 new Date().toISOString(),
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString(),
                 limit || 400
             )
+        },
+
+        /*  What every existing caller meant. Kept so a reader looking for
+            "the live auctions" still finds a function with that name. */
+        liveAuctions (limit) {
+            return this.liveListings(limit, 'auction')
         },
 
         /*

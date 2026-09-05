@@ -1025,3 +1025,48 @@ test('the composition is cached on the same watermark as the markets', () => {
         'a verdict did not invalidate the composition')
     db.close()
 })
+
+test('the cheapest Buy-It-Now lots are the ones that come back', () => {
+    /*
+        THE ORDERING IS LOAD-BEARING, not cosmetic. 2,673 live Buy-It-Now lots
+        are tracked and the scanner asks for 500, so whatever the ordering is
+        decides which 81% are never seen. The owner wants "the lower end of
+        the overprice scale"; dearest-first would hide precisely those.
+
+        A Buy-It-Now has no end time, so it cannot be ordered by urgency the
+        way an auction is. It is ordered by how it prices against its own
+        metal instead.
+    */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 4000, null, 'test')
+
+    /*  A sovereign holds 0.2354oz, so £941.60 of gold at this spot. These ask
+        from £800 to £2,600 - well under to well over. */
+    const asks = [2600, 2200, 1800, 1400, 1000, 800]
+    asks.forEach((price, n) => {
+        const browseId = 'v1|bin' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 'bin' + n, title: 'Gold Sovereign ' + n,
+            buyingOptions: 'FIXED_PRICE', endTime: null
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: 0, observedAt: now })
+        repository.saveClassification(browseId, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+    })
+
+    const all = repository.liveListings(10, 'bin')
+    assert.strictEqual(all.length, 6, 'not every lot came back when the limit allowed it')
+    assert.deepStrictEqual(all.map(r => r.price), asks.slice().sort((a, b) => a - b),
+        'Buy-It-Now lots did not come back cheapest first')
+
+    /*  And the cut keeps the cheap end, which is the whole point. */
+    const capped = repository.liveListings(2, 'bin')
+    assert.deepStrictEqual(capped.map(r => r.price), [800, 1000],
+        'the limit kept the dearest lots and discarded the bargains')
+
+    db.close()
+})

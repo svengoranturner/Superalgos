@@ -123,6 +123,83 @@ const NEAR_SPOT = 1.05
     parameter, so the number in the bar is the number of rows you land on.
     That is the whole of the bug this fixes.
 */
+/*
+    How a lot is being sold, and how far over spot it is.
+
+    Both are filters the scanner never had. Buy-It-Now was excluded in SQL, so
+    2,673 live lots were tracked and invisible; and the only price cut was the
+    fixed 5% that defined the near-spot view, so there was no way to ask for
+    "barely over spot" on a Buy-It-Now or to widen the auction list.
+
+    THE BANDS ARE OPEN-TOPPED AND ORDERED, not a partition. Somebody hunting
+    cheap metal wants everything under a line, not a slice between two lines -
+    "within 5%" should include the lot at minus four, and does.
+*/
+const SALES = ['auction', 'bin', 'all']
+const SALE_LABELS = { auction: 'Auctions', bin: 'Buy-It-Now', all: 'Both' }
+
+const BANDS = {
+    near: { label: 'Within 5%', ceiling: 1.05 },
+    mid: { label: 'Within 15%', ceiling: 1.15 },
+    under: { label: 'Under spot', ceiling: 1 },
+    any: { label: 'Any price', ceiling: Infinity }
+}
+const BAND_ORDER = ['under', 'near', 'mid', 'any']
+const SALE_NOUN = { auction: 'Auctions', bin: 'Buy-It-Now lots', all: 'Live lots' }
+const BAND_PHRASE = {
+    near: 'at or near spot', mid: 'within 15% of spot',
+    under: 'under spot', any: 'at any price'
+}
+
+/*
+    Which coin, in three questions instead of one impossible one.
+
+    2,283 distinct instrument keys carry live lots, so a single picker is not
+    an option - it would be a dropdown longer than the page it filters. A key
+    reads SERIES.SUBSERIES.CONDITION.SIZE (GB.SOV.BULLION.FULL), so the three
+    parts a person actually thinks in are already in it.
+
+    THE OPTIONS ARE BUILT FROM THE ROWS ON HAND, not from the catalogue. A
+    catalogue-driven picker offers Proof Quintuple Sovereign on a day when
+    nobody is selling one, and answers with an empty page; this one can only
+    offer a choice that has something behind it. It also means the lists
+    narrow as the other filters do, which is the behaviour a dependent picker
+    is supposed to have and costs nothing extra to get.
+*/
+function coinPartsOf (key) {
+    if (typeof key !== 'string') { return null }
+    const parts = key.split('.')
+    if (parts.length < 4) { return null }
+    return { series: parts[0] + '.' + parts[1], condition: parts[2], size: parts[3] }
+}
+
+function coinFrom (url) {
+    const get = (name) => {
+        const raw = url === undefined ? null : url.searchParams.get(name)
+        /*  Keys are uppercase with dots; anything else cannot match one, so
+            it is dropped rather than passed into a comparison. */
+        return typeof raw === 'string' && /^[A-Z0-9_.]{1,40}$/.test(raw) ? raw : null
+    }
+    return { series: get('series'), condition: get('cond'), size: get('size') }
+}
+
+/*  Title Case from a catalogue segment: KEY_DATE reads as Key date. */
+function coinWord (segment) {
+    const words = String(segment).toLowerCase().split('_')
+    return words[0].charAt(0).toUpperCase() + words[0].slice(1) +
+        (words.length > 1 ? ' ' + words.slice(1).join(' ') : '')
+}
+
+function saleFromScan (url) {
+    const asked = url === undefined ? null : url.searchParams.get('sale')
+    return SALES.includes(asked) ? asked : 'auction'
+}
+
+function bandFrom (url) {
+    const asked = url === undefined ? null : url.searchParams.get('band')
+    return Object.prototype.hasOwnProperty.call(BANDS, asked) ? asked : 'near'
+}
+
 const WITHIN_HOURS = [1, 6, 12, 24]
 const WITHIN_DEFAULT = 6
 
@@ -831,7 +908,9 @@ function marketPage (opened, url, reference) {
             url.searchParams.get('min') ? { min: url.searchParams.get('min') } : {},
             /*  And the window, or searching inside "closing in 12 hours" would
                 silently put you back on six. */
-            url.searchParams.get('within') ? { within: url.searchParams.get('within') } : {}),
+            url.searchParams.get('within') ? { within: url.searchParams.get('within') } : {},
+            url.searchParams.get('sale') ? { sale: url.searchParams.get('sale') } : {},
+            url.searchParams.get('band') ? { band: url.searchParams.get('band') } : {}),
         allowed: SOLD_SORTS,
         fallback: 'newest'
     })
@@ -1019,6 +1098,16 @@ function marketPage (opened, url, reference) {
         clock rule would have blanked these panels because of it. */
     const sweepAt = repository.lastSweepAt()
     const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
+    const sale = saleFromScan(url)
+    const band = bandFrom(url)
+    const coin = coinFrom(url)
+    const inCoin = (row) => {
+        const parts = coinPartsOf(row.instrumentKey)
+        if (parts === null) { return coin.series === null && coin.condition === null && coin.size === null }
+        return (coin.series === null || parts.series === coin.series) &&
+            (coin.condition === null || parts.condition === coin.condition) &&
+            (coin.size === null || parts.size === coin.size)
+    }
 
     /*
         SPOT PER ROW, because this panel is not about one metal.
@@ -1044,7 +1133,7 @@ function marketPage (opened, url, reference) {
     let fresh = []
     let considered = 0
     {
-        opportunities = repository.liveAuctions(500)
+        opportunities = repository.liveListings(500, sale)
             .map(row => {
                 const total = PREMIUM.totalCost(row.price, row.shipping)
                 const spot = opened.spotAt(now, row.metal)
@@ -1072,7 +1161,9 @@ function marketPage (opened, url, reference) {
             that list by price is what made the menu bar promise rows the page
             would not show. */
         fresh = opportunities
-        opportunities = opportunities.filter(row => row.ratio <= NEAR_SPOT)
+        /*  The band, not the fixed 5% this used to be. `near` is that same
+            5%, so an unfiltered visit sees exactly what it always saw. */
+        opportunities = opportunities.filter(row => row.ratio <= BANDS[band].ceiling)
 
         /*
             Ending soonest by default. The premium badge already tells you
@@ -1088,7 +1179,10 @@ function marketPage (opened, url, reference) {
             : (a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     }
 
-    const scanned = opportunities.filter(row => matchesSearch(row, pageTerms)).filter(inMetals)
+    /*  Kept before the coin filter, because the picker's options are built
+        from it - so it always offers what is actually there. */
+    const priced = opportunities.filter(row => matchesSearch(row, pageTerms)).filter(inMetals)
+    const scanned = priced.filter(inCoin)
     const shown = scanned.slice(0, 40)
 
     /*  Under spot by five per cent or more - the lots the design paints in
@@ -1282,19 +1376,89 @@ function marketPage (opened, url, reference) {
         if (value !== null) { params.push('sort=' + value) }
         if (metals.length === 1) { params.push('metal=' + metals[0]) }
         if (within !== WITHIN_DEFAULT) { params.push('within=' + within) }
+        if (sale !== 'auction') { params.push('sale=' + sale) }
+        if (band !== 'near') { params.push('band=' + band) }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
 
     /*  How far ahead to look, on the ending view only. Four options because
         the hour it used to be is usually empty and a day is usually too many;
         the two in between are where a decision still is one. */
-    const withinHref = (hours) => {
-        const params = ['view=ending']
-        if (sort === 'spot') { params.push('sort=spot') }
-        if (metals.length === 1) { params.push('metal=' + metals[0]) }
-        if (hours !== WITHIN_DEFAULT) { params.push('within=' + hours) }
-        return '/?' + params.join('&amp;')
+    /*  One builder for every control in the row: each one changes its own
+        parameter and leaves the rest alone. Written once because doing it per
+        control is how the theme toggle came to drop the query string. */
+    const filterHref = (changes) => {
+        const now = { view: scanView, sort, metal: metals, within, sale, band }
+        const next = Object.assign({}, now, changes)
+        const params = []
+        if (next.view !== 'nearSpot') { params.push('view=' + next.view) }
+        if (next.sort === 'spot') { params.push('sort=spot') }
+        if (next.metal.length === 1) { params.push('metal=' + next.metal[0]) }
+        if (next.within !== WITHIN_DEFAULT) { params.push('within=' + next.within) }
+        if (next.sale !== 'auction') { params.push('sale=' + next.sale) }
+        if (next.band !== 'near') { params.push('band=' + next.band) }
+        return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
+    const withinHref = (hours) => filterHref({ within: hours })
+
+    /*  Three dependent selects. Each one lists what survives the OTHER two,
+        so choosing a series narrows the conditions and choosing a condition
+        narrows the sizes - the dependence is done here rather than in script,
+        because there is none to do it with.
+
+        A GET form with no submit: every select carries onchange-free
+        behaviour by being inside the same form as an Apply button, which is
+        the only way a no-JS page can do this. */
+    const coinOptions = (field, chosen) => {
+        const seen = new Map()
+        for (const row of priced) {
+            const parts = coinPartsOf(row.instrumentKey)
+            if (parts === null) { continue }
+            /*  Narrowed by the other two, not by itself - a field must keep
+                offering the value you already chose. */
+            if (field !== 'series' && coin.series !== null && parts.series !== coin.series) { continue }
+            if (field !== 'condition' && coin.condition !== null && parts.condition !== coin.condition) { continue }
+            if (field !== 'size' && coin.size !== null && parts.size !== coin.size) { continue }
+            const value = parts[field]
+            seen.set(value, (seen.get(value) || 0) + 1)
+        }
+        const label = (value) => {
+            if (field !== 'series') { return coinWord(value) }
+            const pack = SERIES.forKey(value + '.X')
+            return pack === null ? value : pack.pack.label
+        }
+        return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([value, n]) =>
+            '<option value="' + escapeHtml(value) + '"' + (value === chosen ? ' selected' : '') +
+            '>' + escapeHtml(label(value)) + ' (' + n + ')</option>').join('')
+    }
+
+    const coinPicker = '<form class="coin-picker" method="get" action="/">' +
+        (scanView === 'nearSpot' ? '' : '<input type="hidden" name="view" value="' + escapeHtml(scanView) + '">') +
+        (sort === 'spot' ? '<input type="hidden" name="sort" value="spot">' : '') +
+        (metals.length === 1 ? '<input type="hidden" name="metal" value="' + escapeHtml(metals[0]) + '">' : '') +
+        (within !== WITHIN_DEFAULT ? '<input type="hidden" name="within" value="' + within + '">' : '') +
+        (sale !== 'auction' ? '<input type="hidden" name="sale" value="' + escapeHtml(sale) + '">' : '') +
+        (band !== 'near' ? '<input type="hidden" name="band" value="' + escapeHtml(band) + '">' : '') +
+        ['series', 'cond', 'size'].map((name, i) => {
+            const field = ['series', 'condition', 'size'][i]
+            const chosen = coin[field]
+            const blank = ['Any coin', 'Any condition', 'Any size'][i]
+            return '<select name="' + name + '"><option value="">' + blank + '</option>' +
+                coinOptions(field, chosen) + '</select>'
+        }).join('') +
+        '<button class="btn btn-secondary small" type="submit">Apply</button>' +
+        (coin.series || coin.condition || coin.size
+            ? '<a class="btn btn-ghost small" href="' + filterHref({}) + '">Clear</a>'
+            : '') +
+        '</form>'
+
+    const saleControl = '<span class="seg">' + SALES.map(id =>
+        '<a class="seg-opt' + (id === sale ? ' on' : '') + '" href="' + filterHref({ sale: id }) +
+        '">' + escapeHtml(SALE_LABELS[id]) + '</a>').join('') + '</span>'
+
+    const bandControl = '<span class="seg">' + BAND_ORDER.map(id =>
+        '<a class="seg-opt' + (id === band ? ' on' : '') + '" href="' + filterHref({ band: id }) +
+        '">' + escapeHtml(BANDS[id].label) + '</a>').join('') + '</span>'
     const withinControl = '<span class="seg">' + WITHIN_HOURS.map(hours =>
         '<a class="seg-opt' + (hours === within ? ' on' : '') + '" href="' + withinHref(hours) +
         '">' + hours + 'h</a>').join('') + '</span>'
@@ -1308,10 +1472,12 @@ function marketPage (opened, url, reference) {
         is the one that was already here; the others are the blurbs that used
         to sit above the panels this view replaced. */
     const VIEW_BLURBS = {
-        nearSpot: 'Auctions on coins the tool can identify, whose current bid is within 5% of ' +
-            'the spot value of the metal in them. Worth watching even if you do not bid: where ' +
-            'one of these finishes is how fair value gets measured.' +
-            (considered > 0 ? ' ' + considered + ' live auctions were checked.' : ''),
+        /*  The title and the controls above it now say what this list is,
+            so the paragraph that used to explain it has gone. What is left is
+            the one thing neither of them can say: how much was looked at. */
+        nearSpot: considered > 0
+            ? considered + ' live ' + (sale === 'auction' ? 'auctions' : 'lots') + ' checked.'
+            : '',
         offers: 'Lots with a Best Offer button, asking no more than a quarter above where their ' +
             'coin type actually clears. The button says a seller will listen, not that the price ' +
             'is keener &mdash; measured here, these lots ask a shade MORE than rigid ' +
@@ -1366,7 +1532,10 @@ function marketPage (opened, url, reference) {
         the other two.
     */
     const VIEW_TITLES = {
-        nearSpot: ['Auctions at or near spot', shown.length],
+        /*  The title says what the filters currently are, rather than
+            "Auctions at or near spot" over a list of Buy-It-Now lots at any
+            price. */
+        nearSpot: [SALE_NOUN[sale] + ' ' + BAND_PHRASE[band], shown.length],
         offers: ['Buy-It-Now, open to an offer', offers.length],
         sold: ['What has actually sold', soldTotal],
         ending: ['Ending soon', endingSoon.length]
@@ -1407,7 +1576,7 @@ what it has already found.">Rescan</a>
 
 <div class="summary">
   <div class="cell">
-    <div class="cell-label">Auctions checked</div>
+    <div class="cell-label">${sale === 'auction' ? 'Auctions' : 'Lots'} checked</div>
     <div class="cell-figure">${considered}</div>
   </div>
   <div class="cell">
@@ -1441,9 +1610,14 @@ what it has already found.">Rescan</a>
   ${metalToggle('XAG', 'Silver')}
   ${metalToggle('XAU', 'Gold')}
   ${scanView === 'ending' ? '<span class="filter-label">Closing within</span>' + withinControl : ''}
+  ${scanView === 'nearSpot' || scanView === 'ending'
+    ? '<span class="filter-divider"></span><span class="filter-label">Selling as</span>' + saleControl +
+      '<span class="filter-label">Price</span>' + bandControl
+    : ''}
   <span class="filter-label right">Sort</span>
   ${viewSort}
 </div>
+${scanView === 'nearSpot' || scanView === 'ending' ? coinPicker : ''}
 
 <h2 id="${scanView === 'nearSpot' ? 'auctions' : escapeHtml(scanView)}" class="view-heading">${
     escapeHtml(viewTitle)} (${viewCount})</h2>

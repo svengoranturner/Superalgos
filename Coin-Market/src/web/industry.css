@@ -669,6 +669,21 @@ nav.bar .rates {
 .filters .radio:hover { color: var(--color-text); border-color: var(--color-accent) }
 .filters .radio.on:hover { color: var(--color-accent) }
 
+/*  Three dependent selects and an Apply. A form rather than links, because
+    three independent link sets would be a grid of every combination; and an
+    Apply button rather than submit-on-change, because there is no script on
+    this page to fire one. */
+.coin-picker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  margin: 0 0 var(--space-4);
+}
+.coin-picker select {
+  font: inherit; font-size: 12px; padding: 4px 8px; border-radius: 0;
+  border: 1px solid var(--color-divider); background: var(--color-bg);
+  color: var(--color-text); max-width: 220px;
+}
+.coin-picker select:hover { border-color: var(--color-accent) }
+
 .view-heading { font-size: 19px; margin: var(--space-6) 0 var(--space-2) }
 .view-blurb { margin-top: 0 }
 
