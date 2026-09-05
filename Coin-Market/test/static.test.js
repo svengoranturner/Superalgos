@@ -170,7 +170,16 @@ test('the report inlines the stylesheet, because it travels alone', async () => 
         assert.ok(html.includes('--color-accent'), 'the inlined sheet is not the real one')
         assert.ok(!html.includes('<link rel="stylesheet"'),
             'the report links a stylesheet it cannot reach once it has been sent')
-        assert.ok(!html.includes('<nav>'), 'a shared report carries navigation')
+        /*  `<nav` and not `<nav>`. The bar has carried a class since it became
+            a menu bar, so the app emits no bare `<nav>` anywhere and this
+            assertion could not fail however much navigation leaked into a
+            shared report - which is the only thing it exists to catch. */
+        assert.ok(!/<nav\b/.test(html), 'a shared report carries navigation')
+        /*  The markup, not the string: the report inlines the whole stylesheet,
+            and `.menu-panel` is a selector in it. `<details name="menubar"` can
+            only be the bar itself. */
+        assert.ok(!html.includes('name="menubar"'),
+            'the report carries the menu bar even if the <nav> tag itself was stripped')
     } finally {
         try { FS.unlinkSync(out) } catch (err) { /* already gone */ }
         store.db.close()
@@ -543,4 +552,128 @@ test('a menu closes when another opens', async () => {
         'a menu is open before anybody has clicked anything')
 
     store.db.close()
+})
+
+/*
+    THE HEAD AND THE BODY OF A COLUMN MUST AGREE.
+
+    The app-layer sheet still carries `td { text-align:right }` from when every
+    table in it was numbers. The scan table overrode that for its `th` and
+    never did for its `td`, so the headings sat left and the cells under them
+    sat right - and nothing said so, because both halves looked deliberate on
+    their own.
+
+    Worst in the lot cell, where the title and the meta line are sized as one
+    block: the shorter of the two got pushed right, so every row's meta line
+    began somewhere different. Measured at 1280px, three consecutive rows
+    started at 177, 300 and 330. The owner called it formatting and
+    justification, which is exactly what it was.
+
+    Checked by resolving the cascade rather than by grepping for a string,
+    because the bug was an absent declaration - there was nothing to grep for.
+*/
+function alignmentRules (css) {
+    /*  Every text-align declaration outside a media query, in source order.
+        Media blocks are excluded: the phone layout stacks the table into cards
+        and legitimately aligns things differently. */
+    const rules = []
+    let depth = 0
+    let i = 0
+    const stripped = css.replace(/@media[^{]*\{/g, m => { return m })
+    // Walk, skipping any @media block wholesale.
+    while (i < stripped.length) {
+        const at = stripped.indexOf('@media', i)
+        const chunk = at === -1 ? stripped.slice(i) : stripped.slice(i, at)
+        const rule = /([^{}]+)\{([^}]*)\}/g
+        let m
+        while ((m = rule.exec(chunk)) !== null) {
+            const decl = /text-align:\s*([\w-]+)/.exec(m[2])
+            if (decl === null) { continue }
+            m[1].split(',').forEach(sel => rules.push({ sel: sel.trim(), value: decl[1] }))
+        }
+        if (at === -1) { break }
+        depth = 1
+        i = stripped.indexOf('{', at) + 1
+        while (i < stripped.length && depth > 0) {
+            if (stripped[i] === '{') { depth++ } else if (stripped[i] === '}') { depth-- }
+            i++
+        }
+    }
+    return rules
+}
+
+function matchesCell (selector, cell) {
+    const parts = selector.split(/\s+/)
+    const own = parts[parts.length - 1]
+
+    const tag = (/^[a-z]+/.exec(own) || [''])[0]
+    if (tag && tag !== cell.tag) { return false }
+    const wanted = (own.match(/\.[\w-]+/g) || []).map(c => c.slice(1))
+    if (!wanted.every(c => cell.classes.includes(c))) { return false }
+    if (own.includes(':first-child') && !cell.first) { return false }
+
+    /*  The only ancestor any of these rules names. */
+    if (parts.length > 1 && parts.some(p => p.includes('table.scan')) && !cell.scan) { return false }
+    return true
+}
+
+function specificity (selector) {
+    return [
+        0,
+        (selector.match(/\.[\w-]+/g) || []).length + (selector.match(/:[\w-]+/g) || []).length,
+        (selector.match(/(^|\s)[a-z]+/g) || []).length
+    ]
+}
+
+function alignmentOf (rules, cell) {
+    let winner = null
+    let best = [-1, -1, -1]
+    rules.forEach(rule => {
+        if (!matchesCell(rule.sel, cell)) { return }
+        const s = specificity(rule.sel)
+        if (s[0] > best[0] || (s[0] === best[0] && s[1] > best[1]) ||
+            (s[0] === best[0] && s[1] === best[1] && s[2] >= best[2])) {
+            best = s; winner = rule.value
+        }
+    })
+    return winner
+}
+
+test('a scan column is aligned the same in its head as in its body', () => {
+    const rules = alignmentRules(STATIC.css())
+    assert.ok(rules.length > 0, 'no text-align rules found; the test has lost its target')
+
+    /*  first: the pick-cell is the first child, which the app layer aligns
+        left by position rather than by class. */
+    const COLUMNS = [
+        { classes: ['pick-cell'], first: true },
+        { classes: ['lot'], first: false },
+        { classes: ['ident'], first: false },
+        { classes: ['figure', 'bid'], first: false },
+        { classes: ['figure', 'spot'], first: false },
+        { classes: ['figure', 'delta'], first: false },
+        { classes: ['figure', 'ends'], first: false },
+        { classes: ['verdict-cell'], first: false }
+    ]
+
+    for (const column of COLUMNS) {
+        const head = alignmentOf(rules, { tag: 'th', scan: true, ...column })
+        const body = alignmentOf(rules, { tag: 'td', scan: true, ...column })
+        assert.strictEqual(body, head,
+            '.' + column.classes.join('.') + ': the heading is ' + head +
+            ' and the cells under it are ' + body)
+    }
+})
+
+test('the text columns are left and the figures are right', () => {
+    /*  The other half: agreeing on the WRONG value would satisfy the test
+        above. A price reads right, a coin title reads left. */
+    const rules = alignmentRules(STATIC.css())
+    const body = (classes, first) => alignmentOf(rules, { tag: 'td', scan: true, classes, first })
+
+    assert.strictEqual(body(['lot'], false), 'left', 'the coin title is not left-aligned')
+    assert.strictEqual(body(['ident'], false), 'left', 'the identified-as column is not left-aligned')
+    assert.strictEqual(body(['figure', 'bid'], false), 'right', 'the bid is not right-aligned')
+    assert.strictEqual(body(['figure', 'spot'], false), 'right', 'spot is not right-aligned')
+    assert.strictEqual(body(['verdict-cell'], false), 'right', 'the verdict buttons are not right-aligned')
 })

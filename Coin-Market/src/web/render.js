@@ -184,8 +184,25 @@ const MENUS = [
 */
 function menuBar (pathname, view) {
     const { rates, counts } = chrome()
-    const here = (href) => href === pathname ||
-        (href.startsWith('/?view=') && pathname === '/' && href === '/?view=' + view)
+    /*  `pathname` arrives with its query attached, because the theme toggle
+        has to send the reader back to the page they were actually on rather
+        than to its bare path. Only this comparison wants it stripped. */
+    /*  Defaulted, because report/build.js calls `page` with a title and a body
+        and nothing else - it produces a standalone file with no navigation at
+        all, so it has no page to be on. */
+    const path = (pathname || '/').split('?')[0]
+
+    /*  Which menu row is the page you are looking at.
+
+        The second clause used to be an `||` on `href === pathname`, which lit
+        "Auctions near spot" on every ?view= URL - so reading the sold list
+        showed two rows current in two different menus, each claiming to be
+        where you were. `/` is the near-spot view specifically, not "any view
+        of the scanner", and `viewFrom` resolves an absent or unknown view to
+        'nearSpot', so that is the whole test. */
+    const here = (href) => href.startsWith('/?view=')
+        ? path === '/' && href === '/?view=' + view
+        : href === path && (href !== '/' || view === undefined || view === 'nearSpot')
 
     const menus = MENUS.map(([label, groups]) => {
         const contains = groups.some(([, rows]) => rows.some(([href]) => here(href)))

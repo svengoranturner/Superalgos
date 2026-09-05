@@ -186,6 +186,30 @@ function spotRates (opened) {
 */
 const VIEWS = ['nearSpot', 'offers', 'sold', 'ending']
 
+/*
+    The page the reader is actually on, query and all.
+
+    The theme toggle round-trips through the server - it is a link that sets a
+    cookie and comes back, because `script-src 'none'` leaves nothing else -
+    so this is what it has to come back TO. Built from the pathname alone it
+    discarded every parameter the page was showing, and on two pages that is
+    not a lost filter but a dead end: /listings and /teach both REQUIRE a
+    query parameter and render an error page without one. Changing theme while
+    reading a coin type's sales answered "No coin type given", and doing it on
+    a teach page answered "That decision is no longer stored", which is not
+    even true.
+
+    Folded into the pathname rather than passed beside it. `page` and `menuBar`
+    already take four positional arguments and half the call sites pass three,
+    so a fifth parameter would have landed in the `view` slot at every one of
+    them - a silent wrong-argument bug in twelve places to fix a missing one.
+    `menuBar` splits the path back off for the one comparison that needs it.
+*/
+function whereYouAre (url) {
+    return url.pathname + url.search
+}
+
+
 function viewFrom (url) {
     const asked = url === undefined ? null : url.searchParams.get('view')
     return VIEWS.includes(asked) ? asked : 'nearSpot'
@@ -257,8 +281,13 @@ exports.start = function (opened, options) {
 
         const fail = (err) => {
             response.writeHead(500, HTML_HEADERS)
-            response.end(RENDER.page('Error', '<h1>Something went wrong</h1><pre>' +
-                escapeHtml(err.stack || err.message) + '</pre>', url.pathname))
+            /*  Stamped like every other page. This was the one that was not,
+                so the error page - the one moment you are already annoyed -
+                arrived in the opposite theme to the rest of the app. */
+            response.end(RENDER.stampTheme(
+                RENDER.page('Error', '<h1>Something went wrong</h1><pre>' +
+                    escapeHtml(err.stack || err.message) + '</pre>', whereYouAre(url)),
+                themeFrom(request)))
         }
 
         if (request.method === 'POST') {
@@ -504,7 +533,7 @@ function marketPage (opened, url, reference) {
         return RENDER.page('Coin Market',
             '<h1>Coin Market</h1><p class="sub">Nothing tracked yet.</p>' +
             '<div class="card"><p>Run <code>node bin/cli.js demo</code> to see the tool working on a ' +
-            'synthetic market, or configure eBay credentials and run a sweep.</p></div>', url.pathname)
+            'synthetic market, or configure eBay credentials and run a sweep.</p></div>', whereYouAre(url))
     }
 
     /* Headline: the cost of paying the asking price, in money. */
@@ -688,7 +717,7 @@ function marketPage (opened, url, reference) {
         return RENDER.page(page.title + ' - Coin Market',
             '<h1>' + escapeHtml(page.title) + '</h1>' +
             '<p class="sub">' + page.lead + '</p>' + page.body(),
-            url.pathname)
+            whereYouAre(url))
     }
 
     /*
@@ -890,7 +919,7 @@ function marketPage (opened, url, reference) {
     const salesHtml = sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
         : '<form method="post" action="/apply">' +
-          '<input type="hidden" name="back" value="/">' +
+          '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
           bulkBar(sales, 'A wrong sale here moves every clearing figure on the page, ' +
               'because they are all built from these rows and nothing else.') +
           soldTable(sales.slice(0, SOLD_SHOWN)) +
@@ -1050,7 +1079,7 @@ function marketPage (opened, url, reference) {
           markets.filter(e => e.market.fairValue.sufficient).length + ' of ' + markets.length +
           ' tracked types do today &mdash; and the ask is no more than a quarter above it.</p>'
         : '<form method="post" action="/apply">' +
-          '<input type="hidden" name="back" value="/">' +
+          '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
           bulkBar(offers.map(e => e.row),
               'A wrong coin here is worth more than a dismissal: it is setting ' +
               'the clearing price these offers are measured against.') +
@@ -1148,7 +1177,7 @@ function marketPage (opened, url, reference) {
         ? '<p class="thin">No live auction is currently at or near the spot value of its metal. ' +
           considered + ' were checked.</p>'
         : '<form method="post" action="/apply">' +
-          '<input type="hidden" name="back" value="/">' +
+          '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
           bulkBar(shown, 'Tick anything that is not what it says it is; it leaves this ' +
               'panel and every statistic at once.') +
           cappedQueue(shown, row => queueRow(row, opportunityVerdict(row)), 10,
@@ -1215,7 +1244,7 @@ function marketPage (opened, url, reference) {
     const VIEW_BODIES = {
         nearSpot: shown.length === 0
             ? opportunityHtml
-            : scanTable(shown, opportunityVerdict, sweepAt),
+            : scanTable(shown, opportunityVerdict, sweepAt, whereYouAre(url)),
         /*  The offers panel keeps its own row renderer: its whole point is
             the suggested figure and what it is measured against, which is a
             second price column the scanner table does not have. */
@@ -1236,7 +1265,7 @@ function marketPage (opened, url, reference) {
         ending: endingSoon.length === 0
             ? '<p class="thin">Nothing closes in the next hour. The soonest is in the near-spot ' +
               'list, ordered by how long you have left.</p>'
-            : scanTable(endingSoon, opportunityVerdict, sweepAt)
+            : scanTable(endingSoon, opportunityVerdict, sweepAt, whereYouAre(url))
     }
     const viewBody = VIEW_BODIES[scanView]
 
@@ -1338,7 +1367,7 @@ ${viewBody}
 
 `
 
-    return RENDER.page('Coin Market', body, url.pathname, scanView)
+    return RENDER.page('Coin Market', body, whereYouAre(url), scanView)
 }
 
 /*
@@ -1939,7 +1968,7 @@ dropped, mark it genuine &mdash; that overrides the rule that dropped it, which 
 mode worth watching for: a bad rule quietly eating half the market.</p>
 ${list(excluded, 'Nothing excluded' + among + '.', 150)}
 ${truncated ? '<p class="thin warn">The queue is longer than this page reads &mdash; only the first ' + QUEUE_LIMIT + ' rows were fetched, so the counts above are floors rather than totals.</p>' : ''}
-`, url.pathname)
+`, whereYouAre(url))
 }
 
 /* ---------------------------------------------------------- countries */
@@ -2553,12 +2582,18 @@ const SCAN_HEAD = '<thead><tr>' +
     '<th class="verdict-cell">Verdict</th>' +
     '</tr></thead>'
 
-function scanTable (rows, verdictCell, sweepAt) {
+/*  `back` is where a verdict returns you.
+
+    It was the literal '/', which is right for the near-spot list and wrong for
+    the other view that shares this table: judging a coin in "ending within the
+    hour" bounced you to near-spot, losing the list you were working through.
+    The caller knows which view it is rendering; this function does not. */
+function scanTable (rows, verdictCell, sweepAt, back) {
     if (rows.length === 0) {
         return '<p class="thin">Nothing here right now.</p>'
     }
     return '<form method="post" action="/apply">' +
-        '<input type="hidden" name="back" value="/">' +
+        '<input type="hidden" name="back" value="' + escapeHtml(back || '/') + '">' +
         bulkBar(rows, 'A wrong coin here is worth more than a dismissal: it is setting the ' +
             'clearing price every figure above is measured against.') +
         '<div class="card scan-card"><table class="scan">' + SCAN_HEAD + '<tbody>' +
@@ -2753,7 +2788,7 @@ function listingsPage (opened, url) {
     const key = url.searchParams.get('key')
     if (key === null || key === '') {
         return RENDER.page('Listings - Coin Market',
-            '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>', url.pathname)
+            '<h1>No coin type given</h1><p class="sub"><a href="/">Back to the market</a>.</p>', whereYouAre(url))
     }
 
     const sale = saleFrom(url)
@@ -2996,7 +3031,7 @@ nothing at all as a clearing price.</p>
 ${list(unsold, 'dearest first')}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
-`, url.pathname)
+`, whereYouAre(url))
 }
 
 /* ------------------------------------------------ recording a decision */
@@ -3018,7 +3053,8 @@ ${list(unsold, 'dearest first')}`}
     Everything else about it is unchanged - it is an allow-list because `back`
     arrives in a query string, and an unchecked one is an open redirect. */
 const BACK_PATHS = new Set(
-    ['/', '/review', '/listings', '/rules', '/teach'].concat(Object.keys(REFERENCE_PATHS))
+    ['/', '/review', '/listings', '/rules', '/teach', '/rule-confirm']
+        .concat(Object.keys(REFERENCE_PATHS))
 )
 
 function safeBack (value) {
@@ -3321,7 +3357,7 @@ function teachPage (opened, url) {
     if (label === undefined) {
         return RENDER.page('Teach - Coin Market',
             '<h1>Nothing to generalise</h1><p class="sub">That decision is no longer stored. ' +
-            '<a href="/review">Back to the review queue</a>.</p>', url.pathname)
+            '<a href="/review">Back to the review queue</a>.</p>', whereYouAre(url))
     }
 
     const proposals = LEARNED.induce(label, repository.titleCorpus(), labels)
@@ -3373,7 +3409,7 @@ function teachPage (opened, url) {
         'still stands.</p></div>' +
         safeHtml + riskyHtml +
         '<p style="margin-top:18px"><a href="' + escapeHtml(back) +
-        '">No rule &mdash; just this listing</a></p>', url.pathname)
+        '">No rule &mdash; just this listing</a></p>', whereYouAre(url))
 }
 
 /*
@@ -3400,7 +3436,7 @@ function confirmRulePage (opened, url) {
     const seriesId = url.searchParams.get('series') || null
 
     if (phrase === null || phrase === '') {
-        return RENDER.page('Confirm - Coin Market', '<h1>No rule given</h1>', url.pathname)
+        return RENDER.page('Confirm - Coin Market', '<h1>No rule given</h1>', whereYouAre(url))
     }
 
     const effect = ruleEffect(repository, phrase, seriesId)
@@ -3501,7 +3537,7 @@ function confirmRulePage (opened, url) {
         '<input type="hidden" name="phrase" value="' + escapeHtml(phrase) + '">' +
         '<input type="hidden" name="support" value="' + effect.support + '">' +
         ruleScopeControl(seriesId) +
-        button + cancel + '</form>', url.pathname)
+        button + cancel + '</form>', whereYouAre(url))
 }
 
 /* ----------------------------------------------------- what it learned */
@@ -3687,5 +3723,5 @@ ${labels.length === 0
   The labels are the durable part: if a model is ever worth training, it trains on these
   without you having to judge anything twice.</p>
 </div>
-`, url.pathname)
+`, whereYouAre(url))
 }

@@ -346,8 +346,17 @@ input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critic
 .comp-label { font-size:13px; color:var(--ink-2) }
 .comp-label b { color:var(--ink); font-weight:560 }
 .comp-bar { display:flex; height:30px; border-radius:6px; overflow:hidden; background:var(--grid) }
+/*  The label sits on the fill, so it takes the GROUND colour rather than a
+    fixed white: every fill under it (--ask, --clearing, --good, --critical) is
+    defined opposite to the ground in each theme, so the page background is
+    always the readable choice against them.
+
+    It was `#fff`, which is right in light where the fills are dark greens and
+    reds, and wrong in dark where the same tokens flip LIGHT - #5fbe86 and
+    #e07a7a - and white on them is barely there. A literal cannot know that;
+    the token does it for free. */
 .comp-bar span { display:flex; align-items:center; justify-content:center; font-size:11.5px;
-  color:#fff; white-space:nowrap; overflow:hidden; min-width:0 }
+  color:var(--color-bg); white-space:nowrap; overflow:hidden; min-width:0 }
 .comp-bar span.pale { color:var(--ink-2); background:var(--grid) }
 .comp-bar span.hatch { color:var(--ink-2);
   background:repeating-linear-gradient(135deg, var(--grid) 0 7px, transparent 7px 14px) }
@@ -652,8 +661,24 @@ table.scan th {
   padding: var(--space-3) var(--space-2) var(--space-2); white-space: nowrap;
   border-bottom: 1px solid var(--color-divider);
 }
+/*  `text-align: left` is not decoration here, it is a correction.
+
+    The app-layer sheet carries `td { text-align:right }` from the days when
+    every table in it was numbers. `table.scan th` overrides that for the head
+    and the body row was never given the same treatment, so the two disagreed:
+    the headings sat left and the cells under them sat right.
+
+    Worst in the lot cell, where the title and the meta line are sized as one
+    block, so the SHORTER of the two was pushed right and every row's meta line
+    started at a different place - measured at 1280px, three rows began at 177,
+    300 and 330. It read as broken spacing and was a stray alignment.
+
+    The figure and verdict columns set `right` back on themselves, which is
+    what a column of prices wants and what makes this the correct default
+    rather than a blanket change. */
 table.scan td {
   padding: var(--space-2); white-space: normal; vertical-align: middle;
+  text-align: left;
   border-bottom: 1px solid color-mix(in srgb, var(--color-text) 8%, transparent);
 }
 table.scan tbody tr:hover { background: color-mix(in srgb, var(--color-text) 4%, transparent) }

@@ -2946,3 +2946,83 @@ test('a reference page costs one assembly, not the scanner as well', async () =>
     assert.ok(!body.includes('<table class="scan">'), 'a reference page built the scan table')
     opened.db.close()
 })
+
+/*
+    THE TOGGLE THAT ATE THE PAGE.
+
+    The theme toggle is a link that sets a cookie and sends you back, so it has
+    to know where back IS. It was built from the pathname alone, and two pages
+    in this app REQUIRE a query parameter: /listings needs `key` and /teach
+    needs `legacy`. Without one each renders an error page - so changing theme
+    while reading a coin type's sold prices answered "No coin type given", and
+    doing it on a teach page answered "That decision is no longer stored",
+    which is not even true. The decision was fine; the link had dropped it.
+
+    Everywhere else it was a quieter version of the same thing: your view,
+    search, sort and metal filter all reset because none of them survived the
+    round trip.
+*/
+const TOGGLE_KEEPS = [
+    ['/listings?key=GB.SOV.BULLION.FULL', 'a coin type&apos;s sold prices'],
+    ['/listings?key=GB.SOV.BULLION.FULL&sale=auction', 'a sale-type tab'],
+    ['/?view=sold', 'the sold view'],
+    ['/?view=sold&q=sovereign', 'a search inside a view'],
+    ['/?sort=spot&metal=XAU', 'a sort and a metal filter'],
+    ['/review?sort=oldest', 'the review queue&apos;s own ordering']
+]
+
+test('changing theme returns you to the page you were on, not its bare path', async () => {
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, TOGGLE_KEEPS.map(([path]) => path))
+
+    for (const [path, what] of TOGGLE_KEEPS) {
+        const body = pages[path].body
+        assert.strictEqual(pages[path].status, 200, path + ' did not render')
+
+        const nav = (body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+        const back = /\/theme\?to=(?:dark|light)&amp;back=([^"]*)"/.exec(nav)
+        assert.ok(back !== null, 'no theme link in the bar on ' + path)
+
+        assert.strictEqual(decodeURIComponent(back[1]), path,
+            'the toggle on ' + path + ' goes back to ' + decodeURIComponent(back[1]) +
+            ', losing ' + what)
+    }
+    opened.db.close()
+})
+
+test('the two pages that need a parameter do not lose it to the toggle', async () => {
+    /*  The severe half, asserted on the consequence rather than the link: follow
+        where the toggle would send you and check you do not land on the error
+        page. /listings without a key and /teach without a legacy id are both
+        dead ends you cannot get out of except by starting again. */
+    const opened = twoSeriesStore()
+    const paths = ['/listings?key=GB.SOV.BULLION.FULL']
+    const pages = await fetchAll(opened, paths)
+
+    for (const path of paths) {
+        const nav = (pages[path].body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+        const back = decodeURIComponent(/back=([^"]*)"/.exec(nav)[1])
+        const landed = (await fetchAll(opened, [back]))[back]
+
+        assert.ok(!landed.body.includes('No coin type given'),
+            'the toggle on ' + path + ' lands on the no-coin-type error page')
+        assert.ok(!landed.body.includes('Nothing to generalise'),
+            'the toggle on ' + path + ' lands on the nothing-to-generalise dead end')
+    }
+    opened.db.close()
+})
+
+test('exactly one menu row is marked as the page you are on', async () => {
+    /*  `here()` matched a bare '/' against any scanner URL, so on ?view=sold two
+        rows in two different menus each claimed to be where you were. */
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, ['/', '/?view=sold', '/?view=offers', '/gaps'])
+
+    for (const [path, page] of Object.entries(pages)) {
+        const nav = (page.body.match(/<nav\b[^>]*>[\s\S]*?<\/nav>/) || [''])[0]
+        const current = (nav.match(/class="menu-row on"/g) || []).length
+        assert.strictEqual(current, 1,
+            path + ' marks ' + current + ' menu rows as current; exactly one is where you are')
+    }
+    opened.db.close()
+})
