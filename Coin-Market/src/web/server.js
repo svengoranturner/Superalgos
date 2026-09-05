@@ -3683,8 +3683,21 @@ function handlePost (opened, pathname, form) {
     }
 
     if (pathname === '/rule') {
-        const phrase = (form.get('phrase') || '').trim()
-        if (phrase.length === 0) { return '/rules' }
+        /*
+            SEVERAL AT ONCE, and back where you came from.
+
+            This took one phrase and answered with '/rules?just=...', throwing
+            away the `back` the teach page had posted. /rules has no route back
+            to that listing, so of the six phrases a rejection can offer,
+            exactly one could ever be taken - the owner's report, and the cause
+            was a redirect rather than anything about the rules themselves.
+
+            The teach page now posts a checkbox per proposal into one form, so
+            the phrases arrive as a list. The single-phrase callers - /rules
+            and the confirmation page - send a list of one and are unaffected.
+        */
+        const phrases = form.getAll('phrase').map(x => String(x).trim()).filter(Boolean)
+        if (phrases.length === 0) { return safeBack(form.get('back')) || '/rules' }
 
         /*  Count what was being priced before and after, so the page you land
             on can say what the click actually did rather than leaving you to
@@ -3694,20 +3707,41 @@ function handlePost (opened, pathname, form) {
             'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
         const before = priced()
 
-        /*  Scoped to the series it was learned from unless explicitly
-            widened. null means every series, and is the only value here that
-            cannot be undone by noticing later - see ruleScopeControl. */
-        const everySeries = form.get('allSeries') === '1'
-        repository.saveLearnedRule({
-            phrase,
-            kind: LEARNED.VERDICT.NOT_TRACKED,
-            series: everySeries ? null : (form.get('series') || SERIES.DEFAULT_ID),
-            support: Number(form.get('support')) || null,
-            agreement: form.get('agreement') === '' ? null : Number(form.get('agreement'))
-        })
+        for (const phrase of phrases) {
+            /*  Fields are keyed by phrase where several share a form, and
+                unkeyed where one phrase is posted alone. Both are read, so
+                the two callers need not know about each other. */
+            const per = (name) => {
+                const keyed = form.get(name + ':' + phrase)
+                return keyed === null ? form.get(name) : keyed
+            }
+            /*  Scoped to the series it was learned from unless explicitly
+                widened. null means every series, and is the only value here
+                that cannot be undone by noticing later - see
+                ruleScopeControl. */
+            const everySeries = per('allSeries') === '1'
+            repository.saveLearnedRule({
+                phrase,
+                kind: LEARNED.VERDICT.NOT_TRACKED,
+                series: everySeries ? null : (per('series') || SERIES.DEFAULT_ID),
+                support: Number(per('support')) || null,
+                agreement: per('agreement') === '' ? null : Number(per('agreement'))
+            })
+        }
+        /*  One rebuild for the batch, not one per rule. */
         RECLASSIFY.run(db, repository, { allowedCountries: allowedCountries(repository) })
 
-        return '/rules?just=' + encodeURIComponent(phrase) + '&dropped=' + (before - priced())
+        const dropped = before - priced()
+        /*  Back to the teach page when that is where the ticks came from, so
+            the phrases not yet taken are still on screen. `back` carries it;
+            `onward` is where the teach page itself came from, and is only
+            used by the link out. */
+        const returning = safeBack(form.get('back'))
+        if (returning.startsWith('/teach')) {
+            return returning + (returning.includes('?') ? '&' : '?') +
+                'added=' + phrases.length + '&dropped=' + dropped
+        }
+        return '/rules?just=' + encodeURIComponent(phrases[0]) + '&dropped=' + dropped
     }
 
     if (pathname === '/rule/delete') {
@@ -3781,19 +3815,25 @@ function ruleEffect (repository, phrase, seriesId) {
     would land months later, when a Britannia pack is added and quietly
     stays empty.
 */
-function ruleScopeControl (seriesId) {
+function ruleScopeControl (seriesId, phrase) {
     const pack = SERIES.get(seriesId) || SERIES.defaultPack()
-    return '<input type="hidden" name="series" value="' + escapeHtml(pack.id) + '">' +
+    /*  Keyed by phrase when there is one, because several proposals now share
+        a single form and each keeps its own scope. Unkeyed for the two
+        callers that post one phrase on their own - /rules and the
+        confirmation page. */
+    const key = phrase === undefined ? '' : ':' + phrase
+    return '<input type="hidden" name="series' + escapeHtml(key) + '" value="' +
+        escapeHtml(pack.id) + '">' +
         '<label class="scope" title="Leave this unticked unless the phrase describes something ' +
         'that is not a coin at all. A rule scoped to one series can be widened later; an ' +
         'unscoped rule that empties a series you add next year gives you nothing to trace it ' +
         'back to.">' +
-        '<input type="checkbox" name="allSeries" value="1"> apply to every coin, not just ' +
-        escapeHtml(pack.label) +
+        '<input type="checkbox" name="allSeries' + escapeHtml(key) + '" value="1"> ' +
+        'apply to every coin, not just ' + escapeHtml(pack.label) +
         '</label>'
 }
 
-function proposalCard (p, back, legacyId, seriesId) {
+function proposalCard (p, back, legacyId, seriesId, already) {
     const pack = SERIES.get(seriesId) || SERIES.defaultPack()
     const risky = p.breaks > 0 || p.conflicts.length > 0
     const consequence = p.breaks === 0
@@ -3817,12 +3857,26 @@ function proposalCard (p, back, legacyId, seriesId) {
           '&amp;legacy=' + encodeURIComponent(legacyId) + '&amp;back=' + encodeURIComponent(back) +
           '&amp;series=' + encodeURIComponent(pack.id) +
           '">Review what this would remove&hellip;</a>'
-        : '<form method="post" action="/rule" style="margin-top:10px">' +
-          '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
-          '<input type="hidden" name="phrase" value="' + escapeHtml(p.phrase) + '">' +
-          '<input type="hidden" name="support" value="' + p.support + '">' +
-          ruleScopeControl(seriesId) +
-          '<button class="yes">Accept this rule</button></form>'
+        : (already
+            ? '<p class="thin" style="margin-top:10px">Added.</p>'
+            /*  A TICK, NOT A BUTTON, and no form of its own.
+
+                Every safe proposal used to carry its own form with one Accept
+                button, and accepting any of them redirected to /rules - which
+                has no way back to this listing. So of the six phrases this
+                page can offer, exactly one could ever be taken. The owner's
+                words: forced to only choose one suggestion even if several
+                are good.
+
+                One form now wraps them all, and the fields are keyed by
+                phrase the way /apply keys its fields by listing id, so an
+                unticked box simply does not arrive. */
+            : '<label class="scope" style="margin-top:10px">' +
+              '<input type="checkbox" name="phrase" value="' + escapeHtml(p.phrase) + '"> ' +
+              'add this rule</label>' +
+              '<input type="hidden" name="support:' + escapeHtml(p.phrase) + '" value="' +
+              p.support + '">' +
+              ruleScopeControl(seriesId, p.phrase))
 
     const conflictNote = p.conflicts.length > 0
         ? ' It also contradicts <strong class="warn">' + p.conflicts.length +
@@ -3876,9 +3930,24 @@ function teachPage (opened, url) {
         'other sovereign. Your decision on this one listing still stands; it just does not ' +
         'generalise.</p></div>'
 
-    const safeHtml = safe.length > 0
-        ? safe.map(p => proposalCard(p, back, legacyId, label.series)).join('')
-        : nothingSafe
+    /*  Which phrases are already rules, so a page returned to after adding
+        some reads as progress rather than offering them again. */
+    const existing = new Set(repository.learnedRules().map(r => String(r.phrase).toLowerCase()))
+    const isAdded = (p) => existing.has(String(p.phrase).toLowerCase())
+
+    const safeHtml = safe.length === 0
+        ? nothingSafe
+        : '<form method="post" action="/rule">' +
+          '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
+          '<input type="hidden" name="onward" value="' + escapeHtml(back) + '">' +
+          safe.map(p => proposalCard(p, back, legacyId, label.series, isAdded(p))).join('') +
+          (safe.every(isAdded)
+              ? ''
+              : '<div class="bulkbar"><button class="btn btn-primary" type="submit">' +
+                'Add the ticked rules</button>' +
+                '<span class="thin">Tick as many as apply. ' +
+                '<a href="' + escapeHtml(back) + '">done</a></span></div>') +
+          '</form>'
 
     const riskyHtml = risky.length === 0 ? '' : '<details>' +
         '<summary>' + risky.length + ' other phrase' + (risky.length === 1 ? '' : 's') +
@@ -3886,7 +3955,7 @@ function teachPage (opened, url) {
         ' coins from the statistics</summary>' +
         '<p class="thin">These need checking rather than clicking. Each one opens a page ' +
         'listing exactly what it would stop pricing.</p>' +
-        risky.map(p => proposalCard(p, back, legacyId, label.series)).join('') +
+        risky.map(p => proposalCard(p, back, legacyId, label.series, isAdded(p))).join('') +
         '</details>'
 
     return RENDER.page('Teach - Coin Market',

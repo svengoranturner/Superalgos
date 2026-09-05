@@ -561,10 +561,20 @@ async function post (opened, path, fields) {
     await new Promise(resolve => server.once('listening', resolve))
     const port = server.address().port
     try {
+        /*  Arrays become REPEATED keys, which is what a form with several
+            ticked checkboxes actually sends. new URLSearchParams(object)
+            joins them with a comma instead, so a test ticking two boxes
+            posted one phrase called "a,b" and the second rule silently never
+            existed. */
+        const body = new URLSearchParams()
+        for (const [name, value] of Object.entries(fields)) {
+            if (Array.isArray(value)) { value.forEach(v => body.append(name, v)) }
+            else { body.append(name, value) }
+        }
         const response = await fetch('http://127.0.0.1:' + port + path, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams(fields).toString(),
+            body: body.toString(),
             redirect: 'manual'
         })
         return { status: response.status, location: response.headers.get('location') }
@@ -3744,5 +3754,120 @@ test('naming a series does not overrule a pack that recognised the title', async
         'SELECT series FROM listing WHERE legacy_id = ?').get('999').series
     assert.strictEqual(series, 'US.MORGAN',
         'a hand-chosen series overruled a pack that recognised the title')
+    opened.db.close()
+})
+
+/*
+    SEVERAL RULES FROM ONE REJECTION.
+
+    The owner: "I'm forced to only choose one suggestion even if there are
+    several when adding to ignore list."
+
+    The cause was a redirect, not the rules. `induce` returns up to six
+    proposals and the teach page rendered all of them - but each carried its
+    own form, and accepting any one answered with '/rules', which has no route
+    back to that listing. With no client script there was then no way to reach
+    the other five.
+*/
+function teachStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+
+    /*  A corpus, because a phrase needs support of two before it is offered
+        at all, and must not match most of the store or it is dropped as too
+        common. */
+    const add = (n, title) => {
+        const browseId = 'v1|t' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 't' + n, title,
+            buyingOptions: 'AUCTION', endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 40, shipping: 0, observedAt: now })
+        repository.setListingSeries(browseId, 'GB.SOV')
+    }
+    for (let n = 0; n < 24; n++) { add(n, 'Gold Sovereign ' + n + ' Victoria bullion coin') }
+    /*  Two lots sharing several distinctive phrases, so more than one
+        proposal clears the support threshold. */
+    add(100, 'Princess Ann Gold One Eight Sovereign with titanium inset New Low Mintage')
+    add(101, 'Princess Ann Gold One Eight Sovereign with titanium inset Low Mintage Proof')
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('rejecting a coin offers every phrase at once, not one', async () => {
+    const opened = teachStore()
+    await post(opened, '/apply', { reject: 't100', back: '/review' })
+
+    const path = '/teach?legacy=t100&back=%2Freview'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const boxes = body.match(/<input type="checkbox" name="phrase" value="[^"]*"/g) || []
+    assert.ok(boxes.length >= 2,
+        'only ' + boxes.length + ' phrase can be chosen; the page should offer several')
+
+    /*  One form, one Apply - not one form per proposal. */
+    const forms = body.match(/<form method="post" action="\/rule"/g) || []
+    assert.strictEqual(forms.length, 1,
+        'the proposals are in ' + forms.length + ' separate forms, so only one can be submitted')
+    opened.db.close()
+})
+
+test('adding several rules keeps you on the page, with the rest still offered', async () => {
+    const opened = teachStore()
+    await post(opened, '/apply', { reject: 't100', back: '/review' })
+
+    const path = '/teach?legacy=t100&back=%2Freview'
+    const first = (await fetchAll(opened, [path]))[path].body
+    const phrases = (first.match(/name="phrase" value="([^"]*)"/g) || [])
+        .map(m => /value="([^"]*)"/.exec(m)[1])
+    assert.ok(phrases.length >= 2, 'need at least two proposals to test taking two')
+
+    const chosen = phrases.slice(0, 2)
+    const done = await post(opened, '/rule', {
+        phrase: chosen, back: path, ['support:' + chosen[0]]: '2', ['support:' + chosen[1]]: '2'
+    })
+
+    assert.strictEqual(done.status, 303)
+    assert.ok(done.location.startsWith('/teach'),
+        'accepting a rule sent you to ' + done.location + ' - away from the other proposals')
+
+    const rules = opened.repository.learnedRules().map(r => r.phrase)
+    for (const phrase of chosen) {
+        assert.ok(rules.includes(phrase), 'the rule for ' + JSON.stringify(phrase) + ' was not saved')
+    }
+    assert.strictEqual(rules.length, 2, 'expected two rules, got ' + rules.length)
+    opened.db.close()
+})
+
+test('a rule already added is not offered again', async () => {
+    const opened = teachStore()
+    await post(opened, '/apply', { reject: 't100', back: '/review' })
+    const path = '/teach?legacy=t100&back=%2Freview'
+
+    const phrases = ((await fetchAll(opened, [path]))[path].body
+        .match(/name="phrase" value="([^"]*)"/g) || [])
+        .map(m => /value="([^"]*)"/.exec(m)[1])
+    await post(opened, '/rule', { phrase: phrases[0], back: path, ['support:' + phrases[0]]: '2' })
+
+    const again = (await fetchAll(opened, [path]))[path].body
+    assert.ok(again.includes('Added.'),
+        'a rule that has been added is still offered as though it had not')
+    opened.db.close()
+})
+
+test('the rules page still adds a single hand-typed phrase', async () => {
+    /*  The other two callers post one phrase with unkeyed fields. They must
+        keep working, and must still land on /rules. */
+    const opened = teachStore()
+    const done = await post(opened, '/rule', {
+        phrase: 'titanium', series: 'GB.SOV', support: '2', back: '/rules'
+    })
+    assert.strictEqual(done.status, 303)
+    assert.ok(done.location.startsWith('/rules'),
+        'a rule added from /rules went to ' + done.location)
+    assert.ok(opened.repository.learnedRules().some(r => r.phrase === 'titanium'),
+        'the hand-typed rule was not saved')
     opened.db.close()
 })
