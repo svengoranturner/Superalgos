@@ -3116,6 +3116,20 @@ function twoChannelStore () {
     for (let n = 0; n < 4; n++) { sale(n, 820 + n, 'AUCTION', false) }
     for (let n = 4; n < 8; n++) { sale(n, 1090 + n, 'FIXED_PRICE', false) }
 
+    /*  And a shelf that has not sold, or there is no asking price and the
+        spread is blank in every column - which is how the first version of
+        this fixture passed a test about the spread moving. */
+    for (let n = 8; n < 11; n++) {
+        const id = 'v1|chan' + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'chan' + n, title: key + ' example ' + n,
+            buyingOptions: 'FIXED_PRICE', endTime: null,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(id, { price: 1400 + n, shipping: 4, observedAt: now })
+        repository.saveClassification(id, [{ key, level: 0 }], 0.9, 'title', 0.2354, {})
+    }
+
     const spotAt = SPOT.newSpotLookup(db, {})
     return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
 }
@@ -3159,6 +3173,40 @@ test('the format filter switches which sales the clearing figure comes from', as
     opened.db.close()
 })
 
+test('the spread moves with the clearing figure it is measured against', async () => {
+    /*  market.js stores askClearingSpread against the AUCTION fair value,
+        under a comment saying the spread must use the same clearing figure
+        the page prints. Printing a Buy-It-Now figure and the stored spread
+        beside it breaks that rule in the other direction: the column sits
+        still while the number above it moves 30 points. */
+    const opened = twoChannelStore()
+    const paths = ['/types', '/types?sale=bin']
+    const pages = await fetchAll(opened, paths)
+
+    /*  Tags out first, THEN the text - the spread cell wraps its number in
+        <strong>, so taking whatever follows the last '>' returned the empty
+        string and every comparison here was 0 against 0. */
+    const cell = (body, i) => body.split('<tbody>')[1].split('</tr>')[0]
+        .split('</td>')[i].replace(/<[^>]*>/g, '').trim()
+    const number = (text) => Number(text.replace(/[^0-9.-]/g, ''))
+
+    /*  Cells: type, series, sales, clears at, p25-p75, asks, spread. */
+    const auctionSpread = number(cell(pages['/types'].body, 6))
+    const binSpread = number(cell(pages['/types?sale=bin'].body, 6))
+    const auctionClears = number(cell(pages['/types'].body, 3))
+    const binClears = number(cell(pages['/types?sale=bin'].body, 3))
+
+    assert.notStrictEqual(auctionSpread, binSpread,
+        'the spread did not move when the clearing figure under it did')
+    /*  And it is the SAME subtraction in both, not merely a different one. */
+    const asks = number(cell(pages['/types'].body, 5))
+    assert.ok(Math.abs((asks - auctionClears) - auctionSpread) < 0.2,
+        'the auction spread is not asks minus the auction clearing figure')
+    assert.ok(Math.abs((asks - binClears) - binSpread) < 0.2,
+        'the Buy-It-Now spread is not asks minus the Buy-It-Now clearing figure')
+    opened.db.close()
+})
+
 test('a Buy-It-Now figure built on withheld prices says so', async () => {
     /*  eBay never publishes what an accepted Best Offer went for, so those
         rows are ceilings. They are kept - discarding them threw away half the
@@ -3173,6 +3221,9 @@ test('a Buy-It-Now figure built on withheld prices says so', async () => {
     const row = body.split('<tbody>')[1].split('</tr>')[0]
     assert.ok(row.includes('at most'),
         'a clearing figure with a withheld price in it is printed as though somebody paid it')
+    /*  A spread measured against a ceiling is a floor, and says so. */
+    assert.ok(row.includes('at least'),
+        'the spread off a ceiling is printed as though it were exact')
 
     const auction = (await fetchAll(opened, ['/types']))['/types'].body
     assert.ok(!auction.split('<tbody>')[1].split('</tr>')[0].includes('at most'),

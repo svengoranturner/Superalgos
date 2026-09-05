@@ -859,6 +859,27 @@ function marketPage (opened, url, reference) {
         return found === undefined || found === null ? e.market.fairValue : found
     }
 
+    /*  AND THE SPREAD FOLLOWS IT.
+
+        market.js sets askClearingSpread deliberately against the AUCTION fair
+        value, under a comment saying the spread must use the same clearing
+        figure the dashboard prints - because it once showed a spread beside a
+        clearing price the page had declined to show. That rule is right and
+        this page moved the figure out from under it: with Buy-It-Now selected
+        the stored spread went on measuring against auctions, so the column
+        did not move while a tooltip claimed it had.
+
+        Recomputed here from the two numbers in the row, which for the auction
+        channel is the stored value to the digit. Where the clearing figure is
+        a ceiling the spread built on it is a floor - the shelf is asking AT
+        LEAST this much over what the shelf clears at. */
+    const spreadOf = (e) => {
+        const f = channelOf(e)
+        const ask = e.market.liquidity.medianAskPremium
+        if (!f.sufficient || ask === null || f.p50 === null) { return null }
+        return ask - f.p50
+    }
+
     const TYPE_SORTS = {
         type: (a, b) => String(INSTRUMENTS.displayName(a.row.key))
             .localeCompare(String(INSTRUMENTS.displayName(b.row.key))),
@@ -868,8 +889,7 @@ function marketPage (opened, url, reference) {
         cheapest: (a, b) => numberAsc(channelOf(a).p50, channelOf(b).p50),
         asks: (a, b) => numberDesc(a.market.liquidity.medianAskPremium,
             b.market.liquidity.medianAskPremium),
-        spread: (a, b) => numberDesc(a.market.liquidity.askClearingSpread,
-            b.market.liquidity.askClearingSpread),
+        spread: (a, b) => numberDesc(spreadOf(a), spreadOf(b)),
         sellthrough: (a, b) => numberDesc(a.market.liquidity.sellThroughRate,
             b.market.liquidity.sellThroughRate),
         bidcount: (a, b) => numberDesc(a.market.liquidity.medianBidCount,
@@ -926,9 +946,10 @@ function marketPage (opened, url, reference) {
                 'and it does NOT follow the format filter: a running auction has no asking ' +
                 'price, just a bid so far, so there is no auction figure to switch to.' },
         { label: 'Spread', key: 'spread',
-            title: 'Asks minus Clears at, in percentage points. With Buy-It-Now selected this ' +
-                'compares the shelf against itself, which is the honest version of the ' +
-                'comparison; with Auctions it is what paying a Buy-It-Now costs over waiting.' },
+            title: 'Asks minus Clears at, in percentage points, against whichever clearing ' +
+                'figure is shown. On Auctions that is what paying a Buy-It-Now costs over ' +
+                'waiting for one; on Buy-It-Now it is the shelf against itself - what the ' +
+                'lots that sell go for versus what the ones sitting there are asking.' },
         { label: 'Sell-through', key: 'sellthrough',
             title: 'Of the lots that ENDED in the last 90 days, the share that sold. Counts ' +
                 'every format together and does not follow the filter above.' },
@@ -1041,7 +1062,11 @@ function marketPage (opened, url, reference) {
                 '<td class="mono">' +
                 (f.sufficient ? pct(f.p25) + ' \u2013 ' + pct(f.p75) : '\u2014') + '</td>' +
                 '<td class="mono">' + pct(l.medianAskPremium) + '</td>' +
-                '<td class="mono"><strong>' + pct(l.askClearingSpread) + '</strong></td>' +
+                '<td class="mono"' + (ceiling
+                    ? ' title="Measured against a clearing price that is itself a ceiling, so ' +
+                      'the real gap is this wide or wider."'
+                    : '') + '><strong>' + (ceiling && spreadOf(e) !== null ? 'at least ' : '') +
+                pct(spreadOf(e)) + '</strong></td>' +
                 '<td class="mono">' + pct(l.sellThroughRate, 0) + '</td>' +
                 '<td class="mono">' +
                 (l.medianBidCount === null ? '\u2014' : l.medianBidCount.toFixed(0)) + '</td>' +
