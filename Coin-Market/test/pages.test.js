@@ -3633,3 +3633,116 @@ test('a filter link keeps every other filter', async () => {
     }
     opened.db.close()
 })
+
+/*
+    THE COIN NO VERDICT COULD RESCUE.
+
+    The owner's listing, verbatim:
+
+        SCARCE GOLD 2POUND 1902 Edward VII Head Dragon London Spink 3967 UNC
+
+    No pack claims it, because no pack looks for anything but the word
+    "sovereign" or "sov". So classify() was never called - no denomination, no
+    key, no guess - and the row's kind and denomination selects were built from
+    a pack that did not exist, leaving two dropdowns containing nothing but
+    their own placeholders.
+
+    Worse than useless: marking it genuine ran RECLASSIFY.one, which hit the
+    same gate and re-queued it with the same reason. The verdict was discarded
+    on every sweep. Nothing the owner could do would stick.
+*/
+function strandedStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const TITLE = 'SCARCE GOLD 2POUND 1902 Edward VII Head Dragon London Spink 3967 UNC Numisb517'
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    repository.saveListing({
+        browseId: 'v1|stranded|0', legacyId: '287558264634', title: TITLE,
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    repository.saveSnapshot('v1|stranded|0', { price: 1450, shipping: 0, observedAt: now })
+    /*  The state the collector leaves it in: no series, queued, unpriced. */
+    repository.setListingSeries('v1|stranded|0', null)
+    repository.queueForReview('v1|stranded|0', 'No tracked series recognises this', null, 0)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}), TITLE }
+}
+
+test('an unrecognised coin offers a way to say what it is', async () => {
+    const opened = strandedStore()
+    /*  sale=all: the review page defaults to auctions and this lot is a
+        Buy-It-Now, so the default tab hides it for a reason that has nothing
+        to do with what is under test. */
+    const path = '/review?coin=%3F&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    assert.ok(body.includes('2POUND'), 'the stranded listing is not on the review page')
+    assert.match(body, /<select name="s_287558264634"/,
+        'no series control is offered on a row nothing could name')
+    assert.match(body, /British Gold Sovereigns/,
+        'the series control offers no series to choose')
+    opened.db.close()
+})
+
+test('a series chosen by hand survives the next reclassify', async () => {
+    /*  THE HEART OF IT. Before, this assignment was undone by the very
+        RECLASSIFY.one that /apply runs immediately after storing it. */
+    const opened = strandedStore()
+
+    const done = await post(opened, '/apply', {
+        genuine: '287558264634', s_287558264634: 'GB.SOV',
+        d_287558264634: 'DOUBLE', q_287558264634: '1', back: '/review'
+    })
+    assert.strictEqual(done.status, 303, 'the verdict did not record')
+
+    const seriesNow = () => opened.db.prepare(
+        'SELECT series FROM listing WHERE browse_id = ?').get('v1|stranded|0').series
+    assert.strictEqual(seriesNow(), 'GB.SOV',
+        'the series the reader chose was thrown away by the reclassify that /apply runs')
+
+    /*  And again, the way an hourly sweep would. */
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.one(opened.db, opened.repository, '287558264634', { allowedCountries: [] })
+    assert.strictEqual(seriesNow(), 'GB.SOV',
+        'a sweep undid the decision - which is what made this coin unrescuable')
+
+    /*  Filed under a coin type, so it can finally carry a premium. */
+    const keys = opened.db.prepare(
+        'SELECT key FROM listing_instrument WHERE browse_id = ?').all('v1|stranded|0')
+    assert.ok(keys.length > 0,
+        'the coin is named but still filed under no type, so it is still unpriceable')
+    assert.ok(keys.some(k => k.key.includes('DOUBLE')),
+        'filed, but not as the double sovereign the reader said it was: ' +
+        keys.map(k => k.key).join(', '))
+
+    opened.db.close()
+})
+
+test('naming a series does not overrule a pack that recognised the title', async () => {
+    /*  The label is a fallback, never an override. A pack that reads the title
+        has read the same words the person did, and letting a stale label win
+        would make a corrected title unfixable in the other direction. */
+    const opened = strandedStore()
+    const now = new Date().toISOString()
+    /*  A title a pack really reads. twoSeriesStore's titles are keys, which
+        no recogniser claims - its series come from setListingSeries - so it
+        cannot tell an override from a fallback. */
+    opened.repository.saveListing({
+        browseId: 'v1|realmorgan|0', legacyId: '999', title: '1902 Morgan Silver Dollar',
+        buyingOptions: 'FIXED_PRICE', endTime: null
+    }, now)
+    opened.repository.saveSnapshot('v1|realmorgan|0', { price: 40, shipping: 0, observedAt: now })
+
+    await post(opened, '/apply', { genuine: '999', s_999: 'GB.SOV', back: '/review' })
+
+    const series = opened.db.prepare(
+        'SELECT series FROM listing WHERE legacy_id = ?').get('999').series
+    assert.strictEqual(series, 'US.MORGAN',
+        'a hand-chosen series overruled a pack that recognised the title')
+    opened.db.close()
+})

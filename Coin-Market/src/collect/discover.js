@@ -148,15 +148,23 @@ exports.newDiscoverer = function (browseClient, repository, options) {
                 for a human, not a coin flip.
             */
             const claim = SERIES.recognise(item.title, { hint: seriesId })
-            if (claim.pack === null) {
+            /*  Same rule as the rebuild path: a person who has named the
+                series has read the title, and a sweep must not undo them.
+                See the note in reclassify.js. */
+            const told = claim.pack === null && label !== null && label.series
+                ? SERIES.get(label.series)
+                : null
+            const pack = claim.pack || told
+
+            if (pack === null) {
                 repository.setListingSeries(item.browseId, null)
                 repository.queueForReview(item.browseId, claim.reasons.join('; '), null, 0)
                 reviewed++
                 continue
             }
-            repository.setListingSeries(item.browseId, claim.pack.id)
+            repository.setListingSeries(item.browseId, pack.id)
 
-            const result = classify({ title: item.title }, { label, learned, series: claim.pack.id })
+            const result = classify({ title: item.title }, { label, learned, series: pack.id })
 
             if (result.excluded !== null) {
                 /* Excluded lots are still stored - the dashboard shows what

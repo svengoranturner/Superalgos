@@ -2741,8 +2741,31 @@ function callControls (row) {
         common case needs no interaction at all: clicking Genuine submits the
         denomination it already had. The dropdown only asks a question when it
         reads "denomination?", which is exactly when there is one to answer. */
+    /*  WHICH SERIES, when nothing has decided one.
+
+        The kind and denomination pickers are built from the coin's pack, so a
+        listing no pack recognises got two selects containing nothing but their
+        own placeholders - "which kind?" and "denomination?" and no options
+        under either. The owner hit exactly that and said so: there was no way
+        to tell the app what the coin was.
+
+        Offered only in that case. Where the classifier has named a series
+        there is nothing to ask, and a third dropdown on every row would be
+        three questions where the answer is already known.
+    */
+    const hint = row.series || row.instrumentKey || row.bestGuess
+    const seriesPicker = hint
+        ? ''
+        : '<select name="s_' + id + '" title="Which coin family this is. The tool could not ' +
+          'tell from the title, so nothing else on this row can offer you options until it ' +
+          'knows.">' +
+          '<option value="" selected>which series?</option>' +
+          SERIES.all().map(pack => '<option value="' + escapeHtml(pack.id) + '">' +
+              escapeHtml(pack.label) + '</option>').join('') +
+          '</select>'
+
     const detected = detectedDenomination(row)
-    const options = denominationsFor(row.series || row.instrumentKey || row.bestGuess)
+    const options = denominationsFor(hint)
         .map(d => '<option value="' + d + '"' + (d === (detected || '') ? ' selected' : '') + '>' +
             (d === '' ? 'denomination?' : escapeHtml(d.toLowerCase())) + '</option>')
         .join('')
@@ -2761,13 +2784,14 @@ function callControls (row) {
         giving 192 verdicts - and a control nobody sees is a control nobody
         uses. */
     const pool = detectedPool(row)
-    const poolOptions = poolsFor(row.series || row.instrumentKey || row.bestGuess)
+    const poolOptions = poolsFor(hint)
         .map(x => '<option value="' + x + '"' + (x === (pool || '') ? ' selected' : '') + '>' +
             (x === '' ? 'which kind?' : escapeHtml(String(x).toLowerCase().replace(/_/g, ' '))) +
             '</option>')
         .join('')
 
-    return '<select name="p_' + id + '" title="Which kind of coin this is, and so which ' +
+    return seriesPicker +
+        '<select name="p_' + id + '" title="Which kind of coin this is, and so which ' +
         'pile of clearing prices it is measured against. The tool works this out from the ' +
         'title; if it has it wrong, the premium beside it and any offer on it are wrong too.">' +
         poolOptions + '</select>' +
@@ -3581,6 +3605,16 @@ function handlePost (opened, pathname, form) {
                 pool: verdict === LEARNED.VERDICT.SOVEREIGN
                     ? (form.get('p_' + legacyId) || null)
                     : null,
+                /*  And the series, where the reader had to supply one because
+                    no pack could. Written through to the label so the gate in
+                    reclassify.js can honour it - without this the decision is
+                    stored and then undone by the next sweep, which is exactly
+                    what was happening. Undefined rather than null when the
+                    field is absent, because repository.label reads undefined
+                    as "derive it" and null as "there isn't one". */
+                series: verdict === LEARNED.VERDICT.SOVEREIGN && form.get('s_' + legacyId)
+                    ? form.get('s_' + legacyId)
+                    : undefined,
                 quantity: verdict === LEARNED.VERDICT.SOVEREIGN
                     ? Number(form.get('q_' + legacyId)) || 1
                     : 1

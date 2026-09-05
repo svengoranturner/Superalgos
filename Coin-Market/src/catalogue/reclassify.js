@@ -59,15 +59,41 @@ function classifyOne (listing, label, learned, repository, counts, allowedCountr
         that created the row, and the disagreement would be silent.
     */
     const claim = SERIES.recognise(listing.title)
-    if (claim.pack === null) {
+    /*
+        A HUMAN VERDICT OUTRANKS THE TITLE PARSER HERE TOO.
+
+        The comment fifteen lines up already says so, and it was only being
+        applied to the category screen. The series gate below it re-derived
+        the series from the title on every pass and discarded whatever a
+        person had said - so a coin the packs cannot name could be marked
+        genuine, given a denomination, and be back in the queue with the same
+        reason on the next sweep. Nothing the owner did to it could stick.
+
+        Their example: "SCARCE GOLD 2POUND 1902 Edward VII Head Dragon London
+        Spink 3967 UNC". No pack claims it because no pack looks for anything
+        but the word sovereign or sov, so classify() was never called at all -
+        no denomination, no key, no guess. Marked genuine, still unpriceable,
+        and re-queued hourly.
+
+        A label naming a series is the strongest evidence there is: somebody
+        looked at the listing. It is used when the packs cannot decide, never
+        to overrule one that can - a pack that recognises the title has read
+        the same words the person did.
+    */
+    const told = claim.pack === null && label !== null && label.series
+        ? SERIES.get(label.series)
+        : null
+    const pack = claim.pack || told
+
+    if (pack === null) {
         repository.setListingSeries(listing.browseId, null)
         repository.queueForReview(listing.browseId, claim.reasons.join('; '), null, 0)
         counts.reviewed++
         return
     }
-    repository.setListingSeries(listing.browseId, claim.pack.id)
+    repository.setListingSeries(listing.browseId, pack.id)
 
-    const result = CLASSIFY({ title: listing.title }, { label, learned, series: claim.pack.id })
+    const result = CLASSIFY({ title: listing.title }, { label, learned, series: pack.id })
     if (result.labelled) { counts.labelled++ }
 
     if (result.excluded !== null) {
