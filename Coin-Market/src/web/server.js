@@ -228,9 +228,22 @@ function saleFromScan (url) {
     return SALES.includes(asked) ? asked : 'auction'
 }
 
-function bandFrom (url) {
+/*  The default band depends on the view, and deliberately.
+
+    Near spot exists to be a narrow list, so it defaults to 5%. Ending soon
+    exists to show what is closing whatever it costs - the owner asked for
+    exactly that - so it defaults to any price. The control is on both, so
+    either can be narrowed or widened; what changes is where it starts.
+
+    Showing a control that does not filter the list under it was the first
+    version of this, and it is worse than not offering one. */
+function bandDefault (view) {
+    return view === 'ending' ? 'any' : 'near'
+}
+
+function bandFrom (url, view) {
     const asked = url === undefined ? null : url.searchParams.get('band')
-    return Object.prototype.hasOwnProperty.call(BANDS, asked) ? asked : 'near'
+    return Object.prototype.hasOwnProperty.call(BANDS, asked) ? asked : bandDefault(view)
 }
 
 const WITHIN_HOURS = [1, 6, 12, 24]
@@ -1134,7 +1147,7 @@ function marketPage (opened, url, reference) {
     const sweepAt = repository.lastSweepAt()
     const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
     const sale = saleFromScan(url)
-    const band = bandFrom(url)
+    const band = bandFrom(url, scanView)
     const coin = coinFrom(url)
     const inCoin = (row) => {
         const parts = coinPartsOf(row.instrumentKey)
@@ -1230,7 +1243,8 @@ function marketPage (opened, url, reference) {
         still apply - those they asked for. */
     const within = withinFrom(url)
     const endingSoon = closingWithin(
-        fresh.filter(row => matchesSearch(row, pageTerms)).filter(inMetals),
+        fresh.filter(row => matchesSearch(row, pageTerms)).filter(inMetals).filter(inCoin)
+            .filter(row => row.ratio <= BANDS[band].ceiling),
         within, Date.now())
     endingSoon.sort((a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     for (const row of shown) { row.sweepAt = sweepAt }
@@ -1429,7 +1443,7 @@ function marketPage (opened, url, reference) {
         if (metals.length === 1) { params.push('metal=' + metals[0]) }
         if (within !== WITHIN_DEFAULT) { params.push('within=' + within) }
         if (sale !== 'auction') { params.push('sale=' + sale) }
-        if (band !== 'near') { params.push('band=' + band) }
+        if (band !== bandDefault(scanView)) { params.push('band=' + band) }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
 
@@ -1448,7 +1462,7 @@ function marketPage (opened, url, reference) {
         if (next.metal.length === 1) { params.push('metal=' + next.metal[0]) }
         if (next.within !== WITHIN_DEFAULT) { params.push('within=' + next.within) }
         if (next.sale !== 'auction') { params.push('sale=' + next.sale) }
-        if (next.band !== 'near') { params.push('band=' + next.band) }
+        if (next.band !== bandDefault(next.view)) { params.push('band=' + next.band) }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
     const withinHref = (hours) => filterHref({ within: hours })
@@ -1490,7 +1504,7 @@ function marketPage (opened, url, reference) {
         (metals.length === 1 ? '<input type="hidden" name="metal" value="' + escapeHtml(metals[0]) + '">' : '') +
         (within !== WITHIN_DEFAULT ? '<input type="hidden" name="within" value="' + within + '">' : '') +
         (sale !== 'auction' ? '<input type="hidden" name="sale" value="' + escapeHtml(sale) + '">' : '') +
-        (band !== 'near' ? '<input type="hidden" name="band" value="' + escapeHtml(band) + '">' : '') +
+        (band !== bandDefault(scanView) ? '<input type="hidden" name="band" value="' + escapeHtml(band) + '">' : '') +
         ['series', 'cond', 'size'].map((name, i) => {
             const field = ['series', 'condition', 'size'][i]
             const chosen = coin[field]
@@ -1542,7 +1556,10 @@ function marketPage (opened, url, reference) {
                   'watching come to a close.' : '') +
             (soldTotal > sales.length ? ' Showing the ' + sales.length + ' most recent.' : '')
     }
-    const viewBlurb = VIEW_BLURBS[scanView]
+    /*  Empty, not missing. Deleting the ending view's paragraph left this
+        undefined, and an undefined in a template literal prints the word
+        "undefined" under the heading - which is how it shipped. */
+    const viewBlurb = VIEW_BLURBS[scanView] || ''
 
     const VIEW_BODIES = {
         nearSpot: shown.length === 0

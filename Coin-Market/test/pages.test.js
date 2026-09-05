@@ -3519,3 +3519,47 @@ test('a coin type says when its sales happened', async () => {
         'the page does not say the window the sample was drawn from either')
     opened.db.close()
 })
+
+test('a view never prints the word undefined', async () => {
+    /*  Deleting the ending view's blurb left VIEW_BLURBS[scanView] undefined,
+        and an undefined in a template literal renders as the word - which is
+        what shipped, sitting under the heading. Checked on every view rather
+        than the one that broke. */
+    const opened = endingStore([0.5, 3])
+    const paths = ['/', '/?view=ending', '/?view=sold', '/?view=offers']
+    const pages = await fetchAll(opened, paths)
+
+    for (const path of paths) {
+        assert.ok(!/>\s*undefined\s*</.test(pages[path].body),
+            path + ' renders the word "undefined" as content')
+        assert.ok(!pages[path].body.includes('>null<'),
+            path + ' renders the word "null" as content')
+    }
+    opened.db.close()
+})
+
+test('a control that is shown is a control that filters', async () => {
+    /*  The price band was rendered on Ending soon and did nothing to it: the
+        list was built before the band was applied, so a page reading "Within
+        5%" listed lots at +14.3%. A control that does not do what it says is
+        worse than no control.
+
+        Ending soon DEFAULTS to any price, because that is what the view is
+        for - but the control works when you use it. */
+    const opened = endingStore([0.5, 3, 8, 20])
+    const pages = await fetchAll(opened,
+        ['/?view=ending&within=24', '/?view=ending&within=24&band=near'])
+    const rows = path => (pages[path].body.match(/<td class="pick-cell">/g) || []).length
+
+    /*  endingStore prices every lot at 2000 against about 775 of gold, so
+        none is within 5% of spot. */
+    assert.ok(rows('/?view=ending&within=24') > 0, 'the default ending view is empty')
+    assert.strictEqual(rows('/?view=ending&within=24&band=near'), 0,
+        'asking for lots within 5% of spot returned lots at 158% over it')
+
+    /*  And the default is any price, so the control starts where the view
+        means rather than hiding most of the list on arrival. */
+    assert.match(pages['/?view=ending&within=24'].body, /class="seg-opt on"[^>]*>Any price</,
+        'the ending view does not start on any price')
+    opened.db.close()
+})
