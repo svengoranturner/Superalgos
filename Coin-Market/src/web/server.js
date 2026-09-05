@@ -505,7 +505,21 @@ function marketPage (opened, url, reference) {
         grouped.get(id).rows.push(row)
     }
 
-    const curve = view.upliftCurve()
+    /*  Built only if something asks for it.
+
+        Five of the six pages this function serves never show the uplift chart
+        and never evaluate an alert - /gaps renders one paragraph - and this is
+        the most expensive thing here on a cold cache. Eager, /gaps spent 1.9s
+        of a 4.9s render on a curve nobody was going to see.
+
+        A thunk rather than a hoisted call, because the two callers are far
+        apart and one of them is inside the alert loop; memoised, because that
+        loop asks per entry. */
+    let curveMemo = null
+    const curveOf = () => {
+        if (curveMemo === null) { curveMemo = view.upliftCurve() }
+        return curveMemo
+    }
 
     /*  One block per series, each with its own cap and its own count of what
         the cap left out - a number that has to be visible, or a capped page
@@ -694,7 +708,7 @@ function marketPage (opened, url, reference) {
             lead: 'How far an auction climbs between the last quiet hour and the hammer, ' +
                 'learned from this tool\'s own snapshots. It is why an alert can reach you ' +
                 'while there is still time to act.',
-            body: () => '<div class="card">' + RENDER.upliftChart(curve) + '</div>'
+            body: () => '<div class="card">' + RENDER.upliftChart(curveOf()) + '</div>'
         },
         gaps: {
             title: 'Gaps',
@@ -1053,7 +1067,7 @@ function marketPage (opened, url, reference) {
     */
     const offerEntries = []
     for (const entry of markets) {
-        for (const alert of ALERT_RULES.evaluate(entry.market, curve, {})) {
+        for (const alert of ALERT_RULES.evaluate(entry.market, curveOf(), {})) {
             if (alert.rule !== 'BEST_OFFER_IN_REACH') { continue }
             offerEntries.push({
                 alert,

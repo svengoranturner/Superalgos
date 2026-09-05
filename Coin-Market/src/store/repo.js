@@ -475,7 +475,27 @@ exports.newRepository = function (db, options) {
                     the window to this instrument's own listings first takes
                     it to a few milliseconds. */
                 WITH scope AS (
-                    SELECT browse_id FROM listing_instrument WHERE key = ?1
+                    /*  NARROWED BY THE FILTER THE TAIL APPLIES, so the latest
+                        snapshot is not found for listings that cannot survive
+                        it - the same change that took liveAuctions from
+                        1,249ms to 255ms. It is worth far less here, because
+                        the scope is already one coin type: measured over the
+                        busiest 80 keys, 1,485ms to 1,174ms, identical rows.
+                        Taken anyway, being the same shape for the same reason.
+
+                        BATCHING THESE 80 CALLS INTO ONE WAS TRIED AND IS NOT
+                        HERE. It measured 1,448ms against 1,485ms - no gain -
+                        because widening the scope to 80 keys costs about what
+                        the 79 saved statements save. Eighty tight seeks beat
+                        one broad scan, which is the lesson liveAuctions taught
+                        from the other direction. */
+                    SELECT li2.browse_id FROM listing_instrument li2
+                    JOIN listing lf ON lf.browse_id = li2.browse_id
+                    WHERE li2.key = ?1
+                      AND (lf.end_time IS NULL OR lf.end_time > ?2)
+                      AND lf.last_seen > ?3
+                      AND NOT EXISTS (SELECT 1 FROM listing_outcome o2
+                                      WHERE o2.browse_id = li2.browse_id)
                 ),
                 /*  Latest snapshot per listing, grouped ONCE.
 
