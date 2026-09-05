@@ -1261,7 +1261,19 @@ function marketPage (opened, url, reference) {
     const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title', 'ident']
     const pageTerms = searchTerms(url)
     const soldControlled = applyRowControls(allSales, url, SOLD_SORTS, 'newest')
-    const sales = soldControlled.rows
+    /*  THE METAL FILTER APPLIES HERE TOO, and did not.
+
+        The Silver and Gold toggles render on all four views and were wired
+        into two: the near-spot list and the ending list. On this one and on
+        the offers list they rewrote the URL and changed nothing, which is
+        the worst state for a control to be in - it looks like it worked.
+
+        Kept as a pair either side of the filter, because the count beside
+        each toggle has to be taken BEFORE it: counted after, the metal you
+        have not selected always reads zero and the control can never be
+        turned back on. */
+    const salesBeforeMetal = soldControlled.rows
+    const sales = salesBeforeMetal.filter(inMetals)
 
     const pageSearch = controlStrip('/', url, {
         /*  The view rides along, or searching from the sold list would submit
@@ -1598,7 +1610,8 @@ function marketPage (opened, url, reference) {
 
     /*  Kept before the coin filter, because the picker's options are built
         from it - so it always offers what is actually there. */
-    const priced = opportunities.filter(row => matchesSearch(row, pageTerms)).filter(inMetals)
+    const scanBeforeMetal = opportunities.filter(row => matchesSearch(row, pageTerms))
+    const priced = scanBeforeMetal.filter(inMetals)
     const scanned = priced.filter(inCoin)
     const shown = scanned.slice(0, 40)
 
@@ -1611,10 +1624,11 @@ function marketPage (opened, url, reference) {
         than off the near-spot list. The reader's own search and metal filters
         still apply - those they asked for. */
     const within = withinFrom(url)
-    const endingSoon = closingWithin(
-        fresh.filter(row => matchesSearch(row, pageTerms)).filter(inMetals).filter(inCoin)
+    const endingBeforeMetal = closingWithin(
+        fresh.filter(row => matchesSearch(row, pageTerms)).filter(inCoin)
             .filter(row => row.ratio <= BANDS[band].ceiling),
         within, Date.now())
+    const endingSoon = endingBeforeMetal.filter(inMetals)
     endingSoon.sort((a, b) => String(a.endTime).localeCompare(String(b.endTime)))
     for (const row of shown) { row.sweepAt = sweepAt }
 
@@ -1649,13 +1663,20 @@ function marketPage (opened, url, reference) {
                     meaning as every other percentage on the site: premium
                     over the coin's own metal. */
                 fineOz: entry.market.fineOz,
-                spot: entry.market.spot
+                spot: entry.market.spot,
+                /*  From the series by way of the market, so the metal toggles
+                    reach this list too. It was the one population on the page
+                    that carried no metal at all. */
+                metal: entry.market.metal
             })
         }
     }
-    const offers = ALERT_RULES.dedupeByListing(offerEntries)
+    const offersBeforeMetal = ALERT_RULES.dedupeByListing(offerEntries)
         .filter(entry => matchesSearch(entry.alert, pageTerms))
-        .slice(0, 20)
+    /*  Filtered before the cap, not after: sliced first, choosing Silver
+        would show whatever silver happened to fall inside the first twenty
+        rather than the twenty best silver offers. */
+    const offers = offersBeforeMetal.filter(inMetals).slice(0, 20)
 
     const offerHtml = offers.length === 0
         ? '<p class="thin">Nothing to offer on right now. A lot only appears here when its coin ' +
@@ -2002,12 +2023,74 @@ function marketPage (opened, url, reference) {
         form and a submit, and the whole row is otherwise navigation. They
         wear the design system's radio dot so the row reads as one set of
         controls. Clicking one toggles it in the URL. */
+    /*  COUNTED OVER THE VIEW YOU ARE ON, WITH EVERY FILTER BUT THIS ONE.
+
+        Two rules, both borrowed from the coin picker a few hundred lines up.
+
+        Narrowed by the OTHER filters and never by itself: counted after the
+        metal filter, the metal you have not got selected reads zero on every
+        page, and a control that reads zero is a control you cannot turn on.
+
+        And over the population the view actually draws from, or the number
+        beside Silver on the sold list is a fact about the auction scanner.
+        The four views draw from four different sets, so there are four. */
+    const metalPopulation = () => {
+        if (scanView === 'offers') { return offersBeforeMetal }
+        if (scanView === 'sold') { return salesBeforeMetal }
+        if (scanView === 'ending') { return endingBeforeMetal }
+        return scanBeforeMetal.filter(inCoin)
+    }
+    const metalCounts = new Map()
+    for (const row of metalPopulation()) {
+        const metal = row.metal
+        if (metal === undefined || metal === null) { continue }
+        metalCounts.set(metal, (metalCounts.get(metal) || 0) + 1)
+    }
+
+    /*  DIMMED RATHER THAN DROPPED when there is nothing behind it.
+
+        The house rule two thousand lines down says a filter that can only
+        ever empty the page is a filter nobody trusts twice, and answers it by
+        omitting the empty option. That is right for the review queue's group
+        picker, whose vocabulary is generated and whose membership is expected
+        to vary. Metal is not that: there are exactly two, they are a fixed
+        pair, and a control that flickers between one item and two is not a
+        control. So the empty one stays where it is and says it is empty,
+        which satisfies what the rule is actually for - you can never click
+        through to a page with nothing on it.
+
+        A <span> rather than a disabled <a>, because :disabled does not apply
+        to an anchor - which is why the .btn:disabled rule in the stylesheet
+        has never once fired on one. A span is unclickable by construction.
+
+        NEVER INTO A DEAD END, which takes two guards rather than the obvious
+        one. `!on` is not it: with no ?metal in the URL both metals are on by
+        default, so an empty one would never dim at all.
+
+        The first guard is the metal you have deliberately narrowed to on its
+        own. Dimming that leaves the page saying you are looking at something
+        it will not let you stop looking at.
+
+        The second is a store with nothing in either metal. Two dashed
+        controls reads as a broken filter row rather than as an empty market,
+        and the empty market is already obvious from the empty list. */
+    const anyMetalHasRows = [...metalCounts.values()].some(n => n > 0)
     const metalToggle = (code, label) => {
         const on = metals.includes(code)
+        const n = metalCounts.get(code) || 0
+        const soleChoice = on && metals.length === 1
+        const inner = '<span class="dot"></span>' + escapeHtml(label) +
+            ' <span class="n">' + n + '</span>'
+
+        if (n === 0 && !soleChoice && anyMetalHasRows) {
+            return '<span class="radio off" title="No ' + escapeHtml(label.toLowerCase()) +
+                ' lots under the filters in force. Widen the filters and it comes back.">' +
+                inner + '</span>'
+        }
         const next = on ? metals.filter(m => m !== code) : metals.concat([code])
         return '<a class="radio' + (on ? ' on' : '') + '" href="' +
             filterHref({ metal: next.length === 0 ? metals : next }) +
-            '"><span class="dot"></span>' + escapeHtml(label) + '</a>'
+            '">' + inner + '</a>'
     }
 
     const body = `

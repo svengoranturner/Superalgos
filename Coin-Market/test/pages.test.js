@@ -2852,6 +2852,223 @@ test('the scanner draws a dense table, not the tall queue cards', async () => {
     meta line, a sibling, began at the container edge. So the assertion is
     structural too: the tick must not be inside the title.
 */
+/*
+    THE SILVER / GOLD TOGGLES.
+
+    The owner: "grey out the option for silver / gold on the filters when that
+    option isn't available based on the other filters selected - it's kind of
+    confusing at the moment."
+
+    Two things were wrong, and only one of them was the one reported. The
+    toggles render on all four scanner views and were wired into two: the
+    near-spot list and the ending list. On the offers list and the sold list
+    they rewrote the URL and changed nothing. A count beside a control that
+    does nothing would have been worse than no count, so that had to go first.
+*/
+test('the metal toggle filters every view it appears on', async () => {
+    const opened = bothMetalsStore()
+    const marker = 'US.MORGAN.COMMON.DOLLAR'
+    const VIEWS = ['', 'view=offers', 'view=sold', 'view=ending']
+
+    /*  UNFILTERED FIRST, AND THAT IS THE WHOLE GUARD.
+
+        twoSeriesStore has silver on the scanner and none on the offers or
+        sold lists - it resolves no silver sales and raises no silver offer -
+        so an "absent when filtered" assertion passed there for both of the
+        views this change actually fixed. Proving the silver is there before
+        proving the filter removes it is what stops that happening again. */
+    for (const view of VIEWS) {
+        const path = '/?sale=all&band=any' + (view ? '&' + view : '')
+        const body = (await fetchAll(opened, [path]))[path].body
+        assert.ok(body.includes(marker),
+            path + ' shows no silver at all, so filtering it out proves nothing')
+    }
+
+    for (const view of VIEWS) {
+        const path = '/?sale=all&band=any&metal=XAU' + (view ? '&' + view : '')
+        const body = (await fetchAll(opened, [path]))[path].body
+        assert.ok(!body.includes(marker),
+            path + ' still shows a silver lot with only gold selected')
+    }
+    opened.db.close()
+})
+
+/*  Both metals present on all four scanner views: live auctions, a live
+    Best Offer lot within reach of its ceiling, and resolved sales. Four sold
+    auctions per metal, because a coin type needs three before it has a
+    clearing price and therefore before it can raise an offer at all. */
+function bothMetalsStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 49.7, null, 'test')
+
+    const add = (id, key, fineOz, price, options, endTime) => {
+        repository.saveListing({
+            browseId: 'v1|' + id + '|0', legacyId: id, title: key + ' example ' + id,
+            buyingOptions: options, endTime,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot('v1|' + id + '|0', { price, shipping: 4, observedAt: now })
+        repository.saveClassification('v1|' + id + '|0', [{ key, level: 0 }], 0.9, 'title', fineOz, {})
+        return 'v1|' + id + '|0'
+    }
+
+    for (const coin of [
+        { tag: 'au', key: 'GB.SOV.BULLION.FULL', fineOz: 0.2354, sold: 860, live: 880, offer: 940 },
+        { tag: 'ag', key: 'US.MORGAN.COMMON.DOLLAR', fineOz: 0.7734, sold: 70, live: 72, offer: 78 }
+    ]) {
+        for (let n = 0; n < 4; n++) {
+            const id = add(coin.tag + 's' + n, coin.key, coin.fineOz, coin.sold + n, 'AUCTION', now)
+            repository.saveOutcome(id, {
+                endTime: now, sold: true, finalPrice: coin.sold + n, shipping: 4, bidCount: 6,
+                saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+            })
+        }
+        for (let n = 0; n < 2; n++) {
+            add(coin.tag + 'l' + n, coin.key, coin.fineOz, coin.live + n, 'AUCTION', soon)
+        }
+        /*  The offer lot: Best Offer enabled and asking modestly above the
+            ceiling, which is what BEST_OFFER_IN_REACH waits for. */
+        add(coin.tag + 'o', coin.key, coin.fineOz, coin.offer, 'FIXED_PRICE|BEST_OFFER', null)
+    }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('a metal with nothing behind it is dimmed, and never into a dead end', async () => {
+    const opened = goldOnlyStore()
+    /*  The control's own opening tag, not whatever element happens to sit
+        closest to the label - the radio puts its dot span between the two, so
+        the nearest '<' is that dot's closing tag. */
+    const control = (filters, label) => {
+        const upTo = filters.split(label)[0]
+        const at = upTo.lastIndexOf('class="radio')
+        assert.ok(at > -1, 'no metal control before ' + label)
+        return upTo.slice(upTo.lastIndexOf('<', at))
+    }
+    const liveLink = (filters, label) => control(filters, label).startsWith('<a class="radio')
+    const filtersOf = (body) => {
+        const found = body.split('class="filters"')[1]
+        assert.ok(found !== undefined, 'the page rendered no filter row at all')
+        return found.split('</div>')[0]
+    }
+
+    const path = '/?sale=all&band=any'
+    const filters = filtersOf((await fetchAll(opened, [path]))[path].body)
+
+    assert.match(control(filters, 'Silver'), /^<span class="radio off"/,
+        'a metal with no lots behind it is still offered as a live control')
+    assert.ok(filters.includes('Silver <span class="n">0</span>'),
+        'the dimmed control does not say why it is dimmed')
+
+    /*  Gold has to stay clickable in the same breath. An assertion that only
+        looks for "radio off" is equally satisfied by a page that dimmed BOTH
+        controls, which is not a filter row, it is a dead end. */
+    assert.ok(liveLink(filters, 'Gold'),
+        'gold was dimmed too, leaving no way to filter at all')
+
+    /*  And the other dead end: narrow to the empty metal deliberately. The
+        control you are standing on must not go dim under you, and there must
+        still be a way out. */
+    const narrowed = '/?sale=all&band=any&metal=XAG'
+    const onSilver = filtersOf((await fetchAll(opened, [narrowed]))[narrowed].body)
+    assert.ok(liveLink(onSilver, 'Silver'),
+        'the metal you narrowed to went dim under you')
+    assert.ok(liveLink(onSilver, 'Gold'),
+        'no way back to the metal that has lots in it')
+    opened.db.close()
+})
+
+test('the metal count is narrowed by the other filters, never by itself', async () => {
+    /*  THE ASSERTION THAT SEPARATES THIS FROM THE OBVIOUS WRONG VERSION.
+
+        Counted after the metal filter - which is the natural way to write it,
+        off `priced` rather than off `opportunities` - the metal you have not
+        selected always reads zero. Every other assertion in this file passes
+        for that implementation, because a fixture usually has the unselected
+        metal empty anyway. This one has two silver lots sitting behind a gold
+        selection, and they have to be counted. */
+    const opened = twoSeriesStore()
+    const path = '/?sale=all&band=any&metal=XAU'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const filters = body.split('class="filters"')[1].split('</div>')[0]
+
+    const shown = /Silver <span class="n">(\d+)<\/span>/.exec(filters)
+    assert.ok(shown !== null, 'the silver toggle carries no count')
+    assert.ok(Number(shown[1]) > 0,
+        'silver reads ' + shown[1] + ' while gold is selected: the count was taken after the ' +
+        'metal filter, so it can never be turned on')
+    opened.db.close()
+})
+
+test('the metal count describes the view you are on, exactly', async () => {
+    /*  Four views draw from four populations, so one count printed on all of
+        them is a fact about the scanner sitting beside the sold list.
+
+        Asserted as exact numbers rather than as "these differ": a pair of
+        different numbers is satisfied by any two implementations that happen
+        to disagree, including one that crashes a count to zero. The fixture
+        is built so all four are different, which is what makes the exact
+        form worth having. */
+    const opened = bothMetalsStore()
+    const EXPECTED = [
+        { view: '', gold: 3, why: 'two live auctions and one Best Offer lot' },
+        { view: 'view=offers', gold: 1, why: 'one lot within reach of its ceiling' },
+        { view: 'view=sold', gold: 4, why: 'four resolved sales' },
+        { view: 'view=ending', gold: 2, why: 'the two auctions closing inside the window' }
+    ]
+
+    for (const { view, gold, why } of EXPECTED) {
+        const path = '/?sale=all&band=any' + (view ? '&' + view : '')
+        const body = (await fetchAll(opened, [path]))[path].body
+        const filters = body.split('class="filters"')[1].split('</div>')[0]
+        const found = /Gold <span class="n">(\d+)<\/span>/.exec(filters)
+        assert.ok(found !== null, 'no gold count on ' + path)
+        assert.strictEqual(Number(found[1]), gold,
+            path + ' counts ' + found[1] + ' gold lots; it draws from ' + why +
+            ', so it should count ' + gold)
+    }
+    opened.db.close()
+})
+
+/*  Gold and nothing else, so the silver toggle has genuinely nothing behind
+    it - the state the owner was looking at. Half the lots fixed-price: a coin
+    type reaches `markets` only with a clearing price or something on the
+    shelf, and with neither the page early-returns to "nothing tracked yet"
+    and has no filter row to test at all. */
+function goldOnlyStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    for (let n = 0; n < 6; n++) {
+        const id = 'v1|gold' + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'gold' + n, title: 'GB.SOV.BULLION.FULL example ' + n,
+            buyingOptions: n % 2 === 0 ? 'AUCTION' : 'FIXED_PRICE',
+            endTime: n % 2 === 0 ? soon : null,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(id, { price: 800 + n, shipping: 4, observedAt: now })
+        repository.saveClassification(id, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+    }
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
 test('the tick sits beside the title, not inside it', async () => {
     const opened = scannerStore()
     const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
