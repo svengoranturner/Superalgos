@@ -632,6 +632,14 @@ nav.bar .rates {
 .filter-divider { width: 1px; height: 20px; background: var(--color-divider); margin: 0 var(--space-2) }
 .btn.pill { font-size: 12px; padding: 4px 10px; text-decoration: none }
 .btn.pill .n { font-variant-numeric: tabular-nums; opacity: .75 }
+/*  How much of that figure the page actually read, said under it rather than
+    only in the tooltip - a capped page and a complete one otherwise look
+    identical, which is the same fault the per-series cap note exists for. */
+.summary .cell-note {
+  font-size: 11px; margin-top: 2px;
+  color: color-mix(in srgb, var(--color-text) 45%, transparent);
+  font-variant-numeric: tabular-nums;
+}
 
 /*  Silver and gold are links wearing the system's radio dot: the row is
     otherwise navigation, and a checkbox here would need a form and a submit

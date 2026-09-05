@@ -1644,6 +1644,57 @@ exports.newRepository = function (db, options) {
             )
         },
 
+        /*
+            HOW MANY THERE ACTUALLY ARE, which is not how many came back.
+
+            liveListings caps at 500 and the summary strip printed the length
+            of what it got under the label "Lots checked". Measured on the
+            live store the two numbers are a different kind of thing: 448 live
+            auctions, which is every one of them and never touches the cap, and
+            2,497 Buy-It-Now lots, of which the page reads 500 and called it
+            the market. Presenting a total and a fetch size in the same cell
+            in the same typeface is how a reader comes to trust the wrong one.
+
+            Every predicate the list applies, and no more: the scope's own
+            filters plus the tail's `s.price IS NOT NULL`, because a lot whose
+            latest snapshot has no price can never appear in the list at any
+            limit. What it does NOT carry is the ORDER BY, which is where the
+            list spends most of its time - a correlated spot lookup per row -
+            and the LIMIT, whose early-out it loses. Measured on the Pi: 57ms
+            against 1,080ms to materialise the same Buy-It-Now population.
+
+            DISTINCT because a listing filed under more than one level-0 key
+            would otherwise be counted once per key, which is the shape of
+            fault soldCount was written to avoid.
+        */
+        liveListingCount (saleType) {
+            const format = saleType === 'bin'
+                ? "AND l.buying_options NOT LIKE '%AUCTION%'"
+                : (saleType === 'all' ? '' : "AND l.buying_options LIKE '%AUCTION%'")
+            const row = db.prepare(`
+                SELECT COUNT(DISTINCT li.browse_id) AS n
+                FROM listing_instrument li
+                JOIN instrument i ON i.key = li.key AND i.level = 0
+                JOIN listing l ON l.browse_id = li.browse_id
+                LEFT JOIN (
+                    SELECT browse_id, MAX(observed_at) AS observed_at
+                    FROM listing_snapshot GROUP BY browse_id
+                ) newest ON newest.browse_id = li.browse_id
+                LEFT JOIN listing_snapshot s
+                    ON s.browse_id = newest.browse_id AND s.observed_at = newest.observed_at
+                WHERE (l.end_time IS NULL OR l.end_time > ?1)
+                  ${format}
+                  AND l.last_seen > ?2
+                  AND s.price IS NOT NULL
+                  AND NOT EXISTS (SELECT 1 FROM listing_outcome o
+                                  WHERE o.browse_id = li.browse_id)
+            `).get(
+                new Date().toISOString(),
+                new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString()
+            )
+            return row === undefined ? 0 : row.n
+        },
+
         /*  What every existing caller meant. Kept so a reader looking for
             "the live auctions" still finds a function with that name. */
         liveAuctions (limit) {

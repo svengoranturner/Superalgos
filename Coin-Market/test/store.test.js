@@ -873,6 +873,107 @@ test('the uplift curve is recomputed when an outcome resolves, and not otherwise
     every composition, the menu-bar counts and the tracked-type set were being
     thrown away and rebuilt from cold at that rate.
 */
+/*
+    A COUNT OF THE SHELF, NOT OF WHAT CAME BACK.
+
+    liveListings caps, and the summary strip printed the length of the capped
+    array under a label that read as a total. Measured on the live store the
+    two are a different kind of thing: 448 live auctions, which is all of them,
+    beside 2,497 Buy-It-Now lots of which the page read 500.
+*/
+test('the live count counts what is there, not what was fetched', () => {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    for (let n = 0; n < 12; n++) {
+        const id = 'v1|live' + n + '|0'
+        repository.saveListing({
+            browseId: id, legacyId: 'live' + n, title: 'lot ' + n,
+            buyingOptions: 'AUCTION', endTime: soon,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(id, { price: 800 + n, shipping: 0, observedAt: now })
+        repository.saveClassification(id, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+    }
+
+    /*  THE FIXTURE HAS TO EXCEED THE LIMIT, or the count and the fetch agree
+        and every assertion here passes for `return liveListings(...).length` -
+        which is the implementation being replaced. Twelve against a limit of
+        five. */
+    assert.strictEqual(repository.liveListings(5, 'auction').length, 5,
+        'the limit is not biting, so this test cannot tell a count from a fetch')
+    assert.strictEqual(repository.liveListingCount('auction'), 12,
+        'the count came back as the fetch size rather than as a count')
+    db.close()
+})
+
+test('the count and the list describe the same shelf', () => {
+    /*  A count that names a bigger number than the thing it counts is worse
+        than the fetch limit it replaced. One row for each way the list drops
+        a lot, and each asserted absent individually - a fixture where
+        everything qualifies would make the two agree for a count missing a
+        whole predicate. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const soon = new Date(Date.now() + 3600000).toISOString()
+    const longAgo = new Date(Date.now() - 40 * 86400000).toISOString()
+
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(longAgo, 'XAU', 3290, null, 'test')
+
+    const put = (id, opts) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: 'AUCTION',
+            endTime: opts.endTime === undefined ? soon : opts.endTime,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, opts.lastSeen || now)
+        if (opts.priced !== false) {
+            repository.saveSnapshot(browseId, { price: 900, shipping: 0, observedAt: now })
+        }
+        repository.saveClassification(browseId, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+            0.9, 'title', 0.2354, {})
+        if (opts.resolved) {
+            repository.saveOutcome(browseId, {
+                endTime: longAgo, sold: true, finalPrice: 900, shipping: 0, bidCount: 3,
+                saleType: 'AUCTION', censored: false, source: 'trading_getitem'
+            })
+        }
+        return browseId
+    }
+
+    put('keeper one', {})
+    put('keeper two', {})
+    put('keeper three', {})
+    put('already resolved', { resolved: true })
+    put('already ended', { endTime: longAgo })
+    put('not seen lately', { lastSeen: longAgo })
+    put('never priced', { priced: false })
+
+    const listed = repository.liveListings(1000, 'auction')
+    const titles = listed.map(r => r.title)
+    for (const gone of ['already resolved', 'already ended', 'not seen lately', 'never priced']) {
+        assert.ok(!titles.includes(gone), gone + ' is in the list, so it applies no such filter')
+    }
+    assert.strictEqual(listed.length, 3, 'the list kept ' + listed.length + ' rather than 3')
+
+    /*  The one that matters. If the count drifts from the list by so much as
+        one predicate, the strip names a bigger market than the page can show. */
+    for (const sale of ['auction', 'bin', 'all']) {
+        assert.strictEqual(repository.liveListingCount(sale),
+            repository.liveListings(1000, sale).length,
+            'the ' + sale + ' count and the ' + sale + ' list disagree about the same shelf')
+    }
+    db.close()
+})
+
 test('re-seeing a listing with the same answer changes nothing', () => {
     const db = newDatabase(':memory:')
     const repository = newRepository(db, { sellerSalt: 'test' })

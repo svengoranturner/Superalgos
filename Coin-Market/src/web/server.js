@@ -162,10 +162,28 @@ const SALE_NOUN = { auction: 'Auctions', bin: 'Buy-It-Now lots', all: 'Live lots
     they have been objecting to.
 */
 const STRIP_SCOPE = {
-    checked: (sale) => 'Every live ' +
+    /*  "Capped at the 500 closest to selling" was true of one view and wrong
+        on the other. A Buy-It-Now lot has no end time, so the first two terms
+        of the ordering tie and the ratio decides: those 500 are the cheapest
+        against their own metal, not the soonest to go.
+
+        Which way round it is matters, because it decides what the two cells
+        to the right are worth. Read cheapest-first, everything the cap left
+        out is dearer than everything it kept - so a count of near-spot lots
+        over that sample is the whole count and not a sample of one. Read
+        soonest-first there is no such argument and the figure is only ever
+        about the lots that were read. */
+    checked: (sale, read, capped) => 'Every live ' +
         (sale === 'auction' ? 'auction' : (sale === 'bin' ? 'Buy-It-Now lot' : 'lot')) +
-        ' filed under a coin type and seen by a recent sweep, before any filter on ' +
-        'this page. Capped at the 500 closest to selling.',
+        ' filed under a coin type, still seen by the sweep and carrying a price. A count ' +
+        'of the whole shelf, not of what this page read.' +
+        (capped
+            ? ' The page reads ' + read + ' of them' +
+              (sale === 'auction'
+                  ? ' - the soonest to close - and every figure to the right is over those.'
+                  : ' - the cheapest against their own metal - so the two figures to the ' +
+                    'right, which are about cheap lots, are complete rather than sampled.')
+            : ' Every one of them was read, so the figures to the right are over all of it.'),
     matching: (band) => 'Of those, the ones ' + BAND_PHRASE[band].replace(/^at /, '') +
         ' - after the metal, coin and search filters above, and after dropping ' +
         'anything you have already judged not to be the coin it claims. The list ' +
@@ -1609,6 +1627,17 @@ function marketPage (opened, url, reference) {
         opportunities.sort(ROW_SORTS[scanOrder].compare)
     }
 
+    /*  THE SHELF, AS OPPOSED TO WHAT WAS READ OF IT.
+
+        `considered` is the length of a capped fetch, and it was labelled
+        "checked" - which reads as a count of the market. On auctions the two
+        happen to agree, because 448 is under the cap and always has been; on
+        Buy-It-Now the page was reading 500 of 2,497 and saying so nowhere on
+        the page, only in a tooltip. 57ms, measured, for the difference
+        between a number and a fetch size. */
+    const liveCount = repository.liveListingCount(sale)
+    const liveCapped = liveCount > considered
+
     /*  Kept before the coin filter, because the picker's options are built
         from it - so it always offers what is actually there. */
     const scanBeforeMetal = opportunities.filter(row => matchesSearch(row, pageTerms))
@@ -2135,9 +2164,12 @@ what it has already found.">Rescan</a>
 
 <div class="summary">
   <div class="cell">
-    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.checked(sale))}">${
-      sale === 'auction' ? 'Auctions' : 'Lots'} checked</div>
-    <div class="cell-figure">${considered}</div>
+    <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.checked(sale, considered, liveCapped))}">${
+      sale === 'auction' ? 'Auctions' : 'Lots'} live</div>
+    <div class="cell-figure">${liveCount}</div>
+    ${liveCapped
+        ? '<div class="cell-note">' + considered + ' read</div>'
+        : ''}
   </div>
   <div class="cell">
     <div class="cell-label" title="${escapeHtml(STRIP_SCOPE.matching(band))}">${

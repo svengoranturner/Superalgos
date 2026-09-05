@@ -4390,8 +4390,13 @@ test('the scanner can be pointed at Buy-It-Now lots', async () => {
 
     assert.match(pages['/?sale=bin&band=any'].body, /<h2[^>]*>Buy-It-Now lots/,
         'the heading still calls them auctions')
-    assert.match(pages['/?sale=bin&band=any'].body, /Lots checked/,
-        'the summary strip still says auctions were checked')
+    /*  "checked" became "live" when the figure stopped being a fetch size
+        and became a count of the shelf. The claim is unchanged: on the
+        Buy-It-Now view the strip must not call them auctions. */
+    assert.match(pages['/?sale=bin&band=any'].body, /Lots live/,
+        'the summary strip still says auctions')
+    assert.ok(!/Auctions live/.test(pages['/?sale=bin&band=any'].body),
+        'the Buy-It-Now view labels its lots as auctions')
     opened.db.close()
 })
 
