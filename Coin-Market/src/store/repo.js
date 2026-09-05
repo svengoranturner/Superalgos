@@ -1317,8 +1317,21 @@ exports.newRepository = function (db, options) {
             MAX would miss, and the MAX catches a correction the count would.
 
             37ms on the live store, against the 2.2s it decides whether to
-            spend. It reads no snapshot table: listing.last_seen already moves
-            on every sweep, and that is what admits or drops an active lot.
+            spend.
+
+            THE LISTING TABLE IS DELIBERATELY NOT HERE. MAX(last_seen) moves
+            every time the collector touches a lot, so including it made the
+            memo miss on every request for the whole length of a sweep - which
+            is how it was first written, and it profiled as though the cache
+            did not exist. A new or re-seen listing is instead picked up by the
+            minute in the memo's own key, so the page can be at most sixty
+            seconds behind the collector on which lots are live. That is the
+            same bound already accepted for an auction reaching its end time,
+            and it sits against a sweep that runs hourly.
+
+            Everything that is still here invalidates INSTANTLY, which is what
+            the verdict loop needs and what the minute must not be trusted
+            with.
 
             NOT A TTL, and not memoised on one either. A verdict POSTs and
             redirects to a GET within about fifty milliseconds, and the whole
@@ -1340,12 +1353,10 @@ exports.newRepository = function (db, options) {
                   (SELECT COUNT(*) || ':' || COALESCE(MAX(observed_at), '-')
                      FROM spot) AS spot,
                   (SELECT COUNT(*) || ':' || COALESCE(MAX(updated_at), '-')
-                     FROM setting) AS settings,
-                  (SELECT COUNT(*) || ':' || COALESCE(MAX(last_seen), '-')
-                     FROM listing) AS listings
+                     FROM setting) AS settings
             `).get()
             return [r.outcomes, r.labels, r.rules, r.classified,
-                r.spot, r.settings, r.listings].join('|')
+                r.spot, r.settings].join('|')
         },
 
         outcomeWatermark () {
