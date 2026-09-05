@@ -1627,23 +1627,19 @@ function soldControls (sale) {
 */
 function bulkBar (rows, hint) {
     const words = SERIES.words(rows)
-    /*  The same tick and cross, and the word SELECTED kept on the face of
-        them.
+    /*  A tick and a cross. The same pair as every row, at the same size.
 
-        These act on everything ticked rather than on the row beside them, and
-        two icon buttons that look exactly like the per-row pair but do
-        something much larger is the one place where matching the row exactly
-        would be worse than the wording it replaces. The verdict is the icon,
-        as everywhere else; the scope is the word. The coin the batch is being
-        judged as - "Not a sovereign", "Not a silver dollar" - moves into the
-        tooltip, which is where the same wording went on the row buttons. */
+        These act on the ticked batch rather than on one row, and that scope
+        lives in the tooltip and in the hint beside them - not on the face of
+        the button, where it read as "cross selected" and was exactly the
+        AI-written clutter the owner has been stripping out of this UI. */
     return '<div class="bulkbar">' +
-        '<button class="btn btn-secondary no" name="bulk" value="' +
+        '<button class="btn btn-secondary icon-btn no" name="bulk" value="' +
         LEARNED.VERDICT.NOT_TRACKED + '" title="' + escapeHtml(words.notOne) +
-        ' - everything ticked">' + RENDER.icon('cross') + ' selected</button>' +
-        '<button class="btn btn-secondary yes" name="bulk" value="' +
+        ' - everything ticked">' + RENDER.icon('cross') + '</button>' +
+        '<button class="btn btn-secondary icon-btn yes" name="bulk" value="' +
         LEARNED.VERDICT.TRACKED + '" title="Genuine - everything ticked">' +
-        RENDER.icon('check') + ' selected</button>' +
+        RENDER.icon('check') + '</button>' +
         (hint ? '<span class="thin">' + hint + '</span>' : '') +
         '</div>'
 }

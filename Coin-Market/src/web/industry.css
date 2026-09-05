@@ -338,6 +338,10 @@ input.pick { width:16px; height:16px; margin-top:20px; accent-color:var(--critic
 .strip select { padding:5px 8px }
 .strip button { font-size:13px; padding:5px 12px }
 .bulkbar button { font-size:13px; padding:5px 12px }
+/*  `.bulkbar button` is a class AND a type, so it outspecifies `.icon-btn` and
+    was squeezing 12px of padding into a 28px square. The batch buttons are the
+    row pair at the row's size; nothing about being a batch makes them wider. */
+.bulkbar .icon-btn { padding: 0 }
 /*  Composition bars. Plain flex rather than SVG: the quantity is a share of
     a whole, a rectangle divided by percentage says exactly that, and it
     reflows on a phone without any viewBox arithmetic. */

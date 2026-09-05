@@ -1530,8 +1530,6 @@ test('a Morgan queue is worded and offered in Morgan terms', async () => {
         must not be mistaken for the row beside it. */
     assert.ok(body.includes('title="Not a silver dollar - everything ticked"'),
         'the bulk bar does not name the coin it acts on')
-    assert.ok(body.includes('selected</button>'),
-        'the batch button no longer says what it acts on')
     assert.ok(body.includes('title="Not a silver dollar"'),
         'the per-row reject button does not name the coin')
 
@@ -1563,8 +1561,6 @@ test('a sovereign queue still reads exactly as it did', async () => {
         must not be mistaken for the row beside it. */
     assert.ok(body.includes('title="Not a sovereign - everything ticked"'),
         'the sovereign wording regressed')
-    assert.ok(body.includes('selected</button>'),
-        'the batch button no longer says what it acts on')
     assert.ok(body.includes('title="Not a sovereign"'),
         'the per-row button lost its wording')
     /*  Order matters as much as membership: this is the order the dropdown
@@ -3089,11 +3085,12 @@ test('every verdict button in the app is the same tick and cross', async () => {
             assert.ok(button.includes('<svg'),
                 what + ' has a verdict button with no icon in it: ' + button.slice(0, 90))
 
-            /*  The face carries an icon and, on a batch button, the one word
-                that says it acts on the ticked rows. Anything else is the old
-                worded button growing back. */
+            /*  The face carries the icon and NOTHING else. The batch buttons
+                briefly read "cross selected", which is the AI-written clutter
+                this UI keeps having stripped out of it; what a button acts on
+                belongs in its tooltip. */
             const face = button.replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, '').trim()
-            assert.ok(face === '' || face === 'selected',
+            assert.strictEqual(face, '',
                 what + ' has a worded verdict button reading "' + face + '"')
         }
     }
@@ -3102,19 +3099,19 @@ test('every verdict button in the app is the same tick and cross', async () => {
     opened.db.close()
 })
 
-test('a batch button still says it acts on the selection', async () => {
-    /*  The one place the row pair is NOT copied exactly. Two icon buttons that
-        look like the per-row pair but act on everything ticked would be the
-        same picture for a much larger action. */
+test('a batch button says what it acts on in its tooltip, not on its face', async () => {
+    /*  It is the row pair, at the row's size. What it acts on is a tooltip and
+        the hint beside it - putting it on the button gave "cross selected". */
     const opened = twoSeriesStore()
     const body = (await fetchAll(opened, ['/review']))['/review'].body
 
     const bulk = body.match(/<button[^>]*name="bulk"[^>]*>[\s\S]*?<\/button>/g) || []
     assert.strictEqual(bulk.length, 2, 'expected a pair of batch buttons, found ' + bulk.length)
     for (const button of bulk) {
-        assert.ok(button.includes('selected'),
-            'a batch button does not say it acts on the selection: ' + button.slice(0, 90))
-        assert.ok(/title="[^"]+"/.test(button), 'a batch button has no tooltip saying what it does')
+        assert.match(button, /title="[^"]*everything ticked"/,
+            'a batch button does not say what it acts on: ' + button.slice(0, 90))
+        assert.ok(button.includes('icon-btn'),
+            'a batch button is not the same icon button as the row pair')
     }
     opened.db.close()
 })
