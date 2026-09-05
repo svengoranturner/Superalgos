@@ -610,7 +610,7 @@ function marketPage (opened, url, reference) {
         the page is showing. */
     const compositions = () => seriesBlocks.map(block => ({
         block,
-        composition: repository.marketComposition(seriesBlocks.length > 1 ? block.id : null)
+        composition: view.compositionFor(seriesBlocks.length > 1 ? block.id : null)
     }))
 
     /*  The reference pages are built from these and nothing else, so they

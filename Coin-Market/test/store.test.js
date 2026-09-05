@@ -1006,3 +1006,22 @@ test('the market memo expires with the clock, not only with writes', () => {
         'the memo survived a minute, so an auction can look live after it has ended')
     db.close()
 })
+
+test('the composition is cached on the same watermark as the markets', () => {
+    /*  Six COUNTs over every listing, run once per series - 517ms of an
+        1,100ms render once everything else was fixed. Same tables, same
+        watermark, so it must invalidate on the same events. */
+    const { db, repository, view } = marketStore()
+
+    const before = view.compositionFor(null)
+    assert.strictEqual(view.compositionFor(null), before,
+        'the composition was recomputed with nothing changed')
+
+    repository.label({
+        legacyId: 'mm0', title: 'Gold Sovereign 0', verdict: 'NOT_TRACKED',
+        denomination: null, note: null, source: 'test', quantity: 1, series: 'GB.SOV'
+    })
+    assert.notStrictEqual(view.compositionFor(null), before,
+        'a verdict did not invalidate the composition')
+    db.close()
+})

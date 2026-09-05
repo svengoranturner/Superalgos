@@ -70,6 +70,25 @@ exports.newMarketView = function (repository, spotAt, options) {
         which is the whole reason marketsFor exists rather than a cache
         hidden inside forInstrument. */
     let marketMemo = { stamp: null, byKey: new Map() }
+    let compositionMemo = { stamp: null, byId: new Map() }
+
+    /*  The stamp, read fresh on every question.
+
+        The watermark costs 37ms and a page asks four of these - two series of
+        markets, two of composition - so 148ms goes on deciding whether to
+        spend about 2.7s. Worth it, and the alternative was measured and
+        rejected.
+
+        CACHING THE STAMP FOR ONE TURN OF THE EVENT LOOP WAS TRIED. It is
+        correct in production, where a verdict POSTs and the redirect is a new
+        request and so a new tick - and it broke all four invalidation tests
+        at once, because a test writes and reads back inside a single turn.
+        That is not a test artefact worth working around: it is the shape of
+        the bug that cache would cause the first time anything wrote and
+        re-rendered without going round the network, and a decision written
+        into the store but not shown to the reader is the failure this whole
+        memo is not allowed to have. 148ms is the price of it never being
+        possible. */
 
     return {
         /*  Several coin types at once, computed once per change.
@@ -92,6 +111,27 @@ exports.newMarketView = function (repository, spotAt, options) {
                 out.set(key, marketMemo.byKey.get(key))
             }
             return out
+        },
+
+        /*  What one series' market is made of, cached like the markets are.
+
+            Six COUNTs over 29,672 listings, each with a correlated EXISTS, run
+            once per series: 517ms of an 1,100ms render once everything else
+            was fixed. It is derived from the same tables under the same
+            watermark, so it invalidates on exactly the same events - and it
+            carries the minute for the same reason marketsFor does, since two
+            of the six count what is live and that changes as auctions end.
+        */
+        compositionFor (seriesId, now) {
+            const asOf = now === undefined ? Date.now() : new Date(now).getTime()
+            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / 60000)
+            if (compositionMemo.stamp !== stamp) { compositionMemo = { stamp, byId: new Map() } }
+
+            const id = seriesId === undefined || seriesId === null ? '' : String(seriesId)
+            if (!compositionMemo.byId.has(id)) {
+                compositionMemo.byId.set(id, repository.marketComposition(seriesId))
+            }
+            return compositionMemo.byId.get(id)
         },
 
         forInstrument (key, now) {
