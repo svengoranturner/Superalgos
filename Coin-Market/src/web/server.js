@@ -954,7 +954,7 @@ function marketPage (opened, url, reference) {
         different quantities and always have been: the opportunities panel
         has its own ending-soonest tabs, and this is the sold table's.
     */
-    const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title']
+    const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title', 'ident']
     const pageTerms = searchTerms(url)
     const soldControlled = applyRowControls(allSales, url, SOLD_SORTS, 'newest')
     const sales = soldControlled.rows
@@ -1111,16 +1111,47 @@ function marketPage (opened, url, reference) {
                   '</tr>'
     }
 
+    /*  Its ordering already went through ?order= and a select at the top of
+        the page; the headers now reach the same keys, so the two controls
+        drive one parameter rather than sitting beside each other doing the
+        same job by different means. */
+    const SOLD_COLUMNS = [
+        {}, {},
+        { label: 'Sold', key: 'newest', back: 'oldest' },
+        { label: 'Coin type', key: 'ident' },
+        { label: 'Price', key: 'dearest', back: 'cheapest' },
+        { label: 'How it sold',
+            title: 'How it sold. A number is an auction and says how contested it was. ' +
+                'A Buy-It-Now was bought outright at the asking price. Offers allowed means ' +
+                'the seller took offers, so the lot went for that price or less and eBay ' +
+                'will not say which.' },
+        /*  No key. The premium is worked out while the row renders and is not
+            on the row, so there is nothing here to order by - and a header
+            that looks clickable and does nothing is worse than a plain one. */
+        { label: 'Premium over spot' },
+        {}
+    ]
     const soldTable = (rows) =>
-        '<div class="card scroll"><table><thead><tr><th></th><th></th><th>Sold</th>' +
-        '<th>Coin type</th><th>Price</th><th title="How it sold. A number is an ' +
-        'auction and says how contested it was. A Buy-It-Now was bought outright at the ' +
-        'asking price. Offers allowed means the seller took offers, so the lot went for ' +
-        'that price or less and eBay will not say which.">How it sold</th>' +
-        '<th>Premium over spot</th><th></th>' +
-        '</tr></thead><tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
+        '<div class="card scroll"><table>' +
+        sortableHead(SOLD_COLUMNS, soldControlled.order,
+            (key) => filterHref({ view: 'sold', order: key })) +
+        '<tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
 
-    const salesHtml = sales.length === 0
+    /*  A THUNK, and the reason is scope rather than taste.
+
+        The sold table's headers link through filterHref, a const declared
+        much further down this function - so building this markup eagerly
+        reached into that const's temporal dead zone and every page carrying a
+        sold table answered 500. Deferring it to the one place it is consumed
+        is smaller than hoisting six parameter reads, and it reads better: the
+        sold markup is built where the sold view is.
+
+        Hoisting filterHref instead does NOT work, and it is worth saying why:
+        a function declaration would hoist, but the values it closes over -
+        the sale type, the band, the coin filter - are consts declared later
+        and would still be unreachable. The order of the reads is the
+        constraint, not the shape of the builder. */
+    const salesHtml = () => sales.length === 0
         ? '<p class="thin">No completed sales resolved yet.</p>'
         : '<form method="post" action="/apply">' +
           '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
@@ -1158,7 +1189,26 @@ function marketPage (opened, url, reference) {
         of all long gaps in this store begin at one collector outage, and a
         clock rule would have blanked these panels because of it. */
     const sweepAt = repository.lastSweepAt()
-    const sort = url.searchParams.get('sort') === 'spot' ? 'spot' : 'ending'
+    /*  ONE PARAMETER FOR EVERY TABLE.
+
+        There were two conventions: `?order=` driving a select on the sold
+        list, the review queue and the drill-down, and `?sort=ending|spot`
+        driving a pair of links on the scanner. They did not interoperate -
+        one builder dropped the other's parameter - so ordering a table could
+        silently reset a filter set beside it.
+
+        `?order=` is the survivor, and the scanner's two orderings are two
+        entries in the same registry as everybody else's. `?sort=spot` is
+        still read so a bookmark keeps working. */
+    const SCAN_SORTS = ['ending', 'latest', 'vsspot', 'overspot', 'dearest', 'cheapest',
+        'title', 'ident', 'spot', 'bids']
+    const legacySort = url.searchParams.get('sort') === 'spot' ? 'vsspot' : null
+    const scanOrder = SCAN_SORTS.includes(url.searchParams.get('order'))
+        ? url.searchParams.get('order')
+        : (legacySort || 'ending')
+    /*  Kept for the segmented control, which still offers the two orderings
+        that answer "what do I do next" rather than all ten. */
+    const sort = scanOrder === 'vsspot' ? 'spot' : 'ending'
     const sale = saleFromScan(url)
     const band = bandFrom(url, scanView)
     const coin = coinFrom(url)
@@ -1203,6 +1253,10 @@ function marketPage (opened, url, reference) {
                 return Object.assign({}, row, {
                     total,
                     metalValue,
+                    /*  Named `spotValue` for the column that sorts on it -
+                        `metalValue` is the same number and stays, because the
+                        pricing code has always called it that. */
+                    spotValue: metalValue,
                     ratio: metalValue > 0 ? total / metalValue : null
                 })
             })
@@ -1235,9 +1289,7 @@ function marketPage (opened, url, reference) {
             End times are ISO 8601 UTC and sort correctly as text, so no date
             parsing is needed. liveAuctions requires a non-null end_time.
         */
-        opportunities.sort(sort === 'spot'
-            ? (a, b) => a.ratio - b.ratio
-            : (a, b) => String(a.endTime).localeCompare(String(b.endTime)))
+        opportunities.sort(ROW_SORTS[scanOrder].compare)
     }
 
     /*  Kept before the coin filter, because the picker's options are built
@@ -1449,16 +1501,9 @@ function marketPage (opened, url, reference) {
     /*  Ending soonest or cheapest against spot, as a segmented control
         rather than the pill tabs it used to be. Same two orderings, same two
         parameters - only the shape changed. */
-    const sortHref = (value) => {
-        const params = []
-        if (scanView !== 'nearSpot') { params.push('view=' + scanView) }
-        if (value !== null) { params.push('sort=' + value) }
-        if (metals.length === 1) { params.push('metal=' + metals[0]) }
-        if (within !== WITHIN_DEFAULT) { params.push('within=' + within) }
-        if (sale !== 'auction') { params.push('sale=' + sale) }
-        if (band !== bandDefault(scanView)) { params.push('band=' + band) }
-        return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
-    }
+    /*  Through filterHref like everything else, so choosing an ordering
+        keeps the filters and vice versa. This used to build its own URL. */
+    const sortHref = (value) => filterHref({ order: value === 'spot' ? 'vsspot' : 'ending' })
 
     /*  How far ahead to look, on the ending view only. Four options because
         the hour it used to be is usually empty and a day is usually too many;
@@ -1475,6 +1520,7 @@ function marketPage (opened, url, reference) {
                 but a link that changes the metal had no reason to throw them
                 away, and did. */
             q: url.searchParams.get('q'), order: url.searchParams.get('order')
+                || (legacySort === null ? null : legacySort)
         }
         const next = Object.assign({}, now, changes)
         const params = []
@@ -1588,7 +1634,8 @@ function marketPage (opened, url, reference) {
     const VIEW_BODIES = {
         nearSpot: shown.length === 0
             ? opportunityHtml
-            : scanTable(shown, opportunityVerdict, sweepAt, whereYouAre(url)),
+            : scanTable(shown, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
+                (key) => filterHref({ order: key })),
         /*  The offers panel keeps its own row renderer: its whole point is
             the suggested figure and what it is measured against, which is a
             second price column the scanner table does not have. */
@@ -1605,13 +1652,14 @@ function marketPage (opened, url, reference) {
               'it, with no way to tell which. They are marked <em>at most</em>. A plain ' +
               'Buy-It-Now, with no offers allowed, does carry an exact price and will appear ' +
               'here as one.</p>'
-            : '') + salesHtml,
+            : '') + salesHtml(),
         /*  No empty-state sentence. The pill carries the count and the window
             control says what was asked for; a paragraph explaining that an
             empty list is empty is the kind of prose this UI keeps growing. */
         ending: endingSoon.length === 0
             ? ''
-            : scanTable(endingSoon, opportunityVerdict, sweepAt, whereYouAre(url))
+            : scanTable(endingSoon, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
+                (key) => filterHref({ order: key }))
     }
     const viewBody = VIEW_BODIES[scanView]
 
@@ -2570,7 +2618,58 @@ const ROW_SORTS = {
     title: {
         label: 'By title',
         compare: (a, b) => String(a.title || '').localeCompare(String(b.title || ''))
+    },
+
+    /*  The dimensions the COLUMNS need, which the eight above did not cover -
+        there was no way to order by what a coin was identified as, by how far
+        it sits from spot, or by when it closes, because nothing had ever
+        asked for one. Each is null-last: a row missing the field sorts to the
+        bottom rather than to the top, where it would push the answer off the
+        screen. */
+    ident: {
+        label: 'By coin type',
+        compare: (a, b) => String(a.instrumentKey || a.bestGuess || '\uffff')
+            .localeCompare(String(b.instrumentKey || b.bestGuess || '\uffff'))
+    },
+    spot: {
+        label: 'By spot value',
+        compare: (a, b) => numberAsc(a.spotValue, b.spotValue)
+    },
+    ending: {
+        /*  ISO 8601 sorts as text, so no date parsing. Lots with no end time -
+            a Buy-It-Now is Good-'Til-Cancelled - go last rather than first. */
+        label: 'Ending soonest',
+        compare: (a, b) => String(a.endTime || '\uffff').localeCompare(String(b.endTime || '\uffff'))
+    },
+    latest: {
+        label: 'Ending last',
+        compare: (a, b) => String(b.endTime || '').localeCompare(String(a.endTime || ''))
+    },
+    vsspot: {
+        label: 'Cheapest vs spot',
+        compare: (a, b) => numberAsc(a.ratio, b.ratio)
+    },
+    overspot: {
+        label: 'Dearest vs spot',
+        compare: (a, b) => numberDesc(a.ratio, b.ratio)
+    },
+    bids: {
+        label: 'Most bids',
+        compare: (a, b) => numberDesc(a.bidCount, b.bidCount)
     }
+}
+
+/*  Null-last in both directions. Written once because every comparator above
+    needs it and three of them had already grown their own copy. */
+function numberAsc (a, b) {
+    const av = Number.isFinite(a) ? a : Infinity
+    const bv = Number.isFinite(b) ? b : Infinity
+    return av - bv
+}
+function numberDesc (a, b) {
+    const av = Number.isFinite(a) ? a : -Infinity
+    const bv = Number.isFinite(b) ? b : -Infinity
+    return bv - av
 }
 
 /*  When a row happened. A live listing is dated by when it appeared; a
@@ -2593,6 +2692,42 @@ function rowTotal (row) {
 function sortFrom (url, allowed, fallback) {
     const asked = url === undefined ? null : url.searchParams.get('order')
     return allowed.includes(asked) ? asked : fallback
+}
+
+/*
+    A COLUMN YOU CAN CLICK.
+
+    Nothing in this app was sortable by its header - there was no <th>
+    anywhere containing a link. Ordering happened in a <select> at the top of
+    the page, which works but means reading the list, looking away, choosing
+    from eight labels, and submitting.
+
+    Links rather than a control, because there is no script here to submit a
+    form and a <th> is not inside one anyway. Each column names the sort it
+    turns on and the one it turns on when clicked again, so a second click
+    reverses rather than doing nothing.
+
+    `columns` is [{ label, key, back, className, title }]: `key` is the sort
+    this column selects, `back` its reverse, and either may be absent for a
+    column with no meaningful order - a thumbnail, a row of buttons. Those
+    stay plain, because a header that looks clickable and is not is worse than
+    one that does not.
+*/
+function sortableHead (columns, order, hrefFor) {
+    const cell = (c) => {
+        const cls = c.className ? ' class="' + escapeHtml(c.className) + '"' : ''
+        const tip = c.title ? ' title="' + escapeHtml(c.title) + '"' : ''
+        if (!c.key) { return '<th' + cls + tip + '>' + (c.label || '') + '</th>' }
+
+        /*  Clicking the column you are already on reverses it, where there is
+            a reverse to go to. */
+        const active = order === c.key || (c.back && order === c.back)
+        const next = order === c.key && c.back ? c.back : c.key
+        const arrow = !active ? '' : (order === c.key ? ' \u2193' : ' \u2191')
+        return '<th' + cls + tip + '><a class="sortable' + (active ? ' on' : '') +
+            '" href="' + hrefFor(next) + '">' + (c.label || '') + arrow + '</a></th>'
+    }
+    return '<thead><tr>' + columns.map(cell).join('') + '</tr></thead>'
 }
 
 function applyRowControls (rows, url, allowed, fallback) {
@@ -2992,24 +3127,31 @@ function scanVerdict (row) {
         RENDER.icon('cross') + '</button>'
 }
 
-const SCAN_HEAD = '<thead><tr>' +
-    '<th class="pick-cell"></th>' +
-    '<th class="lot">Lot</th>' +
-    '<th class="ident">Identified as</th>' +
-    /*  Each header carries its own column's class, not just `figure`.
+/*  The scan table's columns, and which ordering each turns on.
 
-        Without them `th.spot` and `th.ends` matched nothing, so the narrow
-        breakpoints hid the CELLS and left the HEADERS - a table whose columns
-        no longer lined up with their titles, and 562px of it in a 390px
-        phone. */
-    '<th class="figure bid">Bid</th>' +
+    A pair per column where a reverse makes sense, so clicking Bid twice gives
+    you cheapest and dearest rather than one of them and nothing.
+
+    Each header keeps its own column's class, and that is load-bearing rather
+    than tidy: without them `th.spot` and `th.ends` matched nothing, so the
+    narrow breakpoints hid the CELLS and left the HEADERS - a table whose
+    columns no longer lined up with their titles, and 562px of it in a 390px
+    phone. */
+const SCAN_COLUMNS = [
+    { className: 'pick-cell' },
+    { label: 'Lot', className: 'lot', key: 'title' },
+    { label: 'Identified as', className: 'ident', key: 'ident' },
+    { label: 'Bid', className: 'figure bid', key: 'cheapest', back: 'dearest' },
     /*  "Spot", not "Melt" - the design is explicit about it, and the rest of
         this app has always said spot. */
-    '<th class="figure spot">Spot</th>' +
-    '<th class="figure delta">vs spot</th>' +
-    '<th class="figure ends">Ends</th>' +
-    '<th class="verdict-cell">Verdict</th>' +
-    '</tr></thead>'
+    { label: 'Spot', className: 'figure spot', key: 'spot' },
+    { label: 'vs spot', className: 'figure delta', key: 'vsspot', back: 'overspot' },
+    { label: 'Ends', className: 'figure ends', key: 'ending', back: 'latest' },
+    /*  Two buttons. Nothing to order by. */
+    { label: 'Verdict', className: 'verdict-cell' }
+]
+
+const SCAN_HEAD = sortableHead(SCAN_COLUMNS, null, () => '#')
 
 /*  `back` is where a verdict returns you.
 
@@ -3017,7 +3159,7 @@ const SCAN_HEAD = '<thead><tr>' +
     the other view that shares this table: judging a coin in "ending within the
     hour" bounced you to near-spot, losing the list you were working through.
     The caller knows which view it is rendering; this function does not. */
-function scanTable (rows, verdictCell, sweepAt, back) {
+function scanTable (rows, verdictCell, sweepAt, back, order, hrefFor) {
     if (rows.length === 0) {
         return '<p class="thin">Nothing here right now.</p>'
     }
@@ -3025,7 +3167,9 @@ function scanTable (rows, verdictCell, sweepAt, back) {
         '<input type="hidden" name="back" value="' + escapeHtml(back || '/') + '">' +
         bulkBar(rows, 'A wrong coin here is worth more than a dismissal: it is setting the ' +
             'clearing price every figure above is measured against.') +
-        '<div class="card scan-card"><table class="scan">' + SCAN_HEAD + '<tbody>' +
+        '<div class="card scan-card"><table class="scan">' +
+        (hrefFor === undefined ? SCAN_HEAD : sortableHead(SCAN_COLUMNS, order, hrefFor)) +
+        '<tbody>' +
         rows.map(row => scanRow(row, verdictCell, sweepAt)).join('') +
         '</tbody></table></div>' +
         '<p class="thin scan-note"><span class="ticked">' + RENDER.TICKED +

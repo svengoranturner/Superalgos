@@ -2824,10 +2824,18 @@ test('the scanner draws a dense table, not the tall queue cards', async () => {
     assert.ok(body.includes('<table class="scan">'), 'the scanner is not a table')
     assert.ok(body.includes('Gold Sovereign 1912 near spot'), 'the rows are missing')
     /*  Seven columns, and the fourth says Spot rather than Melt - the design
-        is explicit about the word. */
-    assert.ok(body.includes('>Spot</th>'), 'the spot column is missing or renamed')
-    assert.ok(!body.includes('>Melt</th>'), 'the column is called Melt')
-    assert.ok(body.includes('>Verdict</th>'))
+        is explicit about the word. The label sits inside a link now, because
+        the column is sortable, so this reads the head rather than the exact
+        tag it used to be. */
+    const head = (/<thead>[\s\S]*?<\/thead>/.exec(body) || [''])[0]
+    assert.match(head, /<th[^>]*class="figure spot"[^>]*>[\s\S]*?Spot/,
+        'the spot column is missing or renamed')
+    assert.ok(!/Melt/.test(head), 'the column is called Melt')
+    assert.ok(/Verdict/.test(head), 'the verdict column is missing')
+
+    /*  And it is a column you can click, which nothing in this app was. */
+    assert.match(head, /<a class="sortable[^"]*" href="[^"]+">Spot/,
+        'the spot column is not sortable')
     opened.db.close()
 })
 
@@ -3985,5 +3993,127 @@ test('the teach form writes an inclusion rule, not an exclusion', async () => {
         'it was meant to rescue')
     assert.strictEqual(rule.series, 'GB.SOV',
         'an inclusion rule must name what it includes into, got ' + rule.series)
+    opened.db.close()
+})
+
+/*
+    A COLUMN YOU CAN CLICK.
+
+    There was no <th> anywhere in this app containing a link. Ordering lived in
+    a select at the top of the page, which works but means reading the list,
+    looking away, and choosing from eight labels.
+
+    There were also two conventions that did not interoperate - ?order= on the
+    sold list, the queue and the drill-down, and ?sort=ending|spot on the
+    scanner - so ordering one table could silently reset a filter set beside
+    it. One parameter now.
+*/
+test('the scan table sorts from its own headers', async () => {
+    const opened = deepStore(6)
+    const body = (await fetchAll(opened, ['/?band=any']))['/?band=any'].body
+    const head = (/<thead>[\s\S]*?<\/thead>/.exec(body) || [''])[0]
+
+    const links = head.match(/<a class="sortable[^"]*" href="([^"]+)">([^<]*)</g) || []
+    assert.ok(links.length >= 5,
+        'only ' + links.length + ' columns are sortable; most of them should be')
+
+    /*  And a column with nothing to order by stays plain. */
+    assert.match(head, /<th class="verdict-cell"[^>]*>(?!<a)/,
+        'the verdict column offers a sort it cannot do')
+    opened.db.close()
+})
+
+test('clicking a column actually reorders the rows', async () => {
+    const opened = deepStore(6)
+    const cheap = '/?band=any&order=cheapest'
+    const dear = '/?band=any&order=dearest'
+    const pages = await fetchAll(opened, [cheap, dear])
+
+    /*  Read from INSIDE the cell, not across the whole page. The bid cell
+        carries the spot value in a data-spot attribute for the phone layout,
+        so a pattern anchored on the tag and then scanning forward finds that
+        attribute's number first and reports every row as identical - which is
+        exactly how this test first "passed" with two identical lists. */
+    const prices = (body) => (body.match(/<td class="figure bid"[\s\S]*?<\/td>/g) || [])
+        .map(cell => {
+            const text = cell.replace(/^<td[^>]*>/, '')
+            return Number((/£([\d,.]+)/.exec(text) || [0, '0'])[1].replace(/,/g, ''))
+        })
+
+    const up = prices(pages[cheap].body)
+    const down = prices(pages[dear].body)
+    assert.ok(up.length >= 3, 'not enough priced rows to tell an order from a coincidence')
+    assert.deepStrictEqual(up, up.slice().sort((a, b) => a - b), 'cheapest first is not sorted')
+    assert.deepStrictEqual(down, down.slice().sort((a, b) => b - a), 'dearest first is not sorted')
+    assert.notDeepStrictEqual(up, down, 'both orderings produced the same list: up=' + JSON.stringify(up) + ' down=' + JSON.stringify(down))
+    opened.db.close()
+})
+
+test('sorting a column keeps the filters, and filtering keeps the sort', async () => {
+    /*  The whole reason for one parameter. Ordering used to be built by a
+        different URL builder from the filters, so each dropped the other. */
+    const opened = deepStore(6)
+    const path = '/?band=any&sale=all&metal=XAU&order=dearest'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const head = (/<thead>[\s\S]*?<\/thead>/.exec(body) || [''])[0]
+    const sortLinks = (head.match(/href="([^"]+)"/g) || [])
+        .map(h => h.slice(6, -1).replace(/&amp;/g, '&'))
+    assert.ok(sortLinks.length > 0, 'no sortable headers to check')
+    for (const link of sortLinks) {
+        assert.ok(link.includes('band=any'), 'a column link dropped the price band: ' + link)
+        assert.ok(link.includes('sale=all'), 'a column link dropped the sale type: ' + link)
+    }
+
+    /*  And the other way: a filter link keeps the ordering. */
+    const filters = (/<div class="filters">[\s\S]*?<\/div>\s*(?:<form|<h2)/.exec(body) || [''])[0]
+    const filterLinks = (filters.match(/href="\/\?[^"]+"/g) || [])
+        .map(h => h.slice(6, -1).replace(/&amp;/g, '&'))
+    assert.ok(filterLinks.some(l => l.includes('order=dearest')),
+        'no filter link carried the ordering')
+    opened.db.close()
+})
+
+test('an old ?sort=spot link still works', async () => {
+    /*  The scanner's two orderings moved into the shared registry. A bookmark
+        must not answer with a different list. */
+    /*  Prices and end times deliberately DISAGREE. deepStore gives every lot
+        the same end time and rising prices, so ordering by either produces the
+        same sequence and the test cannot tell a working fallback from a
+        broken one - which is how it first passed against a mutation that
+        removed the fallback entirely. */
+    const opened = deepStore(0)
+    const now = new Date().toISOString()
+    const INSTRUMENTS2 = require('../src/catalogue/instruments.js')
+    const pack = SERIES.forKey('GB.SOV.BULLION.FULL').pack
+    const KEYS = [0, 1, 2, 3].map(level => ({
+        key: INSTRUMENTS2.keyAt({
+            denomination: 'FULL', pool: 'BULLION', portrait: 'EDWARD_VII',
+            year: 1905, mint: 'LONDON', gradeBand: 'UNC'
+        }, level, pack),
+        level
+    }))
+    ;[[900, 1], [820, 5], [860, 3]].forEach(([price, hours], n) => {
+        const browseId = 'v1|mix' + n + '|0'
+        opened.repository.saveListing({
+            browseId, legacyId: 'mix' + n, title: 'Gold Sovereign mix ' + n,
+            buyingOptions: 'AUCTION',
+            endTime: new Date(Date.now() + hours * 3600000).toISOString()
+        }, now)
+        opened.repository.saveSnapshot(browseId, { price, shipping: 0, bidCount: 2, observedAt: now })
+        opened.repository.setListingSeries(browseId, 'GB.SOV')
+        opened.repository.saveClassification(browseId, KEYS, 0.9, 'title', 0.2354, {})
+    })
+
+    const legacy = '/?band=any&sort=spot'
+    const current = '/?band=any&order=vsspot'
+    const byEnd = '/?band=any&order=ending'
+    const pages = await fetchAll(opened, [legacy, current, byEnd])
+
+    const ids = (body) => (body.match(/name="genuine" value="([^"]+)"/g) || []).join('|')
+    assert.notStrictEqual(ids(pages[current].body), ids(pages[byEnd].body),
+        'the fixture cannot tell the two orderings apart, so it proves nothing')
+    assert.strictEqual(ids(pages[legacy].body), ids(pages[current].body),
+        'an old sort=spot bookmark no longer produces the cheapest-vs-spot ordering')
     opened.db.close()
 })
