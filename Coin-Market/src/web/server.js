@@ -1735,6 +1735,57 @@ function marketPage (opened, url, reference) {
         rather than the twenty best silver offers. */
     const offers = offersBeforeMetal.filter(inMetals).slice(0, 20)
 
+    /*
+        WHAT YOUR LIMIT IS FOR THIS COIN, SAID ONCE.
+
+        The three facts that used to sit on every row and never varied within
+        a type: the ceiling as a premium, how long these take to sell, and how
+        many of them sell at all. Every one is a property of the coin type,
+        and repeating an invariant once per row is how a row becomes a wall of
+        small print - which is what the owner was reading.
+
+        The premium is taken from the ceiling itself rather than from the
+        offer, which is the same number by construction - suggestedOffer is
+        priceForCost(ceiling) less postage and the row adds postage back, so
+        the two cancel exactly - but saying it from the ceiling makes it
+        obvious it cannot vary between lots.
+    */
+    const offerHeading = (group) => {
+        const first = group.entries[0]
+        const ceiling = first.alert.bidCeiling
+        const priced = first.spot !== null && first.spot !== undefined &&
+            Number.isFinite(first.fineOz) && first.fineOz > 0 && Number.isFinite(ceiling)
+        const premium = priced
+            ? PREMIUM.premium(ceiling, first.fineOz, first.spot.gbpPerOz)
+            : null
+        const metal = METAL_NAMES[first.metal] || 'metal'
+
+        const evidence = []
+        const days = first.liquidity.medianDaysToSale
+        /*  How long this type sits before it sells: a lot that has been on
+            the shelf for months is a seller who will listen. */
+        if (Number.isFinite(days)) { evidence.push('typically ' + days.toFixed(0) + ' days to sell') }
+        if (first.liquidity.sellThroughRate !== null) {
+            evidence.push(pct(first.liquidity.sellThroughRate, 0) + ' of them sell at all')
+        }
+
+        return '<div class="offer-head">' +
+            '<h3><a href="/listings?key=' + encodeURIComponent(group.key) + '">' +
+            escapeHtml(first.name) + '</a></h3>' +
+            '<p class="thin">' +
+            (premium === null
+                ? 'Your limit on one is ' + gbp(ceiling) + ' all-in.'
+                : '<span title="What paying your limit would cost you over the value of the ' +
+                  escapeHtml(metal) + ' in the coin, postage and buyer protection fee ' +
+                  'included - the same measure as every other percentage on this site. It is ' +
+                  'a property of the coin type, so it is the same for every lot below.">' +
+                  'Your limit is ' + gbp(ceiling) + ' all-in, ' + pct(premium) +
+                  ' over spot</span>') +
+            (evidence.length ? ' &middot; ' + escapeHtml(evidence.join(' &middot; ')
+                .replace(/&middot;/g, '\u00b7')) : '') +
+            '</p></div>'
+    }
+
     const offerHtml = offers.length === 0
         ? '<p class="thin">Nothing to offer on right now. A lot only appears here when its coin ' +
           'type has enough completed sales to say where it clears &mdash; ' +
@@ -1745,7 +1796,7 @@ function marketPage (opened, url, reference) {
           bulkBar(offers.map(e => e.row),
               'A wrong coin here is worth more than a dismissal: it is setting ' +
               'the clearing price these offers are measured against.') +
-          cappedQueue(offers, entry => {
+          groupedQueue(offers, offerHeading, entry => {
               const a = entry.alert
               /*  Shaped for queueRow so the picture, the checkbox and the
                   verdict controls are the same ones as everywhere else -
@@ -1755,14 +1806,6 @@ function marketPage (opened, url, reference) {
                   imageUrl: a.imageUrl, price: a.askPrice, shipping: a.shipping,
                   buyingOptions: a.buyingOptions, instrumentKey: entry.key,
                   lastSeen: a.lastSeen, sweepAt, priced: 1, back: '/'
-              }
-              const days = entry.liquidity.medianDaysToSale
-              const evidence = []
-              /*  How long this type sits before it sells: a lot that has been
-                  on the shelf for months is a seller who will listen. */
-              if (Number.isFinite(days)) { evidence.push('typically ' + days.toFixed(0) + ' days to sell') }
-              if (entry.liquidity.sellThroughRate !== null) {
-                  evidence.push(pct(entry.liquidity.sellThroughRate, 0) + ' of them sell at all')
               }
               /*
                   Three numbers, three bases, and the row only shows two of
@@ -1804,28 +1847,28 @@ function marketPage (opened, url, reference) {
                   beside it and as every other percentage on the site, and the
                   gap follows saying plainly what it is measured against.
               */
-              const offerAllIn = PREMIUM.totalCost(a.suggestedOffer, postage)
-              const offerPremium = (entry.spot === null || entry.spot === undefined ||
-                                    !Number.isFinite(entry.fineOz) || entry.fineOz <= 0)
-                  ? null
-                  : PREMIUM.premium(offerAllIn, entry.fineOz, entry.spot.gbpPerOz)
+              /*  THE LINE LOST THE FIGURE THAT NEVER VARIED.
 
+                  "25.1% over spot" was the same characters on every row of a
+                  coin type, and not by coincidence - it is the premium at
+                  that TYPE's bid ceiling, and the postage in it cancels
+                  exactly: suggestedOffer is priceForCost(ceiling) less
+                  postage and this line adds postage straight back. So it had
+                  no per-lot component at all. It is stated once, above the
+                  group, where a fact about a coin type belongs.
+
+                  What is left is what actually differs between two lots of
+                  the same coin: what to offer, what the postage is, and how
+                  close the seller already is to your limit. */
               const cell = '<span class="badge good" title="What to type into the offer box: ' +
                   'your ceiling for a ' + escapeHtml(entry.name) + ', less postage, with the ' +
                   'buyer protection fee eBay adds on top already taken out. ' +
                   gbp(a.suggestedOffer) + ' + ' + gbp(postage) + ' postage + fee = ' +
                   gbp(PREMIUM.totalCost(a.suggestedOffer, postage)) + ' all-in, against ' +
                   gbp(a.currentTotal) + ' all-in at the asking price.' +
-                  (evidence.length ? ' ' + evidence.join('; ') + '.' : '') +
                   '">offer ' + gbp(a.suggestedOffer) + '</span> ' +
                   '<span class="thin mono">' +
                   (postage > 0 ? '+ ' + gbp(postage) + ' post &middot; ' : '') +
-                  (offerPremium === null
-                      ? ''
-                      : '<span title="What this offer would cost you over the value of the gold ' +
-                        'in the coin, postage and buyer protection fee included - the same measure ' +
-                        'as every other percentage on this site.">' + pct(offerPremium) +
-                        ' over spot</span> &middot; ') +
                   '<span title="How far your ceiling happens to sit below what they are asking. ' +
                   'This is a by-product of the offer, not the reason for it: the offer is your ' +
                   'ceiling for this coin type, so a small gap means the lot is already priced ' +
@@ -2380,6 +2423,55 @@ function tabs (basePath, param, options, current, params) {
     The rows past the cap are still here and still inside the same form, so a
     bulk decision still covers them; they are just folded away.
 */
+/*
+    THE SAME LIST, GATHERED BY COIN TYPE.
+
+    cappedQueue slices a flat list at eight and folds the rest. That cannot
+    survive grouping - the first row after the fold would lose the heading it
+    belongs under - so this counts rows and folds whole GROUPS.
+
+    Order is preserved rather than re-derived. The alerts arrive sorted by
+    promise, so the first appearance of a type is that type's best row, and
+    keeping first-appearance order puts the most promising group at the top
+    with its best row at the top of it. Sorting groups by size or by name
+    would bury the thing the page exists to surface.
+*/
+function groupedQueue (entries, heading, render, visible, moreLabel) {
+    const groups = []
+    const byKey = new Map()
+    for (const entry of entries) {
+        if (!byKey.has(entry.key)) {
+            const group = { key: entry.key, entries: [] }
+            byKey.set(entry.key, group)
+            groups.push(group)
+        }
+        byKey.get(entry.key).entries.push(entry)
+    }
+
+    /*  A group goes wholly above or wholly below the fold, decided by
+        whether it starts before the budget runs out. Splitting one would put
+        rows under a heading in one half and rows with no heading in the
+        other. */
+    const head = []
+    const tail = []
+    let shown = 0
+    for (const group of groups) {
+        if (shown < visible) { head.push(group); shown += group.entries.length } else { tail.push(group) }
+    }
+
+    const block = (list) => list.map(group =>
+        heading(group) +
+        '<div class="card"><div class="queue">' +
+        group.entries.map(render).join('') +
+        '</div></div>').join('')
+
+    if (tail.length === 0) { return block(head) }
+    const rest = tail.reduce((n, g) => n + g.entries.length, 0)
+    return block(head) +
+        '<details class="more"><summary>' + escapeHtml(moreLabel(rest)) + '</summary>' +
+        block(tail) + '</details>'
+}
+
 function cappedQueue (rows, render, visible, moreLabel) {
     const head = rows.slice(0, visible)
     const tail = rows.slice(visible)

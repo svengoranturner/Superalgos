@@ -835,6 +835,16 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
     thresholds on one 40px glyph is a colour nobody can read. */
 /*  A format mark sits on the text baseline beside whatever it qualifies -
     a bid count, the rest of a meta line - rather than floating above it. */
+/*  One coin type's limit, stated above its lots rather than inside each of
+    them. Tight to the card below it so the heading reads as belonging to
+    that group and not as a page-level section. */
+.offer-head { margin: var(--space-4) 0 var(--space-2) }
+.offer-head:first-child { margin-top: 0 }
+.offer-head h3 { margin: 0; font-size: 15px }
+.offer-head h3 a { color: inherit; text-decoration: none }
+.offer-head h3 a:hover { color: var(--color-accent) }
+.offer-head p { margin: 2px 0 0 }
+
 .fmt { display: inline-flex; align-items: center; vertical-align: -2px }
 .fmt svg { display: block }
 .fmt-cell { white-space: nowrap }

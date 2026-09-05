@@ -3092,6 +3092,123 @@ function goldOnlyStore () {
     slash - "fixed price / best offer" - and the sold table printed
     `sale_type` as "Offers allowed", for the identical listing.
 */
+/*
+    THE OFFERS ROW SAYS THE TYPE-WIDE FIGURE ONCE.
+
+    The owner, on "+ £2.85 post · 25.1% over spot · 0.9% below their ask":
+    how can we make it less of a wall of tiny text? The middle figure was the
+    wall - measured on the live page it was the same characters on ten
+    consecutive rows, because it is the premium at that coin TYPE's bid
+    ceiling and the postage in it cancels exactly. It had no per-lot
+    component at all.
+*/
+function offersStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    /*  A sale is priced against the metal price at the moment it closed, and
+        the spot lookup will not carry a reading more than ninety minutes -
+        so the sales close now rather than at a tidy date in the past, which
+        would leave them with no premium and the coin type with no clearing
+        price at all. */
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const KEY = 'GB.SOV.BULLION.FULL'
+    const put = (id, price, options, endTime, outcome) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: options, endTime,
+            imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price, shipping: outcome ? 0 : 3, observedAt: now })
+        repository.saveClassification(browseId, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+        if (outcome) {
+            repository.saveOutcome(browseId, {
+                endTime: now, sold: true, finalPrice: price, shipping: 0, bidCount: 5,
+                saleType: 'AUCTION', censored: false, source: 'test'
+            })
+        }
+    }
+    /*  Four sold auctions give the type a clearing price and so a ceiling. */
+    ;[860, 880, 900, 940].forEach((price, n) => put('sold' + n, price, 'AUCTION', now, true))
+    /*  THREE OFFER LOTS OF ONE TYPE AT THREE DIFFERENT POSTAGES, which is
+        what makes "once per type" different from "once per row". */
+    put('offer one', 980, 'FIXED_PRICE|BEST_OFFER', null, false)
+    put('offer two', 990, 'FIXED_PRICE|BEST_OFFER', null, false)
+    put('offer three', 1000, 'FIXED_PRICE|BEST_OFFER', null, false)
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the offer limit is stated once per coin type, not once per row', async () => {
+    const opened = offersStore()
+    const path = '/?min=1&view=offers'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const rows = (body.match(/class="q"/g) || []).length
+    assert.ok(rows >= 3, 'the fixture raised ' + rows + ' offers; it needs at least three of ' +
+        'one type or "once per type" and "once per row" are the same number')
+
+    const stated = (body.match(/Your limit is/g) || []).length
+    assert.strictEqual(stated, 1,
+        'the limit is stated ' + stated + ' times across ' + rows + ' rows of one coin type')
+
+    /*  And it is actually there. Asserting only that it appears at most once
+        is satisfied by a page that dropped it altogether, which would be the
+        opposite of the fix. */
+    assert.match(body, /Your limit is [^<]*over spot/,
+        'the limit is not stated at all')
+
+    /*  What the rows keep is what differs between them. */
+    assert.ok((body.match(/below their ask/g) || []).length === rows,
+        'the per-lot gap is no longer on every row')
+    opened.db.close()
+})
+
+test('the offer limit does not move when the postage does', async () => {
+    /*  The property that makes "once" correct rather than merely tidy: the
+        postage cancels exactly, so the figure is the same for every lot of a
+        type whatever they charge to post it. Asserted by rendering the same
+        fixture twice with different postage and comparing - if the test
+        recomputed the number the way the code does, it would prove nothing
+        about cancellation. */
+    const limitOf = async (postage) => {
+        const opened = offersStore()
+        opened.db.prepare('UPDATE listing_snapshot SET shipping = ? WHERE shipping > 0').run(postage)
+        const path = '/?min=1&view=offers'
+        const body = (await fetchAll(opened, [path]))[path].body
+        const found = /Your limit is ([^<]*?) over spot/.exec(body)
+        opened.db.close()
+        assert.ok(found !== null, 'no limit stated at ' + postage + ' postage')
+        return found[1]
+    }
+
+    assert.strictEqual(await limitOf(3), await limitOf(25),
+        'the limit moved when the postage did, so it is not a property of the coin type')
+})
+
+test('the offers panel names the metal the coin is made of', async () => {
+    /*  The tooltip hard-coded "the value of the gold in the coin" and fired
+        on silver types too. A mixed fixture, because a single-metal one
+        passes for an implementation that hard-codes the other way. */
+    const opened = bothMetalsStore()
+    const path = '/?min=1&view=offers&sale=all&band=any'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const heads = body.split('class="offer-head"').slice(1)
+    assert.ok(heads.length >= 2, 'the fixture raised offers on only one metal')
+
+    const gold = heads.find(h => h.includes('Sovereign'))
+    const silver = heads.find(h => h.includes('Dollar'))
+    assert.ok(gold !== undefined && silver !== undefined, 'one of the two metals raised no offer')
+    assert.ok(gold.includes('the gold in the coin'), 'a gold coin is not described as gold')
+    assert.ok(silver.includes('the silver in the coin'),
+        'a silver coin is described as gold, which is what the hard-coded wording did')
+    opened.db.close()
+})
+
 test('the queue and the sold table say the same thing about the same listing', async () => {
     const db = newDatabase(':memory:')
     const repository = newRepository(db, { sellerSalt: 'test' })
