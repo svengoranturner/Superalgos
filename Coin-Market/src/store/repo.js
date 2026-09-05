@@ -1672,21 +1672,35 @@ exports.newRepository = function (db, options) {
                 ? "AND l.buying_options NOT LIKE '%AUCTION%'"
                 : (saleType === 'all' ? '' : "AND l.buying_options LIKE '%AUCTION%'")
             const row = db.prepare(`
-                /*  SCOPED FIRST, THEN THE SNAPSHOT - and the order is the
-                    whole cost of this query.
+                /*  ONE SEEK PER LOT, NOT A PASS OVER THE SNAPSHOTS.
 
-                    Written the other way round it grouped listing_snapshot
-                    over every listing in the store to find each one's latest,
-                    then threw away the nine tenths that fail the cheap
-                    predicates. Measured on the Pi: 1,837ms, against 57ms for
-                    the same count before the price check was added. That is
-                    the identical mistake liveListings records fixing thirty
-                    lines down - 1,249ms to 255ms for the same rows - made
-                    again in the query written to match it.
+                    Three shapes measured on the Pi for the identical answer,
+                    which is what makes the choice a measurement rather than a
+                    preference:
 
-                    So the scope narrows to a few thousand candidates on
-                    indexed columns, and only those have their newest snapshot
-                    found. */
+                      grouped latest-per-lot      180ms auction / 3,443ms bin
+                      correlated MAX per row      251ms / 738ms
+                      this                         57ms / 100ms
+
+                    listing_snapshot is WITHOUT ROWID on (browse_id,
+                    observed_at), so "the newest row for this lot" is a single
+                    index seek and the scope has a few thousand lots in it.
+                    The other two shapes walk every snapshot those lots have -
+                    about 121 each - and decide afterwards.
+
+                    The first version of this query did worse still: it grouped
+                    listing_snapshot over EVERY listing in the store and then
+                    discarded the nine tenths that fail the cheap predicates
+                    above. 1,837ms a call, on a page that renders in 700ms.
+                    That is the same mistake liveListings records fixing forty
+                    lines down, made again in the query written to match it,
+                    and it got there because the 57ms I measured was of this
+                    count BEFORE the price check was added and I did not
+                    measure it again after.
+
+                    The price check itself currently excludes nothing - all
+                    three shapes return 445 and 2,491 - but it is the list's
+                    predicate and the two have to describe one shelf. */
                 WITH scope AS (
                     SELECT DISTINCT li.browse_id
                     FROM listing_instrument li
@@ -1697,18 +1711,12 @@ exports.newRepository = function (db, options) {
                       AND l.last_seen > ?2
                       AND NOT EXISTS (SELECT 1 FROM listing_outcome o
                                       WHERE o.browse_id = li.browse_id)
-                ),
-                latest AS (
-                    SELECT s.browse_id, MAX(s.observed_at) AS observed_at
-                    FROM listing_snapshot s
-                    JOIN scope ON scope.browse_id = s.browse_id
-                    GROUP BY s.browse_id
                 )
                 SELECT COUNT(*) AS n
-                FROM latest
-                JOIN listing_snapshot s
-                  ON s.browse_id = latest.browse_id AND s.observed_at = latest.observed_at
-                WHERE s.price IS NOT NULL
+                FROM scope
+                WHERE (SELECT s.price FROM listing_snapshot s
+                       WHERE s.browse_id = scope.browse_id
+                       ORDER BY s.observed_at DESC LIMIT 1) IS NOT NULL
             `).get(
                 new Date().toISOString(),
                 new Date(Date.now() - (config.activeWithinHours || 24) * 60 * 60 * 1000).toISOString()
