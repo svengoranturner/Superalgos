@@ -77,9 +77,16 @@ const ICON = {
         were written out by hand for exactly this reason and a third and
         fourth hand-written constant would have been the point at which the
         map stopped being worth having. */
+    /*  The tag's punch hole is a drawn circle and not the `h.01` dot Lucide
+        uses for one. That trick is a zero-length segment made visible by a
+        round line cap, and nothing here sets one - the six marks above are
+        all open strokes where the default butt cap is invisible on them and
+        so was never noticed. Rendered at 96px to check: the hole was simply
+        missing, which left a plain pentagon that could have been anything. */
     gavel: ['M13.5 3.5 20.5 10.5 17.5 13.5 10.5 6.5Z', 'M12 8 6 14M4.5 12.5 8.5 16.5M3 20.5h10'],
-    tag: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z', 'M7.5 7.5h.01'],
-    tagOffer: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z', 'M7.5 7.5h.01', 'M12.5 13h5M15 10.5v5']
+    tag: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z', 'M8.6 7.5a1.1 1.1 0 1 1-2.2 0 1.1 1.1 0 0 1 2.2 0Z'],
+    tagOffer: ['M3.5 3.5h7.5l9.5 9.5-7.5 7.5-9.5-9.5Z',
+        'M8.6 7.5a1.1 1.1 0 1 1-2.2 0 1.1 1.1 0 0 1 2.2 0Z', 'M12.5 13h5M15 10.5v5']
 }
 
 /*  One path or several. The check-in-circle and the sun need shapes a path
