@@ -643,18 +643,35 @@ test('a scan column is aligned the same in its head as in its body', () => {
     const rules = alignmentRules(STATIC.css())
     assert.ok(rules.length > 0, 'no text-align rules found; the test has lost its target')
 
-    /*  first: the pick-cell is the first child, which the app layer aligns
-        left by position rather than by class. */
-    const COLUMNS = [
-        { classes: ['pick-cell'], first: true },
-        { classes: ['lot'], first: false },
-        { classes: ['ident'], first: false },
-        { classes: ['figure', 'bid'], first: false },
-        { classes: ['figure', 'spot'], first: false },
-        { classes: ['figure', 'delta'], first: false },
-        { classes: ['figure', 'ends'], first: false },
-        { classes: ['verdict-cell'], first: false }
-    ]
+    /*  DERIVED FROM THE APP, NOT LISTED HERE.
+
+        This was a hand-written copy of the scan table's eight columns, and a
+        hand-written copy is precisely the fault the class names exist to
+        prevent: a column added to the app and not to the list is silently
+        untested, which is how `th.spot` and `th.ends` came to name columns
+        the stylesheet had never heard of. All three tables now, off their
+        own definitions.
+
+        first: the pick-cell leads every one of them, and the app layer
+        aligns a first child left by position rather than by class. */
+    const COLUMNS = []
+    const seen = new Set()
+    for (const columns of Object.values(SERVER.COLUMN_SETS)) {
+        columns.forEach((column, i) => {
+            const classes = String(column.className || '').split(/\s+/).filter(Boolean)
+            /*  A column with no class matches the bare `td` rule and agrees
+                with the bare `th` rule for free - an under-test that reports
+                as a pass, which is what SOLD_COLUMNS used to be. */
+            assert.ok(classes.length > 0,
+                'a column with no className: it cannot be checked, and it will not stack ' +
+                'correctly on a phone either')
+            const key = classes.join('.') + '|' + (i === 0)
+            if (seen.has(key)) { return }
+            seen.add(key)
+            COLUMNS.push({ classes, first: i === 0 })
+        })
+    }
+    assert.ok(COLUMNS.length >= 8, 'only ' + COLUMNS.length + ' columns found across three tables')
 
     for (const column of COLUMNS) {
         const head = alignmentOf(rules, { tag: 'th', scan: true, ...column })

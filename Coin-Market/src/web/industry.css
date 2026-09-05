@@ -291,9 +291,10 @@ td a:hover { text-decoration-color:var(--ink) }
 /*  A thumbnail inside a table cell. The queue's own .q-shot is sized for a
     flex row; in a table it needs a width of its own or the column stretches
     to whatever eBay sent. */
-.shot-cell { width:52px; padding-right:0 }
-.shot-cell .q-shot { width:44px; height:44px }
-.shot-cell .q-shot img { width:44px; height:44px; object-fit:cover; border-radius:6px }
+/*  .shot-cell is gone with the sold table's own thumbnail column - the
+    picture lives in the shared lot cell now. Its `border-radius: 6px` went
+    with it, which is the point: it was the one place contradicting the rule
+    forty lines down that figures are line drawings and never round. */
 .scope { display:inline-flex; gap:6px; align-items:center; font-size:12.5px;
   color:var(--ink-2); cursor:pointer; margin-right:4px }
 .scope input { margin:0 }
@@ -918,6 +919,39 @@ table.scan.queue td.bid .thin { font-family: var(--font-body); font-size: 11px }
 @media (max-width: 620px) {
   table.scan.queue td.ident { display: block; order: 6; flex: 1 1 100% }
   table.scan.queue td.set { order: 7; flex: 1 1 100% }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   THE SOLD TABLE, WHICH IS THE SAME TABLE AGAIN.
+
+   `table.scan.sold` for the same reason as `table.scan.queue`: three lists of
+   lots that share a tick, a thumbnail, a title and a verdict control, and had
+   three sets of markup drifting apart. Everything in the scan block applies;
+   this adds only what the sold table has and the others do not.
+   ───────────────────────────────────────────────────────────────────────── */
+
+table.scan.sold th.when, table.scan.sold td.when {
+  width: 10%; color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+table.scan.sold th.fmt-cell, table.scan.sold td.fmt-cell { width: 11%; text-align: left }
+table.scan.sold th.ident, table.scan.sold td.ident { width: 16% }
+/*  The premium is a figure like the others and reads right, but it is not the
+    scan table's chip - a completed sale has no band to sit in, because it IS
+    one of the sales the band is made of. */
+table.scan.sold td.delta { font-variant-numeric: tabular-nums }
+
+/*  A sold row's meta line is empty: the date, the coin type and how it sold
+    all have columns of their own here. Without this it still reserves its
+    2px top margin and a line box, which loosens every row by a couple of
+    pixels against the other two tables. */
+table.scan.sold .lot-meta:empty { display: none }
+
+@media (max-width: 860px) {
+  table.scan.sold th.when, table.scan.sold td.when { display: none }
+}
+@media (max-width: 620px) {
+  table.scan.sold td.ident { display: block; order: 6; flex: 1 1 100% }
+  table.scan.sold td.fmt-cell { order: 4; flex: none }
 }
 
 /*  A phone. The design's own mobile board drops to a title, a bid over its

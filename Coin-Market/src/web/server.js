@@ -1386,7 +1386,7 @@ function marketPage (opened, url, reference) {
                       until now this was the one queue with no way to say so.
                       You could see it was wrong and had to go and find it
                       somewhere else to act. */
-                  '<td>' + (sale.legacyId && !sale.verdict
+                  '<td class="pick-cell">' + (sale.legacyId && !sale.verdict
                       ? '<input class="pick" type="checkbox" name="pick" value="' +
                         escapeHtml(sale.legacyId) + '" title="Select this sale for a bulk decision">'
                       : '<span class="pick-spacer"></span>') + '</td>' +
@@ -1396,12 +1396,28 @@ function marketPage (opened, url, reference) {
                       owner's own point stands here more than anywhere: the
                       thumbnails are as instructive as the titles. A coin you
                       can see is a comparable you can trust. */
-                  '<td class="shot-cell">' + shot(sale.imageUrl, escapeHtml(sale.title || '')) + '</td>' +
-                  '<td class="thin">' + escapeHtml(String(sale.endedAt || '').slice(0, 10)) + '</td>' +
-                  '<td>' + (sale.itemWebUrl
-                      ? '<a href="' + escapeHtml(sale.itemWebUrl) + '" target="_blank" rel="noopener">' +
-                        escapeHtml(sale.title.slice(0, 58)) + '</a>'
-                      : escapeHtml(sale.title.slice(0, 58))) + '</td>' +
+                  /*  The same lot cell the scanner and the review queue draw,
+                      so the picture, the title and the tick are one piece of
+                      markup rather than three that drift. The tick here means
+                      what it means everywhere: counted in the clearing price.
+                      A censored sale is not - eBay never published what it
+                      went for - so it is the one kind of sold row without
+                      one, which is the honest reading. */
+                  lotCell(sale, '', {
+                      counted: sale.censored !== 1,
+                      countedTitle: 'Counted in the clearing price for this coin type'
+                  }) +
+                  '<td class="figure when">' +
+                  escapeHtml(String(sale.endedAt || '').slice(0, 10)) + '</td>' +
+                  /*  A COIN TYPE, in the column headed "Coin type".
+
+                      It rendered the listing TITLE, truncated to 58
+                      characters in JS - so the one page whose rows ARE the
+                      clearing figures had no route to the page that explains
+                      them, and its widest column was doing the lot cell's job
+                      badly. The title moved into the lot cell, where CSS
+                      handles the overflow the way it does everywhere else. */
+                  identCell(sale) +
                   /*  A censored sale went through Best Offer, and eBay
                       publishes only the asking price the listing ended on.
                       That is an UPPER bound on what changed hands, never the
@@ -1409,7 +1425,7 @@ function marketPage (opened, url, reference) {
                       column already refuses to guess, and a confident price
                       beside a blank premium reads as a display fault rather
                       than as the admission it is. */
-                  '<td class="mono">' + (sale.censored === 1
+                  '<td class="figure bid mono">' + (sale.censored === 1
                       ? '<span class="thin" title="The seller allowed offers on this lot. eBay ' +
                         'never says whether one was taken, so this is the asking price the ' +
                         'listing ended on and the buyer paid this or less. Most such lots sell ' +
@@ -1435,7 +1451,7 @@ function marketPage (opened, url, reference) {
                       ? ' <span class="thin">' + sale.finalBidCount +
                         (sale.finalBidCount === 1 ? ' bid' : ' bids') + '</span>'
                       : '') + '</td>' +
-                  '<td class="mono">' + (sale.censored === 1
+                  '<td class="figure delta mono">' + (sale.censored === 1
                       ? '<span class="thin">not published</span>'
                       : pct(premium)) + '</td>' +
                   /*  Reject only, and no denomination picker. The full
@@ -1443,7 +1459,7 @@ function marketPage (opened, url, reference) {
                       and where the denomination actually needs setting; here
                       the one question worth asking of a completed sale is
                       whether it is the coin it claims to be. */
-                  '<td>' + soldControls(sale) + '</td>' +
+                  '<td class="verdict-cell">' + soldControls(sale) + '</td>' +
                   '</tr>'
     }
 
@@ -1451,24 +1467,8 @@ function marketPage (opened, url, reference) {
         the page; the headers now reach the same keys, so the two controls
         drive one parameter rather than sitting beside each other doing the
         same job by different means. */
-    const SOLD_COLUMNS = [
-        {}, {},
-        { label: 'Sold', key: 'newest', back: 'oldest' },
-        { label: 'Coin type', key: 'ident' },
-        { label: 'Price', key: 'dearest', back: 'cheapest' },
-        { label: 'How it sold',
-            title: 'A gavel is an auction, with the number of bids it drew. A tag was bought ' +
-                'outright at the asking price. A tag with a plus means the seller took ' +
-                'offers, so the lot went for that price or less and eBay will not say ' +
-                'which. Hover any of them to read it back.' },
-        /*  No key. The premium is worked out while the row renders and is not
-            on the row, so there is nothing here to order by - and a header
-            that looks clickable and does nothing is worse than a plain one. */
-        { label: 'Premium over spot' },
-        {}
-    ]
     const soldTable = (rows) =>
-        '<div class="card scroll"><table>' +
+        '<div class="card scan-card"><table class="scan sold">' +
         sortableHead(SOLD_COLUMNS, soldControlled.order,
             (key) => filterHref({ view: 'sold', order: key })) +
         '<tbody>' + rows.map(soldRow).join('') + '</tbody></table></div>'
@@ -3636,6 +3636,54 @@ function listedFor (iso) {
     something measured, and it is done with its eyes open.
 */
 /*
+    THE LOT CELL, DRAWN ONCE.
+
+    Four renderers grew their own: the scanner's, the review table's, the
+    review cards' and the sold table's. They had drifted rather than diverged
+    on purpose - the sold one truncated the title to 58 characters in JS where
+    the others let CSS ellipsis do it, framed its thumbnail with a 6px radius
+    against an explicit `border-radius: 0` and a comment two hundred lines
+    away saying figures are line drawings and must never be round, and carried
+    no tick at all.
+
+    `meta` arrives already rendered rather than as a list to be joined here,
+    and deliberately: the scanner escapes its meta line wholesale and the
+    review queue's is a list of badges that must NOT be escaped again. One
+    signature that took both would have to know which, and getting it wrong in
+    the second direction is an injection rather than a display fault. Each
+    caller keeps its own escaping and hands over finished html.
+*/
+function lotCell (row, meta, options) {
+    const opts = options || {}
+    const counted = opts.counted
+        ? '<span class="tick-slot ticked" title="' + escapeHtml(opts.countedTitle ||
+          'Counted in the statistics') + '">' + RENDER.TICKED + '</span>'
+        : '<span class="tick-slot"></span>'
+
+    return '<td class="lot">' +
+        '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(opts.caption || row.title || '')) +
+        '<div class="lot-text">' + counted +
+        '<div class="lot-title">' + (row.itemWebUrl
+            ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
+              escapeHtml(row.title || '') + '</a>'
+            : escapeHtml(row.title || '')) + '</div>' +
+        '<div class="lot-meta">' + (meta || '') + '</div>' +
+        '</div></div></td>'
+}
+
+/*  The coin type, linked to everything behind it. The scanner grew this
+    because the owner could not find /listings; the sold table had a column
+    LABELLED "Coin type" that rendered the listing title instead, so the one
+    page whose rows ARE the clearing figures had no route to them. */
+function identCell (row, inner) {
+    const key = row.instrumentKey
+    if (!key) { return '<td class="ident">—</td>' }
+    return '<td class="ident"><a href="/listings?key=' + encodeURIComponent(key) +
+        '" title="Every sale behind this coin type, and what it clears at">' +
+        (inner === undefined ? escapeHtml(INSTRUMENTS.displayName(key)) : inner) + '</a></td>'
+}
+
+/*
     ONE NOUN FOR ONE FACT.
 
     Two vocabularies described the same thing in two places. The review queue
@@ -3857,20 +3905,6 @@ function scanRow (row, verdictCell, sweepAt) {
           '" title="' + escapeHtml(bandTitle(row, band)) + '">' +
           (delta > 0 ? '+' : '') + (delta * 100).toFixed(1) + '%</span>'
 
-    /*  The tick that replaces five words. "Counted in the statistics" was a
-        text badge on every row; at this density it was most of the meta line,
-        and it says the same thing as one 14px mark.
-
-        It sits in a slot of its own now rather than inside the title. Empty
-        when the lot is not counted, but always emitted: the slot is a grid
-        column, and a row that skipped it would un-indent against the row
-        above - the same misalignment this change is fixing, one column to
-        the left. */
-    const counted = row.priced
-        ? '<span class="tick-slot ticked" title="Counted in the statistics">' +
-          RENDER.TICKED + '</span>'
-        : '<span class="tick-slot"></span>'
-
     const meta = []
     if (Number.isFinite(row.bidCount)) {
         meta.push(row.bidCount + (row.bidCount === 1 ? ' bid' : ' bids'))
@@ -3900,17 +3934,9 @@ function scanRow (row, verdictCell, sweepAt) {
     return '<tr>' +
         '<td class="pick-cell"><input class="pick" type="checkbox" name="pick" value="' + id +
         '" title="Select this lot for a bulk decision"></td>' +
-        '<td class="lot">' +
-        '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.title || '')) +
-        '<div class="lot-text">' + counted +
-        '<div class="lot-title">' +
-        (row.itemWebUrl
-            ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
-              escapeHtml(row.title || '') + '</a>'
-            : escapeHtml(row.title || '')) +
-        '</div>' +
-        '<div class="lot-meta">' + escapeHtml(meta.join(' · ')) + '</div>' +
-        '</div></div></td>' +
+        /*  Escaped here and handed over finished - this meta line is plain
+            text and must stay that way. */
+        lotCell(row, escapeHtml(meta.join(' · ')), { counted: row.priced }) +
         /*  A LINK, because this was the one thing on the page that could not
             be followed. Everything a coin type is worth - what it clears at,
             how fast it sells, every sale behind the number - lives on
@@ -4023,19 +4049,12 @@ function queueTableRow (row, verdictCell) {
 
     return '<tr>' +
         '<td class="pick-cell">' + pick + '</td>' +
-        '<td class="lot">' +
-        '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.categoryPath || '')) +
-        '<div class="lot-text">' +
-        /*  Nothing to say here - a queued lot is not yet counted in anything -
-            but the slot is emitted so this row's title starts where the
-            scanner's does. */
-        '<span class="tick-slot"></span>' +
-        '<div class="lot-title">' + (row.itemWebUrl
-            ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
-              escapeHtml(row.title || '') + '</a>'
-            : escapeHtml(row.title || '')) + '</div>' +
-        '<div class="lot-meta">' + rest.join('<span aria-hidden="true"> \u00b7 </span>') +
-        '</div></div></div></td>' +
+        /*  Already markup - queueMeta returns badges - so it is handed over
+            as-is and NOT escaped a second time. The caption is the category
+            path rather than the title, because the picture opens over a row
+            whose title is already on screen. */
+        lotCell(row, rest.join('<span aria-hidden="true"> \u00b7 </span>'),
+            { caption: row.categoryPath || '' }) +
         /*  The badge itself, wrapped in the link the scanner grew: everything
             a coin type is worth lives on /listings, and the queue is where
             you find out you wanted to look. */
@@ -4077,6 +4096,43 @@ const SCAN_COLUMNS = [
     /*  Two buttons. Nothing to order by. */
     { label: 'Verdict', className: 'verdict-cell' }
 ]
+
+/*  Classes on every column, which this set alone did without.
+
+    SCAN_COLUMNS carries a note saying they are load-bearing rather than
+    tidy: without them `th.spot` and `th.ends` matched nothing, the narrow
+    breakpoints hid the CELLS and left the HEADERS, and 562px of table
+    ended up in a 390px phone. This table was about to inherit that
+    stylesheet, so it needs them before it does.
+
+    And the thumbnail moved into the lot cell with the title, so the
+    separate shot column is gone - along with the 6px radius it framed
+    pictures with, against an explicit `border-radius: 0` and a comment
+    saying figures are line drawings and must never be round. */
+const SOLD_COLUMNS = [
+    { className: 'pick-cell' },
+    { label: 'Lot', className: 'lot', key: 'title' },
+    { label: 'Sold', className: 'figure when', key: 'newest', back: 'oldest' },
+    { label: 'Coin type', className: 'ident', key: 'ident' },
+    { label: 'Price', className: 'figure bid', key: 'dearest', back: 'cheapest' },
+    { label: 'How it sold', className: 'fmt-cell',
+        title: 'A gavel is an auction, with the number of bids it drew. A tag was bought ' +
+            'outright at the asking price. A tag with a plus means the seller took ' +
+            'offers, so the lot went for that price or less and eBay will not say ' +
+            'which. Hover any of them to read it back.' },
+    /*  No key. The premium is worked out while the row renders and is not
+        on the row, so there is nothing here to order by - and a header
+        that looks clickable and does nothing is worse than a plain one. */
+    { label: 'Premium over spot', className: 'figure delta' },
+    { className: 'verdict-cell' }
+]
+
+/*  Module scope, beside the other two sets, and not because anything here
+    needs it at load time: the stylesheet test derives its cell descriptors
+    from these three rather than keeping a fourth hand-written copy, and a
+    hand-written copy is exactly how `th.spot` and `th.ends` came to name
+    columns the stylesheet had never heard of. It is pure data - labels, sort
+    keys and class names - so nothing is lost by moving it out. */
 
 const SCAN_HEAD = sortableHead(SCAN_COLUMNS, null, () => '#')
 
@@ -5419,3 +5475,14 @@ ${labels.length === 0
 </div>
 `, whereYouAre(url))
 }
+
+/*  For the stylesheet test, which checks that every column's heading and its
+    cells agree on alignment. It used to carry its own list of the scan
+    table's eight columns; a column added to the app and not to that list was
+    silently untested, which is the fault this whole set of class names exists
+    to prevent.
+
+    At the foot of the file rather than beside exports.start, because the
+    three sets are `const` declared further down and reading them at the top
+    is the temporal dead zone the sold table's own thunk was written for. */
+exports.COLUMN_SETS = { scan: SCAN_COLUMNS, queue: QUEUE_COLUMNS, sold: SOLD_COLUMNS }
