@@ -792,6 +792,61 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
 }
 .scan-note .ticked { display: inline-flex }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   THE REVIEW QUEUE, WHICH IS THE SAME TABLE WITH TWO MORE COLUMNS.
+
+   `table.scan.queue` rather than a second stylesheet: the queue and the
+   scanner are two lists of lots with the same tick, the same thumbnail, the
+   same verdict buttons and the same problem at 390px. Everything above
+   applies; this adds only what the queue has and the scanner does not.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/*  The pickers - which kind, which denomination, how many. Three controls in
+    one cell, so they wrap rather than forcing the column wide enough to hold
+    them in a line. */
+table.scan.queue th.set, table.scan.queue td.set { width: 20% }
+table.scan.queue td.set {
+  display: flex; flex-wrap: wrap; gap: 4px; align-items: center;
+}
+table.scan.queue td.set select { max-width: 100%; font-size: 12px }
+
+table.scan.queue th.when, table.scan.queue td.when {
+  width: 9%; color: color-mix(in srgb, var(--color-text) 60%, transparent);
+}
+
+/*  Wider than the scanner's, because it holds a badge with a word of hedging
+    on it rather than a bare name. */
+table.scan.queue th.ident, table.scan.queue td.ident { width: 16% }
+/*  The badge keeps its own colours inside the link; without this the anchor's
+    accent overrode the critical border that marks a shaky filing. */
+table.scan.queue td.ident a.plain-link { text-decoration: none; color: inherit }
+table.scan.queue td.ident a.plain-link:hover .badge { border-color: var(--color-accent) }
+
+/*  The queue's meta line wraps where the scanner's does not.
+
+    The scanner's row carries four short facts and one line holds them. A
+    queued row carries up to eleven - the reason it was queued, its category,
+    its country, its condition, how it is offered, how long it has sat - and
+    clipping those to one line with an ellipsis would hide most of the
+    evidence the decision is made from. This is the one place the two rows
+    genuinely differ, so it is the one rule that overrides. */
+table.scan.queue .lot-meta {
+  white-space: normal; max-width: none; overflow: visible; line-height: 1.7;
+}
+table.scan.queue .lot-title a { white-space: normal; max-width: none }
+table.scan.queue td.bid .thin { font-family: var(--font-body); font-size: 11px }
+
+/*  The pickers stack under the lot rather than beside it once the row is a
+    card - they are the widest thing on the row and would otherwise set the
+    card's width on their own. */
+@media (max-width: 860px) {
+  table.scan.queue th.when, table.scan.queue td.when { display: none }
+}
+@media (max-width: 620px) {
+  table.scan.queue td.ident { display: block; order: 6; flex: 1 1 100% }
+  table.scan.queue td.set { order: 7; flex: 1 1 100% }
+}
+
 /*  A phone. The design's own mobile board drops to a title, a bid over its
     spot figure, the chip and two 44px targets - so the columns that carry the
     least go first, and the verdict buttons grow rather than shrink. */

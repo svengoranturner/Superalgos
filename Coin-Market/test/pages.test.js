@@ -2996,6 +2996,100 @@ test('a reference page costs one assembly, not the scanner as well', async () =>
 })
 
 /*
+    THE REVIEW QUEUE AS A TABLE.
+
+    This reverses a decision the code recorded a reason for: the queue was a
+    list because an 84-character eBay title pushed a table sideways on a
+    phone. The scanner met the same wall and answered it by stacking its rows
+    under 620px rather than by giving up the table, and this reuses that
+    stylesheet - so the assertions below are about the table existing on a
+    desktop AND about the row keeping everything the list showed.
+*/
+test('the review queue is a table you can sort by its headers', async () => {
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    assert.ok(body.includes('<table class="scan queue">'),
+        'the queue is not a table')
+    assert.ok(body.includes('class="sortable"'), 'the queue table has no clickable column')
+
+    /*  And the ordering in force is marked, or the header is a link that
+        tells you nothing about where you are. Asked for by name, because the
+        default ordering - least certain first - deliberately has no column:
+        it ranks rows by how little the classifier trusted itself, which is
+        not a field anybody would look up. */
+    const dear = (await fetchAll(opened, ['/review?order=dearest']))['/review?order=dearest'].body
+    assert.ok(dear.includes('class="sortable on"'),
+        'no column is marked as the one the table is ordered by')
+
+    /*  Every header link has to carry the coin and the sale filter, or
+        ordering a column drops you into a different queue - the exact
+        lost-parameter bug this page is written against. */
+    const heads = body.split('<thead>')[1].split('</thead>')[0]
+    const links = heads.match(/href="([^"]+)"/g) || []
+    assert.ok(links.length >= 4, 'only ' + links.length + ' sortable columns')
+    for (const link of links) {
+        assert.ok(link.includes('coin=') && link.includes('sale='),
+            'a column link drops the queue you are in: ' + link)
+    }
+    opened.db.close()
+})
+
+test('a queue column reorders the queue', async () => {
+    const opened = twoSeriesStore()
+    const paths = ['/review?sale=all&order=dearest', '/review?sale=all&order=cheapest']
+    const pages = await fetchAll(opened, paths)
+
+    const first = (body) => {
+        const rows = body.split('<tbody>')[1]
+        return rows.split('</tr>')[0].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
+    }
+    assert.notStrictEqual(first(pages[paths[0]].body), first(pages[paths[1]].body),
+        'dearest-first and cheapest-first opened with the same row')
+    opened.db.close()
+})
+
+test('the queue table keeps everything the list showed', async () => {
+    /*  A table is a rearrangement, not a reduction. The row still has to
+        carry the tick, the thumbnail, the pickers that say what the coin is,
+        and both verdict buttons - dropping any of them to make the columns
+        fit would be losing the page's whole job to its layout. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+    const row = body.split('<tbody>')[1].split('</tr>')[0]
+
+    assert.ok(row.includes('name="pick"'), 'no tick box: a bulk decision you cannot make')
+    assert.ok(row.includes('<img'), 'no photograph')
+    assert.ok(/name="p_[^"]+"/.test(row), 'no kind picker')
+    assert.ok(/name="d_[^"]+"/.test(row), 'no denomination picker')
+    assert.ok(/name="q_[^"]+"/.test(row), 'no quantity box')
+    assert.ok(row.includes('name="genuine"') && row.includes('name="reject"'),
+        'a row you can see is a row you cannot judge')
+    assert.ok(row.includes('has filed this as'),
+        'the row no longer says which group the coin was filed under')
+    opened.db.close()
+})
+
+test('the three sections survive the table, each with its own form', async () => {
+    /*  They are the page's argument - what is making a number wrong right
+        now, what is merely uncertain, what was dropped on purpose - and each
+        is its own form so a bulk decision cannot reach across a boundary the
+        reviewer was not looking at. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    for (const heading of ['Making a number wrong right now', 'Uncertain, but not being priced',
+        'Deliberately excluded']) {
+        assert.ok(body.includes(heading), 'the "' + heading + '" section is gone')
+    }
+    const tables = (body.match(/<table class="scan queue">/g) || []).length
+    const forms = (body.match(/<form method="post" action="\/apply">/g) || []).length
+    assert.strictEqual(forms, tables,
+        tables + ' tables inside ' + forms + ' forms: a section is sharing another\'s')
+    opened.db.close()
+})
+
+/*
     THE COIN TYPES PAGE.
 
     Was two tables, one per series, with no controls and no orderable column.
@@ -4014,6 +4108,14 @@ test('an unrecognised coin offers a way to say what it is', async () => {
         'no series control is offered on a row nothing could name')
     assert.match(body, /British Gold Sovereigns/,
         'the series control offers no series to choose')
+
+    /*  And the Filed as column says the tool could not place it, rather than
+        sitting empty. An unplaced coin is not a coin filed wrongly - it is
+        one that joined no clearing figure at all, which is a different job
+        for the reviewer, and a blank cell says neither. */
+    const row = body.split('<tbody>')[1].split('</tr>')[0]
+    assert.ok(row.includes('>no group<'),
+        'a coin the tool could not place has an empty Filed as cell')
     opened.db.close()
 })
 

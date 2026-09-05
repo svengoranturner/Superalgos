@@ -2459,7 +2459,16 @@ function reviewPage (opened, url) {
         split into excluded and uncertain - so both sections describe the
         same set, and the counts under them keep meaning what they say.
     */
-    const QUEUE_SORTS = ['unsure', 'newest', 'oldest', 'dearest', 'cheapest', 'title']
+    /*  'ident' is new, and it is here because the Filed as column is: sorting
+        by the group a coin was put in brings everything filed the same way
+        together, which is how a whole mis-filed group becomes visible rather
+        than one row of it at a time.
+
+        'premium' and 'bargain' are still absent, and still for the reason
+        they always were - reviewQueue does not select askPremium, so both
+        would order every row equally and look like a control that does
+        nothing. */
+    const QUEUE_SORTS = ['unsure', 'newest', 'oldest', 'dearest', 'cheapest', 'title', 'ident']
     const beforeControls = rows.filter(r => matchesSale(r, sale))
     const controls = applyRowControls(beforeControls, url, QUEUE_SORTS, 'unsure')
     const filtered = controls.rows
@@ -2527,6 +2536,27 @@ function reviewPage (opened, url) {
     /*  Back to the queue you were actually working through, both filters
         intact. Landing on a different one after every verdict is the same
         lost-parameter bug as the tabs, one click later. */
+    /*  Every parameter this page is holding, in one place.
+
+        `back` used to build this inline for the one caller that needed it.
+        The sortable headers need the same set with the ordering swapped, and
+        two builders over one parameter list is how a control comes to drop
+        another's state - which is the bug this page's comments spend most of
+        their length warning about. */
+    const reviewHref = (order) => {
+        const params = []
+        if (chosen !== null) { params.push('coin=' + encodeURIComponent(chosen)) }
+        params.push('sale=' + encodeURIComponent(sale))
+        if (controls.terms.length > 0) {
+            params.push('q=' + encodeURIComponent(url.searchParams.get('q') || ''))
+        }
+        if (controls.group !== null) { params.push('group=' + encodeURIComponent(controls.group)) }
+        if (order !== null && order !== 'unsure') {
+            params.push('order=' + encodeURIComponent(order))
+        }
+        return '/review?' + params.join('&')
+    }
+
     const backParams = []
     if (chosen !== null) { backParams.push('coin=' + encodeURIComponent(chosen)) }
     /*  ALWAYS stated, never omitted-when-default. The old form dropped
@@ -2570,20 +2600,44 @@ function reviewPage (opened, url) {
         ? 'Tick down the left, then one click. Anything you have not ticked is untouched.'
         : '')
 
+    /*
+        A TABLE, WHICH REVERSES A DELIBERATE DECISION.
+
+        This queue was a list because a table scrolled sideways on a phone:
+        an eBay title runs to 84 characters and there is no width for it
+        beside five other columns. That reasoning was sound and is answered
+        rather than ignored - the scanner met the same wall and stacked its
+        rows under 620px instead of shrinking them, and this reuses that
+        stylesheet, so the table is a table where there is room and the same
+        stacked cards where there is not.
+
+        What it buys is the thing the list could not do: every column is
+        sortable, so "show me everything filed as a proof" or "the dearest
+        first" is a click on the heading rather than a hunt down a page of
+        prose. The owner asked for the scanner's treatment here, and this is
+        that treatment, not an imitation of it.
+
+        The three sections stay. They are the page's argument - what is
+        making a number wrong right now, what is merely uncertain, what was
+        dropped on purpose - and each is its own form so a bulk decision
+        cannot reach across a boundary it was not looking at.
+    */
     const list = (items, empty, cap) => {
         if (items.length === 0) { return '<p class="thin">' + empty + '</p>' }
         const shown = items.slice(0, cap || 250)
         return '<form method="post" action="/apply">' +
             '<input type="hidden" name="back" value="' + escapeHtml(back) + '">' +
             bar('top') +
-            '<div class="card"><div class="queue">' +
-            shown.map(r => queueRow(r, verdictCell(r))).join('') +
-            '</div>' +
+            '<div class="card scan-card"><table class="scan queue">' +
+            sortableHead(QUEUE_COLUMNS, controls.order,
+                (key) => escapeHtml(reviewHref(key))) +
+            '<tbody>' +
+            shown.map(r => queueTableRow(r, verdictCell(r))).join('') +
+            '</tbody></table></div>' +
             (items.length > shown.length
-                ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + shown.length +
+                ? '<p class="thin" style="margin:10px 0 0">Showing the first ' + shown.length +
                   ' of ' + items.length + '.</p>'
                 : '') +
-            '</div>' +
             (shown.length > 6 ? bar('bottom') : '') +
             '</form>'
     }
@@ -3122,21 +3176,21 @@ function detectedDenomination (row) {
         found.pack.denominations[denomination] ? denomination : null
 }
 
+/*  The row's two jobs, which the list ran together and the table has to keep
+    apart: saying what the coin IS - which kind, which denomination, how many -
+    and saying whether it is one at all. In a table they are two columns, so
+    they are two functions; callControls still emits them together for the
+    list, byte for byte. */
 function callControls (row) {
-    if (!row.legacyId) { return '<span class="thin">&mdash;</span>' }
+    return callPickers(row) + callVerdict(row)
+}
+
+/*  Which kind, which denomination, how many - and which series, when nothing
+    has decided one. Empty once a verdict is in: a settled row has nothing
+    left to set. */
+function callPickers (row) {
+    if (!row.legacyId || row.verdict) { return '' }
     const id = escapeHtml(row.legacyId)
-
-    if (row.verdict) {
-        const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
-            ? 'You said: genuine' +
-                (row.labelledQuantity > 1 ? ' ×' + row.labelledQuantity : '') +
-                (row.labelledDenomination
-                    ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
-            : 'You said: ' + escapeHtml(SERIES.words(row).notOne.toLowerCase())
-        return '<span class="settled">' + said + '</span> ' +
-            '<button class="plain" name="undo" value="' + id + '" title="Forget this decision">undo</button>'
-    }
-
     /*  Pre-selected to whatever the classifier already worked out, so the
         common case needs no interaction at all: clicking Genuine submits the
         denomination it already had. The dropdown only asks a question when it
@@ -3203,7 +3257,32 @@ function callControls (row) {
             coin in. The wording that used to be on the face of the button -
             "Not a sovereign", "Not a silver dollar", still series-specific
             from the pack - is the tooltip now. */
-        '<button class="btn btn-secondary icon-btn yes" name="genuine" value="' + id +
+        ''
+}
+
+/*  Yes, no, or what you already said.
+
+    The settled label carries the quantity and denomination that went in with
+    the verdict, which scanVerdict's does not - on the scanner there is
+    nothing to set, and here that record is the only place the reviewer can
+    see what they chose. */
+function callVerdict (row) {
+    if (!row.legacyId) { return '<span class="thin">&mdash;</span>' }
+    const id = escapeHtml(row.legacyId)
+
+    if (row.verdict) {
+        const said = row.verdict === LEARNED.VERDICT.SOVEREIGN
+            ? 'You said: genuine' +
+                (row.labelledQuantity > 1 ? ' ×' + row.labelledQuantity : '') +
+                (row.labelledDenomination
+                    ? ' (' + escapeHtml(String(row.labelledDenomination).toLowerCase()) + ')' : '')
+            : 'You said: ' + escapeHtml(SERIES.words(row).notOne.toLowerCase())
+        return '<span class="settled">' + said + '</span> ' +
+            '<button class="plain" name="undo" value="' + id +
+            '" title="Forget this decision">undo</button>'
+    }
+
+    return '<button class="btn btn-secondary icon-btn yes" name="genuine" value="' + id +
         '" title="Genuine">' + RENDER.icon('check') + '</button>' +
         '<button class="btn btn-secondary icon-btn no" name="reject" value="' + id +
         '" title="' + escapeHtml(SERIES.words(row).notOne) + '">' +
@@ -3392,6 +3471,98 @@ function scanVerdict (row) {
         RENDER.icon('cross') + '</button>'
 }
 
+/*
+    THE REVIEW QUEUE'S COLUMNS.
+
+    The queue was a list, and deliberately: server.js recorded that a table
+    scrolled sideways on a phone because eBay titles run to 84 characters.
+    That was true of a fixed table and is no longer true of this one - the
+    scanner reversed exactly the same decision by stacking its rows under
+    620px, and this reuses that stylesheet rather than re-arguing the point.
+
+    Six columns where the scanner has eight, because two of the scanner's do
+    not apply - a queued lot has no bid-versus-spot to show - and one is
+    new: the row's pickers, which are the whole reason this page exists and
+    were previously wedged in beside the verdict buttons.
+
+    'unsure' is the default ordering and has no column, which is right: it
+    ranks rows by how little the classifier trusted itself, and that is not a
+    field anybody would look up. It stays in the strip's select, where the
+    orderings without a column live.
+*/
+const QUEUE_COLUMNS = [
+    { className: 'pick-cell' },
+    { label: 'Lot', className: 'lot', key: 'title' },
+    { label: 'Filed as', className: 'ident', key: 'ident',
+        title: 'The group the tool has put this coin in, which decides the clearing prices ' +
+            'its premium is measured against. Sorting by it brings everything filed the same ' +
+            'way together, which is how a whole mis-filed group becomes visible.' },
+    { label: 'Price', className: 'figure bid', key: 'dearest', back: 'cheapest',
+        title: 'What it sold for, or what it is asking if it has not.' },
+    { label: 'When', className: 'figure when', key: 'newest', back: 'oldest',
+        title: 'When it sold, or when this tool first saw it.' },
+    { label: 'Set', className: 'set',
+        title: 'What the coin is. Pre-filled with whatever the classifier worked out, so a ' +
+            'row it read correctly needs no interaction - these only ask a question when ' +
+            'they are showing one.' },
+    { label: 'Verdict', className: 'verdict-cell' }
+]
+
+/*  One queued lot as a table row.
+
+    Same form field names as the list, so a decision made here is the decision
+    made anywhere else - the two are arrangements, not workflows. */
+function queueTableRow (row, verdictCell) {
+    const sold = queueSold(row)
+    const total = sold
+        ? row.finalPrice + (row.finalShipping || 0)
+        : (row.price || 0) + (row.shipping || 0)
+
+    const filedAs = row.instrumentKey || row.bestGuess || null
+    const meta = queueMeta(row)
+
+    /*  The filed-as badge is the first thing queueMeta emits and it is a
+        column here, so it would otherwise appear twice on the same row. */
+    const rest = meta.slice(1)
+
+    const pick = row.legacyId && !row.verdict
+        ? '<input class="pick" type="checkbox" name="pick" value="' + escapeHtml(row.legacyId) +
+          '" title="Select this listing for a bulk decision">'
+        : '<span class="pick-spacer"></span>'
+
+    const when = sold && row.endedAt
+        ? 'sold ' + escapeHtml(String(row.endedAt).slice(0, 10))
+        : (row.firstSeen ? escapeHtml(String(row.firstSeen).slice(0, 10)) : '\u2014')
+
+    return '<tr>' +
+        '<td class="pick-cell">' + pick + '</td>' +
+        '<td class="lot">' +
+        '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.categoryPath || '')) +
+        '<div class="lot-text">' +
+        '<div class="lot-title">' + (row.itemWebUrl
+            ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
+              escapeHtml(row.title || '') + '</a>'
+            : escapeHtml(row.title || '')) + '</div>' +
+        '<div class="lot-meta">' + rest.join('<span aria-hidden="true"> \u00b7 </span>') +
+        '</div></div></div></td>' +
+        /*  The badge itself, wrapped in the link the scanner grew: everything
+            a coin type is worth lives on /listings, and the queue is where
+            you find out you wanted to look. */
+        '<td class="ident">' + (filedAs === null
+            ? filedAsBadge(row)
+            : '<a class="plain-link" href="/listings?key=' + encodeURIComponent(filedAs) +
+              '" title="Every sale behind this coin type, and what it clears at">' +
+              filedAsBadge(row) + '</a>') + '</td>' +
+        '<td class="figure bid">' + (sold ? '<span class="thin">sold</span> ' : '') +
+        (total > 0 ? gbp(total) : '\u2014') +
+        (verdictCell === undefined || verdictCell === '' ? '' : '<div>' + verdictCell + '</div>') +
+        '</td>' +
+        '<td class="figure when">' + when + '</td>' +
+        '<td class="set">' + callPickers(row) + '</td>' +
+        '<td class="verdict-cell">' + callVerdict(row) + '</td>' +
+        '</tr>'
+}
+
 /*  The scan table's columns, and which ordering each turns on.
 
     A pair per column where a reverse makes sense, so clicking Bid twice gives
@@ -3444,68 +3615,82 @@ function scanTable (rows, verdictCell, sweepAt, back, order, hrefFor) {
         '</form>'
 }
 
-function queueRow (row, verdictCell) {
-    /*  A completed sale is quoted at what it fetched, not at whatever it was
-        asking the last time we looked. The asking price of a lot that has
-        already sold is history; the hammer price is the measurement. */
-    const sold = row.sold === 1 && Number.isFinite(row.finalPrice)
-    const total = sold
-        ? row.finalPrice + (row.finalShipping || 0)
-        : (row.price || 0) + (row.shipping || 0)
+/*  A completed sale is quoted at what it fetched, not at whatever it was
+    asking the last time we looked. The asking price of a lot that has already
+    sold is history; the hammer price is the measurement. */
+function queueSold (row) {
+    return row.sold === 1 && Number.isFinite(row.finalPrice)
+}
 
-    const meta = []
+/*  Everything the row says about a lot besides its title and its price.
 
-    /*
-        WHICH COIN THE TOOL THINKS THIS IS, which is the question nobody was
-        being shown.
+    Lifted out of queueRow whole when the review queue became a table: the
+    list and the table are two arrangements of the same judgement, and a
+    badge that appears in one and not the other is the reviewer being shown
+    different evidence depending which page they opened.
+*/
+/*
+    WHICH COIN THE TOOL THINKS THIS IS, which is the question nobody was being
+    shown.
 
-        The owner has been working these rows answering one question - "is
-        this a real sovereign?" - while the tool was quietly answering a
-        second: which KIND. That second answer decides which pile of clearing
-        prices the coin joins, and therefore the ceiling every offer on it is
-        measured against, and it was nowhere on the row.
+    The owner has been working these rows answering one question - "is this a
+    real sovereign?" - while the tool was quietly answering a second: which
+    KIND. That second answer decides which pile of clearing prices the coin
+    joins, and therefore the ceiling every offer on it is measured against,
+    and it was nowhere on the row.
 
-        It is not a small difference. Measured on this store's own sold
-        auctions, a full sovereign filed as bullion clears at +9.6% and one
-        filed as a proof at +40.6% - so a coin in the wrong pile is a thirty
-        point error in what the tool believes it is worth, in whichever
-        direction is least helpful. 3,400 lots are filed this way, almost all
-        of them off the title alone.
+    It is not a small difference. Measured on this store's own sold auctions,
+    a full sovereign filed as bullion clears at +9.6% and one filed as a proof
+    at +40.6% - so a coin in the wrong pile is a thirty point error in what
+    the tool believes it is worth, in whichever direction is least helpful.
+    3,400 lots are filed this way, almost all of them off the title alone.
 
-        Confidence is shown when it is poor rather than always: a number
-        beside every row is noise, and 0.97 tells a reader nothing they need
-        to act on. Below 0.7 it is a coin the classifier was guessing at, and
-        those are the ones worth a second look - 43 of 239 in GRADED.FULL, 38
-        of 411 in BULLION.FULL.
-    */
+    Confidence is shown when it is poor rather than always: a number beside
+    every row is noise, and 0.97 tells a reader nothing they need to act on.
+    Below 0.7 it is a coin the classifier was guessing at, and those are the
+    ones worth a second look - 43 of 239 in GRADED.FULL, 38 of 411 in
+    BULLION.FULL.
+
+    A badge and not a bare name, and it has to stay one: the table gave this a
+    column of its own, and the tidier thing to put in a narrow column would
+    have been the name alone - which drops the hedge, and the hedge is the
+    part that says which rows to look at. Written once so both arrangements
+    show the same claim with the same caveats on it.
+*/
+function filedAsBadge (row) {
     const filedAs = row.instrumentKey || row.bestGuess || null
     if (filedAs === null) {
         /*  Worth saying rather than leaving blank. An unplaced coin is not a
             coin filed wrongly - it is one the tool could not place at all,
             which is a different job for the reviewer and the only case where
             no group is the honest answer. */
-        meta.push('<span class="badge critical" title="The tool could not work out ' +
+        return '<span class="badge critical" title="The tool could not work out ' +
             'which group this coin belongs to, so it is counted in no clearing figure ' +
-            'and has no premium.">no group</span>')
-    } else {
-        const name = INSTRUMENTS.displayName(filedAs)
-        /*  filedConfidence is how sure the classifier was of the group it
-            ACTUALLY filed the coin under; row.confidence, on a queued row, is
-            how sure it was of the guess it could not commit to. Prefer the
-            first: it is the number attached to the badge being drawn. */
-        const sureness = Number.isFinite(row.filedConfidence) ? row.filedConfidence : row.confidence
-        const shaky = Number.isFinite(sureness) && sureness < 0.7
-        meta.push('<span class="badge' + (shaky ? ' critical' : '') +
-            '" title="The tool has filed this as ' + escapeHtml(name) + ' (' +
-            escapeHtml(filedAs) + '), and that is the group whose clearing prices ' +
-            'its premium and any offer on it are measured against. If the group is ' +
-            'wrong, both numbers are wrong.' +
-            (shaky
-                ? ' It is only ' + Math.round(sureness * 100) + '% sure of that, ' +
-                  'which is low - worth a look.'
-                : '') +
-            '">' + escapeHtml(name) + (shaky ? ' &middot; unsure' : '') + '</span>')
+            'and has no premium.">no group</span>'
     }
+
+    const name = INSTRUMENTS.displayName(filedAs)
+    /*  filedConfidence is how sure the classifier was of the group it ACTUALLY
+        filed the coin under; row.confidence, on a queued row, is how sure it
+        was of the guess it could not commit to. Prefer the first: it is the
+        number attached to the badge being drawn. */
+    const sureness = Number.isFinite(row.filedConfidence) ? row.filedConfidence : row.confidence
+    const shaky = Number.isFinite(sureness) && sureness < 0.7
+    return '<span class="badge' + (shaky ? ' critical' : '') +
+        '" title="The tool has filed this as ' + escapeHtml(name) + ' (' +
+        escapeHtml(filedAs) + '), and that is the group whose clearing prices ' +
+        'its premium and any offer on it are measured against. If the group is ' +
+        'wrong, both numbers are wrong.' +
+        (shaky
+            ? ' It is only ' + Math.round(sureness * 100) + '% sure of that, ' +
+              'which is low - worth a look.'
+            : '') +
+        '">' + escapeHtml(name) + (shaky ? ' &middot; unsure' : '') + '</span>'
+}
+
+function queueMeta (row) {
+    const sold = queueSold(row)
+    const meta = [filedAsBadge(row)]
 
     const reason = compactReason(row.reason)
     if (reason !== null) {
@@ -3580,6 +3765,16 @@ function queueRow (row, verdictCell) {
         meta.push('seller ' + row.sellerFeedbackPct.toFixed(1) + '%' +
             (Number.isFinite(row.sellerFeedbackCnt) ? ' (' + row.sellerFeedbackCnt + ')' : ''))
     }
+
+    return meta
+}
+
+function queueRow (row, verdictCell) {
+    const sold = queueSold(row)
+    const total = sold
+        ? row.finalPrice + (row.finalShipping || 0)
+        : (row.price || 0) + (row.shipping || 0)
+    const meta = queueMeta(row)
 
     /*  The full category path in the caption, because it is the single most
         useful thing for judging a listing at a glance and it is too long
