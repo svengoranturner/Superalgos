@@ -788,6 +788,54 @@ test('the spot label needs a spot figure to label', () => {
         'printing the word with nothing after it: ' + rule[1].trim())
 })
 
+/*  THE OTHER HALF OF THE ALIGNMENT FIX, which markup alone cannot state.
+
+    The tick being a sibling is necessary and not sufficient: the title and the
+    meta line have to land in the same grid column, or the tick's slot simply
+    moves the gap somewhere else. Read out of the sheet rather than written
+    twice - the assertion is that the two agree, whatever the value is. */
+test('the title and the meta line share a column', () => {
+    const css = STATIC.css()
+    /*  Anchored to the start of a line rather than to a preceding brace:
+        every one of these rules follows a comment, so `}` never precedes it. */
+    const block = (selector) => {
+        const at = new RegExp('(?:^|\\n)' + selector.replace('.', '\\.') +
+            '\\s*\\{([^}]*)\\}').exec(css)
+        assert.ok(at !== null, 'no rule for ' + selector)
+        return at[1]
+    }
+
+    const text = block('.lot-text')
+    assert.match(text, /display:\s*grid/, '.lot-text is not a grid, so nothing places the tick')
+    assert.match(text, /grid-template-columns:\s*20px/,
+        'the gutter is not 20px - the old flex row spent exactly a 14px tick plus a 6px gap, ' +
+        'so anything else moves the title')
+
+    const column = (selector) => {
+        const found = /grid-column:\s*([^;]+)/.exec(block(selector))
+        assert.ok(found !== null, selector + ' is not placed in a column at all')
+        return found[1].trim()
+    }
+    assert.strictEqual(column('.lot-meta'), column('.lot-title'),
+        'the meta line is in a different column from the title, which is the 20px the owner ' +
+        'measured')
+    assert.notStrictEqual(column('.lot-title'), column('.tick-slot'),
+        'the title is in the tick gutter')
+})
+
+test('the meta line is no smaller than the rest of the small print', () => {
+    /*  It was 11px against a 16px title. Anchored to the .lot-meta block
+        rather than grepping the sheet, where .thin already satisfies a bare
+        search for 12px. */
+    const css = STATIC.css()
+    const rule = /\.lot-meta\s*\{([^}]*)\}/.exec(css)
+    assert.ok(rule !== null, 'the meta line has no rule at all')
+    const size = /font-size:\s*(\d+(?:\.\d+)?)px/.exec(rule[1])
+    assert.ok(size !== null, 'the meta line sets no size')
+    assert.ok(Number(size[1]) >= 12,
+        'the meta line is ' + size[1] + 'px; .thin is 12px and this is the same class of fact')
+})
+
 test('a filter toggle is a box, not an inline sliver', () => {
     /*
         THE OWNER'S REPORT: you cannot tell whether Silver and Gold are on or

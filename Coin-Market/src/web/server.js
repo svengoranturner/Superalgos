@@ -3418,10 +3418,17 @@ function scanRow (row, verdictCell, sweepAt) {
 
     /*  The tick that replaces five words. "Counted in the statistics" was a
         text badge on every row; at this density it was most of the meta line,
-        and it says the same thing as one 14px mark. */
+        and it says the same thing as one 14px mark.
+
+        It sits in a slot of its own now rather than inside the title. Empty
+        when the lot is not counted, but always emitted: the slot is a grid
+        column, and a row that skipped it would un-indent against the row
+        above - the same misalignment this change is fixing, one column to
+        the left. */
     const counted = row.priced
-        ? '<span class="ticked" title="Counted in the statistics">' + RENDER.TICKED + '</span>'
-        : ''
+        ? '<span class="tick-slot ticked" title="Counted in the statistics">' +
+          RENDER.TICKED + '</span>'
+        : '<span class="tick-slot"></span>'
 
     const meta = []
     if (Number.isFinite(row.bidCount)) {
@@ -3454,8 +3461,8 @@ function scanRow (row, verdictCell, sweepAt) {
         '" title="Select this lot for a bulk decision"></td>' +
         '<td class="lot">' +
         '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.title || '')) +
-        '<div class="lot-text">' +
-        '<div class="lot-title">' + counted +
+        '<div class="lot-text">' + counted +
+        '<div class="lot-title">' +
         (row.itemWebUrl
             ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
               escapeHtml(row.title || '') + '</a>'
@@ -3578,6 +3585,10 @@ function queueTableRow (row, verdictCell) {
         '<td class="lot">' +
         '<div class="lot-row">' + shot(row.imageUrl, escapeHtml(row.categoryPath || '')) +
         '<div class="lot-text">' +
+        /*  Nothing to say here - a queued lot is not yet counted in anything -
+            but the slot is emitted so this row's title starts where the
+            scanner's does. */
+        '<span class="tick-slot"></span>' +
         '<div class="lot-title">' + (row.itemWebUrl
             ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' +
               escapeHtml(row.title || '') + '</a>'

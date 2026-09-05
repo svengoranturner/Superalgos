@@ -763,17 +763,38 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
   border: 1px solid var(--color-divider); border-radius: 0;
 }
 .lot-row .q-shot img { width: 44px; height: 44px; border-radius: 0 }
-.lot-text { min-width: 0 }
+/*  A FIXED GUTTER, NOT A FLEX ROW.
+
+    The tick used to sit inside .lot-title, which is a flex row, while
+    .lot-meta was its sibling - so the title TEXT began 20px in (a 14px mark
+    plus a 6px gap) and the meta began at the container edge. Measured on the
+    live page at 1440px: title text x=277, meta x=257, on every row.
+
+    The gutter is 20px because that is exactly what the old flex row spent, so
+    a ticked row does not move by a pixel; only the meta line under it does.
+    The slot is emitted whether or not it is filled - see the note in
+    scanRow. */
+.lot-text {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+}
+.tick-slot { grid-column: 1; grid-row: 1; display: flex; align-items: center }
 .lot-title {
-  display: flex; align-items: center; gap: 6px;
+  grid-column: 2; grid-row: 1; min-width: 0;
   font-family: var(--font-heading); font-weight: var(--font-heading-weight); font-size: 16px;
 }
-.lot-title a { color: inherit; text-decoration: none; overflow: hidden; text-overflow: ellipsis;
+.lot-title a { color: inherit; text-decoration: none; display: block;
+  overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; max-width: 400px }
 .lot-title a:hover { color: var(--color-accent) }
 .ticked { flex: none; display: flex; color: var(--color-accent) }
+/*  12px, which is .thin's size - the meta line carries the same class of
+    fact .thin carries everywhere else, and 11.5 (.badge) or 12.5 would put a
+    fourth size on a three-size scale. It was 11px against a 16px title. */
 .lot-meta {
-  font-size: 11px; margin-top: 2px;
+  grid-column: 2; grid-row: 2;
+  font-size: 12px; margin-top: 2px;
   color: color-mix(in srgb, var(--color-text) 50%, transparent);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 410px;
 }

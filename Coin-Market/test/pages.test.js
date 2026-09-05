@@ -2839,6 +2839,52 @@ test('the scanner draws a dense table, not the tall queue cards', async () => {
     opened.db.close()
 })
 
+/*
+    THE META LINE STARTED 20px LEFT OF THE TITLE.
+
+    The owner, on a laptop: the bids / listed / seller line "could do with being
+    a bit bigger and justified in line with the title (at the moment it's
+    aligned to the 'counted in the stats' tick)". Measured at 1440px before the
+    fix: title text x=277, meta x=257, on every row.
+
+    The cause was structural rather than a stray margin - the tick lived INSIDE
+    .lot-title, which is a flex row, so the title text began after it while the
+    meta line, a sibling, began at the container edge. So the assertion is
+    structural too: the tick must not be inside the title.
+*/
+test('the tick sits beside the title, not inside it', async () => {
+    const opened = scannerStore()
+    const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+
+    const lotText = body.split('<div class="lot-text">')[1]
+    assert.ok(lotText !== undefined, 'no lot cell rendered')
+    const slot = lotText.split('<div class="lot-title">')[0]
+
+    assert.match(slot, /class="tick-slot/,
+        'the tick slot is not before the title; the meta line cannot line up with it')
+    /*  And the title itself holds nothing but the link. A tick still inside it
+        reproduces the exact offset the owner reported. */
+    const title = lotText.split('<div class="lot-title">')[1].split('</div>')[0]
+    assert.ok(!title.includes('ticked'),
+        'the tick is still inside the title, which is what pushed the text 20px right')
+    opened.db.close()
+})
+
+test('a row with no tick still keeps the gutter', async () => {
+    /*  The review queue has no tick - a queued lot is not counted in
+        anything - and if it skipped the slot its titles would sit 20px left
+        of the scanner's, which is the same misalignment one column over. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    const lotText = body.split('<div class="lot-text">')[1]
+    assert.ok(lotText !== undefined, 'no lot cell rendered')
+    const slot = lotText.split('<div class="lot-title">')[0]
+    assert.ok(slot.includes('<span class="tick-slot"></span>'),
+        'an unticked row dropped the gutter instead of leaving it empty')
+    opened.db.close()
+})
+
 test('a lot well under spot is marked, one merely near it is not', async () => {
     /*  The chip is filled at five per cent under or better. That threshold is
         the design saying which lots are worth acting on rather than merely
