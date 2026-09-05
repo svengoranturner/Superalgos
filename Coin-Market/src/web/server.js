@@ -1597,13 +1597,13 @@ function soldControls (sale) {
         const said = sale.verdict === LEARNED.VERDICT.TRACKED
             ? 'genuine'
             : SERIES.words(sale).notOne.toLowerCase()
-        return '<span class="settled thin">' + escapeHtml(said) + '</span> ' +
-            '<button class="plain" name="undo" value="' + id + '" ' +
-            'title="Forget this decision">undo</button>'
+        return '<span class="settled thin">' + escapeHtml(said) + '</span>' +
+            '<button class="btn btn-secondary icon-btn undo" name="undo" value="' + id + '" ' +
+            'title="Forget this decision">' + RENDER.icon('cross', 13) + '</button>'
     }
-    return '<button class="no" name="reject" value="' + id + '" ' +
-        'title="This is not the coin it says it is - remove it from every clearing figure">' +
-        escapeHtml(SERIES.words(sale).notOne) + '</button>'
+    return '<button class="btn btn-secondary icon-btn no" name="reject" value="' + id + '" ' +
+        'title="' + escapeHtml(SERIES.words(sale).notOne) +
+        ' - remove it from every clearing figure">' + RENDER.icon('cross') + '</button>'
 }
 
 /*
@@ -1627,11 +1627,23 @@ function soldControls (sale) {
 */
 function bulkBar (rows, hint) {
     const words = SERIES.words(rows)
+    /*  The same tick and cross, and the word SELECTED kept on the face of
+        them.
+
+        These act on everything ticked rather than on the row beside them, and
+        two icon buttons that look exactly like the per-row pair but do
+        something much larger is the one place where matching the row exactly
+        would be worse than the wording it replaces. The verdict is the icon,
+        as everywhere else; the scope is the word. The coin the batch is being
+        judged as - "Not a sovereign", "Not a silver dollar" - moves into the
+        tooltip, which is where the same wording went on the row buttons. */
     return '<div class="bulkbar">' +
-        '<button class="no" name="bulk" value="' + LEARNED.VERDICT.NOT_TRACKED + '">' +
-        escapeHtml(words.notOne) + ' &mdash; selected</button>' +
-        '<button class="yes" name="bulk" value="' + LEARNED.VERDICT.TRACKED + '">' +
-        'Genuine &mdash; selected</button>' +
+        '<button class="btn btn-secondary no" name="bulk" value="' +
+        LEARNED.VERDICT.NOT_TRACKED + '" title="' + escapeHtml(words.notOne) +
+        ' - everything ticked">' + RENDER.icon('cross') + ' selected</button>' +
+        '<button class="btn btn-secondary yes" name="bulk" value="' +
+        LEARNED.VERDICT.TRACKED + '" title="Genuine - everything ticked">' +
+        RENDER.icon('check') + ' selected</button>' +
         (hint ? '<span class="thin">' + hint + '</span>' : '') +
         '</div>'
 }
@@ -2406,13 +2418,16 @@ function callControls (row) {
         '<select name="d_' + id + '">' + options + '</select>' +
         '<input class="qty" type="number" name="q_' + id + '" min="1" max="99" value="1" ' +
         'title="How many of the same coin are in this lot. Leave at 1 unless it is a multiple.">' +
-        '<button class="yes" name="genuine" value="' + id + '">Genuine</button>' +
-        /*  The short form. "Not a sov" was the only abbreviation in the app
-            and it named one coin; the pack's own `notOne` is the right length
-            already for both series that exist ("Not a sovereign", "Not a
-            silver dollar") and reads properly for any that follow. */
-        '<button class="no" name="reject" value="' + id + '">' +
-        escapeHtml(SERIES.words(row).notOne) + '</button>'
+        /*  The same pair as the scanner, for the same reason: one gesture
+            should not have two appearances depending which list you found the
+            coin in. The wording that used to be on the face of the button -
+            "Not a sovereign", "Not a silver dollar", still series-specific
+            from the pack - is the tooltip now. */
+        '<button class="btn btn-secondary icon-btn yes" name="genuine" value="' + id +
+        '" title="Genuine">' + RENDER.icon('check') + '</button>' +
+        '<button class="btn btn-secondary icon-btn no" name="reject" value="' + id +
+        '" title="' + escapeHtml(SERIES.words(row).notOne) + '">' +
+        RENDER.icon('cross') + '</button>'
 }
 
 /*  A <details> rather than a hover, because hovering opened the preview

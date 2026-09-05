@@ -1519,9 +1519,20 @@ test('a Morgan queue is worded and offered in Morgan terms', async () => {
         'a Morgan page still says sovereign: ' +
         (withoutTabs.match(/.{0,50}sovereign.{0,50}/i) || [''])[0])
 
-    assert.ok(body.includes('Not a silver dollar &mdash; selected'),
+    /*  On the TITLE, not on the face of the button.
+
+        Both are the tick and the cross now, the same pair the scanner uses, so
+        one gesture does not have two appearances depending which list you
+        found the coin in. The series-specific wording did not go away - it
+        moved into the tooltip, which is the only thing that changed and the
+        only thing these assertions had to follow. The batch button keeps the
+        word "selected" on its face, because it acts on everything ticked and
+        must not be mistaken for the row beside it. */
+    assert.ok(body.includes('title="Not a silver dollar - everything ticked"'),
         'the bulk bar does not name the coin it acts on')
-    assert.ok(body.includes('>Not a silver dollar</button>'),
+    assert.ok(body.includes('selected</button>'),
+        'the batch button no longer says what it acts on')
+    assert.ok(body.includes('title="Not a silver dollar"'),
         'the per-row reject button does not name the coin')
 
     /*  The dropdown must offer the one denomination this coin has, and none
@@ -1541,9 +1552,20 @@ test('a sovereign queue still reads exactly as it did', async () => {
     const path = '/review?coin=GB.SOV&sale=all'
     const body = (await fetchAll(opened, [path]))[path].body
 
-    assert.ok(body.includes('Not a sovereign &mdash; selected'),
+    /*  On the TITLE, not on the face of the button.
+
+        Both are the tick and the cross now, the same pair the scanner uses, so
+        one gesture does not have two appearances depending which list you
+        found the coin in. The series-specific wording did not go away - it
+        moved into the tooltip, which is the only thing that changed and the
+        only thing these assertions had to follow. The batch button keeps the
+        word "selected" on its face, because it acts on everything ticked and
+        must not be mistaken for the row beside it. */
+    assert.ok(body.includes('title="Not a sovereign - everything ticked"'),
         'the sovereign wording regressed')
-    assert.ok(body.includes('>Not a sovereign</button>'),
+    assert.ok(body.includes('selected</button>'),
+        'the batch button no longer says what it acts on')
+    assert.ok(body.includes('title="Not a sovereign"'),
         'the per-row button lost its wording')
     /*  Order matters as much as membership: this is the order the dropdown
         has always had, and a change would be a diff the owner would notice
@@ -3023,6 +3045,76 @@ test('exactly one menu row is marked as the page you are on', async () => {
         const current = (nav.match(/class="menu-row on"/g) || []).length
         assert.strictEqual(current, 1,
             path + ' marks ' + current + ' menu rows as current; exactly one is where you are')
+    }
+    opened.db.close()
+})
+
+/*
+    ONE GESTURE, ONE APPEARANCE.
+
+    The redesign gave the scanner a tick and a cross. Three other places kept
+    the wide worded buttons they had always had - the sold table, the review
+    queue and the drill-down - so the same decision looked like two different
+    features depending which list you found the coin in, and the owner asked
+    for the pair everywhere.
+
+    Asserted as an absence as well as a presence: a new list is far more likely
+    to copy the old wide button from a neighbouring function than to invent a
+    third style, so what this really guards is that no worded verdict button
+    comes back.
+*/
+const VERDICT_SURFACES = [
+    ['/', 'the scanner'],
+    ['/?view=sold', 'the sold list'],
+    ['/?view=offers', 'the offers panel'],
+    ['/review', 'the review queue'],
+    ['/listings?key=GB.SOV.BULLION.FULL', 'the drill-down']
+]
+
+test('every verdict button in the app is the same tick and cross', async () => {
+    const opened = twoSeriesStore()
+    const pages = await fetchAll(opened, VERDICT_SURFACES.map(([path]) => path))
+
+    let found = 0
+    for (const [path, what] of VERDICT_SURFACES) {
+        const body = pages[path].body
+        assert.strictEqual(pages[path].status, 200, path + ' did not render')
+
+        /*  Every button that records a verdict, whichever field it posts. */
+        const buttons = body.match(/<button[^>]*name="(?:genuine|reject|bulk)"[^>]*>[\s\S]*?<\/button>/g) || []
+        if (buttons.length === 0) { continue }
+        found += buttons.length
+
+        for (const button of buttons) {
+            assert.ok(button.includes('<svg'),
+                what + ' has a verdict button with no icon in it: ' + button.slice(0, 90))
+
+            /*  The face carries an icon and, on a batch button, the one word
+                that says it acts on the ticked rows. Anything else is the old
+                worded button growing back. */
+            const face = button.replace(/<svg[\s\S]*?<\/svg>/g, '').replace(/<[^>]*>/g, '').trim()
+            assert.ok(face === '' || face === 'selected',
+                what + ' has a worded verdict button reading "' + face + '"')
+        }
+    }
+    assert.ok(found >= 4, 'only ' + found + ' verdict buttons found across the app; ' +
+        'this test is not reaching them')
+    opened.db.close()
+})
+
+test('a batch button still says it acts on the selection', async () => {
+    /*  The one place the row pair is NOT copied exactly. Two icon buttons that
+        look like the per-row pair but act on everything ticked would be the
+        same picture for a much larger action. */
+    const opened = twoSeriesStore()
+    const body = (await fetchAll(opened, ['/review']))['/review'].body
+
+    const bulk = body.match(/<button[^>]*name="bulk"[^>]*>[\s\S]*?<\/button>/g) || []
+    assert.strictEqual(bulk.length, 2, 'expected a pair of batch buttons, found ' + bulk.length)
+    for (const button of bulk) {
+        assert.ok(button.includes('selected'),
+            'a batch button does not say it acts on the selection: ' + button.slice(0, 90))
+        assert.ok(/title="[^"]+"/.test(button), 'a batch button has no tooltip saying what it does')
     }
     opened.db.close()
 })
