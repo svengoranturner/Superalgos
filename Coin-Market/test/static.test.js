@@ -864,6 +864,146 @@ test('the title and the meta line share a column', () => {
     Worded for the general case rather than threaded through as a parameter,
     because the multi-metal caller has no single answer to give it.
 */
+/*  The plot only. The legend carries its own 12x12 glyphs, whose coordinates
+    are in their own viewBox and would otherwise read as marks outside the
+    plot. */
+const plotOf = (svg) => svg.split('<div class="scroll">')[1]
+
+test('the premium chart fits its axis to where coins clear, not to the ask', () => {
+    /*
+        The domain was max(p25, p50, p75, ask) * 1.08, so the ASK set the
+        scale - and the ask is a different population. Measured on the live
+        store the asks run to 141% while every middle half but two sits below
+        21%, so more than half the plot carried two grey dots and 8% of
+        headroom, and Sovereign (bullion) - the core instrument of the whole
+        tool - got 1.7% of the width, about eighteen pixels, for its middle
+        half.
+
+        Pinned the way the uplift chart's scale is pinned: the SAME clearing
+        row drawn twice, once beside an ordinary ask and once beside an
+        absurd one. Comparing two different charts would pass trivially; the
+        same row in two companies does not.
+    */
+    const clearing = {
+        label: 'Sovereign (bullion)',
+        p10: 0.055, p25: 0.077, p50: 0.096, p75: 0.123, p90: 0.155, n: 40
+    }
+    const bandWidth = (svg) => {
+        const m = /<rect class="band"[^>]*width="([\d.]+)"/.exec(svg)
+        assert.ok(m !== null, 'the chart drew no middle half')
+        return Number(m[1])
+    }
+
+    const modest = bandWidth(RENDER.premiumChart([Object.assign({}, clearing, { ask: 0.14 })]))
+    const absurd = bandWidth(RENDER.premiumChart([Object.assign({}, clearing, { ask: 1.41 })]))
+    assert.ok(Math.abs(modest - absurd) < 0.5,
+        'the middle half drew ' + modest.toFixed(1) + ' units wide beside a 14% ask and ' +
+        absurd.toFixed(1) + ' beside a 141% one, so the ask is setting the domain again')
+
+    /*  And it is wide enough to be a bar rather than a smear. 612 units of
+        plot; this coin's middle half is 4.6pp of a 15.5pp axis. */
+    assert.ok(absurd > 150,
+        'the middle half is ' + absurd.toFixed(1) + ' units of a 612-unit plot')
+
+    /*  The ask that no longer sets the scale still says where it went. */
+    const pinned = RENDER.premiumChart([Object.assign({}, clearing, { ask: 1.41 })])
+    assert.match(pinned, /class="pin ask"/,
+        'an ask past the right edge drew no marker - it was simply dropped')
+    assert.match(pinned, /<title>[^<]*asks 141\.0%/,
+        'the pinned ask does not carry its own value anywhere')
+    assert.ok(pinned.includes('+131pp'),
+        'the pinned ask does not carry the gap it stands for')
+})
+
+test('nothing is drawn outside the plot, in either direction', () => {
+    /*  p10 and p90 were not in the domain at all and there is no clip-path,
+        so this row's -47% cheapest tenth was drawn a hundred and sixty units
+        INSIDE the label gutter, over the words. */
+    const svg = RENDER.premiumChart([{
+        label: 'Silver Dollar · Morgan (unattributed)',
+        p10: -0.470, p25: 0.061, p50: 0.166, p75: 0.208, p90: 0.327, ask: 1.378, n: 20
+    }])
+    assert.match(svg, /class="pin range"/,
+        'a -47% cheapest tenth was drawn to scale rather than pinned, so one whisker end is ' +
+        'setting the scale for the row')
+
+    for (const m of plotOf(svg).matchAll(/<(?:circle|line|rect)\b[^>]*?\b(?:cx|x1|x)="(-?[\d.]+)"/g)) {
+        const at = Number(m[1])
+        assert.ok(at >= 327.9 && at <= 940.1,
+            'a mark was drawn at x=' + at + ', outside the 328..940 plot')
+    }
+})
+
+test('the middle half is the heaviest mark on the row', () => {
+    /*
+        The band was stroke-width 4 at opacity 0.32 - 1.41:1 on the light
+        card, 2.04:1 on the dark one, under the 3:1 floor for a graphic you
+        have to see - while the cheapest-tenth tick measured 3.45:1 and the
+        DECORATIVE dashed connector, subordinate to both, measured 2.44:1.
+        Loudest to quietest was upside down.
+
+        --clearing is 3.42:1 on the light card at FULL strength, so opacity
+        is not available to any mark carrying data: fade it at all and it is
+        under the floor. The hierarchy is thickness, and this asserts the
+        thicknesses in order.
+    */
+    const svg = RENDER.premiumChart([{
+        label: 'Sovereign (bullion)',
+        p10: 0.055, p25: 0.077, p50: 0.096, p75: 0.123, p90: 0.155, ask: 0.13, n: 40
+    }])
+    const el = (cls) => {
+        const m = new RegExp('<[a-z]+ class="' + cls + '"[^>]*>').exec(svg)
+        assert.ok(m !== null, 'no "' + cls + '" mark on the row')
+        return m[0]
+    }
+    const num = (cls, name) => {
+        const m = new RegExp(name + '="([\\d.]+)"').exec(el(cls))
+        assert.ok(m !== null, '"' + cls + '" has no ' + name)
+        return Number(m[1])
+    }
+
+    const band = num('band', 'height')
+    const median = num('mid', 'r') * 2
+    const range = num('range', 'stroke-width')
+    const ask = num('ask', 'stroke-width')
+
+    assert.ok(band >= 10, 'the middle half is ' + band + ' units thick; it was 4, and invisible')
+    assert.ok(band > median && median > range && range > ask,
+        'weight is not in importance order: band ' + band + ', median ' + median +
+        ', range ' + range + ', ask ' + ask)
+
+    /*  Every clearing mark at full strength, and the connector deliberately
+        NOT - it is the one mark allowed under the floor, because it is
+        redundant with a number drawn as text. */
+    for (const cls of ['band', 'mid', 'range', 'ask']) {
+        assert.ok(!/opacity="/.test(el(cls)),
+            cls + ' is faded; --clearing is only 3.42:1 on the light card at full strength, ' +
+            'so any opacity below 1 puts it under the 3:1 floor')
+    }
+    assert.match(el('link'), /stroke="var\(--axis\)"/,
+        'the connector is drawn in something louder than --axis')
+
+    /*  Two series, two SHAPES. --clearing and --ask are 1.03:1 against each
+        other on the light card and 1.01:1 on the dark one - the same
+        lightness by construction, because the system is mono and --ask is a
+        neutral ramp step rather than a second hue. Two filled dots of one
+        radius are one dot in greyscale, and were exactly that before. */
+    assert.match(el('ask'), /fill="none"/, 'the ask is filled, like the median')
+    assert.match(el('mid'), /fill="var\(--clearing\)"/, 'the median is not solid')
+})
+
+test('an ask below the clearing price reads as a negative gap', () => {
+    /*  '+' was hard-coded. A coin type whose shelf asks LESS than its
+        auctions clear at is exactly the find this tool exists for, and it
+        would have rendered "+-4pp". */
+    const svg = RENDER.premiumChart([{
+        label: 'Sovereign (proof)',
+        p10: 0.127, p25: 0.159, p50: 0.311, p75: 0.704, p90: 0.909, ask: 0.271, n: 12
+    }])
+    assert.ok(!svg.includes('+-'), 'a negative gap still renders as "+-"')
+    assert.ok(svg.includes('&#8722;4pp'), 'the negative gap is unsigned')
+})
+
 test('the premium chart does not claim every coin is gold', () => {
     const svg = RENDER.premiumChart([{
         label: 'Silver Dollar (unattributed)',

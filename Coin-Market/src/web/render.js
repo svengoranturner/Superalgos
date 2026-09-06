@@ -409,94 +409,291 @@ exports.compositionChart = function (c) {
         '</div>'
 }
 
+/*
+    WHAT THE AXIS MUST SHOW, AND WHAT IT MUST NOT LET ONE ROW DICTATE.
+
+    The domain was min(0, p25..ask) to max(p25..ask) * 1.08, so the ASK set
+    the scale - and the ask is a different population entirely. Measured on
+    the live store: the asks run to 141% while every middle half lives
+    between -3% and 72%, so more than half the plot carried nothing but two
+    grey dots and 8% of headroom. Sovereign (bullion), the core instrument of
+    the whole tool, got 1.7% of the chart width - about eighteen pixels - to
+    show its middle half.
+
+    p10 and p90 were not in the domain at all, and there is no clip-path, so
+    the Morgan row's -47% cheapest tenth was drawn a hundred and sixty units
+    INSIDE the label gutter, on top of the words.
+
+    Fitted to the clearing data now. Anything outside is a marker pinned to
+    the edge carrying its own value: "further this way", without one number
+    setting the scale for twelve rows.
+*/
+function premiumDomain (rows) {
+    const finite = (list) => list.filter(Number.isFinite)
+
+    /*  The core is the middle halves and the medians, plus zero - zero
+        because "at spot" is the reference every premium is read against, and
+        an axis that does not contain it cannot show which side of it a coin
+        sits on. */
+    const core = [0]
+    const lows = []
+    const highs = []
+    for (const row of rows) {
+        for (const v of finite([row.p25, row.p50, row.p75])) { core.push(v) }
+        /*  First finite of each ladder, so a caller that sends no whiskers
+            still contributes an end and still draws. */
+        lows.push(...finite([row.p10, row.p25, row.p50]).slice(0, 1))
+        highs.push(...finite([row.p90, row.p75, row.p50]).slice(0, 1))
+    }
+    if (lows.length === 0) { lows.push(0) }
+    if (highs.length === 0) { highs.push(0) }
+
+    const coreMin = Math.min(...core)
+    const coreMax = Math.max(...core)
+    const coreSpan = coreMax - coreMin
+    const step = coreSpan > 1 ? 0.25 : (coreSpan > 0.4 ? 0.1 : 0.05)
+
+    /*  THE FENCE. Two ticks past the middle halves and no further.
+
+        One live row's cheapest tenth sits at -47% where the next lowest is
+        -11%. Unfenced, that single whisker end takes a quarter of the axis
+        and the other eleven rows pay for it. Two ticks is the smallest fence
+        that still shows an ordinary whisker in full, and it lands on
+        gridlines the reader can already see. */
+    const fence = 2 * step
+    let lo = Math.max(Math.min(...lows), coreMin - fence)
+    let hi = Math.min(Math.max(...highs), coreMax + fence)
+
+    /*  But do not pin a whisker to save less than one tick. A dearest tenth
+        a fraction of a point past the fence is not an outlier, it is the
+        data, and a marker in place of it draws the truth worse than the
+        truth does. */
+    if (Math.min(...lows) >= lo - step) { lo = Math.min(...lows) }
+    if (Math.max(...highs) <= hi + step) { hi = Math.max(...highs) }
+
+    lo = Math.min(lo, 0)
+    /*  A single row whose quartiles all coincide divided by zero and wrote
+        NaN into every coordinate. Latent in the old code too. */
+    if (hi - lo < 1e-9) { hi = lo + step }
+
+    return { lo, hi, step }
+}
+
+/*  THE EDGE MARKER. A chevron whose tip sits exactly ON the plot edge and
+    whose tails point back inward, so nothing is drawn outside the plot and
+    the shape reads as "continues this way". Hollow and lighter than the band
+    it must not compete with, at full opacity, with its own nested title -
+    that is where a clamped value's precision lives now that the axis has
+    stopped claiming to carry it. */
+function premiumPin (cx, y, dir, stroke, kind, title) {
+    const back = (cx - dir * 6).toFixed(1)
+    return '<path class="pin ' + kind + '" d="M ' + back + ' ' + (y - 6).toFixed(1) +
+        ' L ' + cx.toFixed(1) + ' ' + y.toFixed(1) + ' L ' + back + ' ' + (y + 6).toFixed(1) +
+        '" fill="none" stroke="' + stroke + '" stroke-width="2.5" stroke-linecap="round" ' +
+        'stroke-linejoin="round"><title>' + escapeHtml(title) + '</title></path>'
+}
+
 exports.premiumChart = function (rows) {
     if (rows.length === 0) { return '<p class="thin">No instrument has enough sales yet.</p>' }
 
     const width = 1000
-    const rowHeight = 34
-    const left = 352   /* fits 'Sovereign · Elizabeth II Young Head · 1966 · London' */
+    /*  28, not 34. The 34 was headroom for the gap number, which used to sit
+        above each row and now has a column of its own. The tallest thing on
+        a row is the median disc plus its halo, 14 units. */
+    const rowHeight = 28
+    /*  328 fits the longest label the catalogue produces. The gutter looked
+        like the problem and was not: the plot was starved by the domain.
+        Shaving it further buys a few per cent and risks clipping labels in
+        the emailed report, which renders in system-ui - wider than Barlow -
+        with nobody to see it before it is sent. */
+    const left = 328
     const right = 60
-    const top = 34
+    const top = 26
     const height = top + rows.length * rowHeight + 26
+    const LABEL_CHARS = 48
 
-    const values = []
-    for (const row of rows) {
-        for (const v of [row.p25, row.p50, row.p75, row.ask]) {
-            if (Number.isFinite(v)) { values.push(v) }
-        }
-    }
-    const min = Math.min(0, Math.min(...values))
-    const max = Math.max(...values) * 1.08
-    const x = (value) => left + ((value - min) / (max - min)) * (width - left - right)
+    const domain = premiumDomain(rows)
+    const lo = domain.lo
+    const hi = domain.hi
+    const step = domain.step
+    const plot = width - left - right
+    /*  Clamped here, which is what removes the need for a clip-path. */
+    const at = (value) => left + ((Math.min(Math.max(value, lo), hi) - lo) / (hi - lo)) * plot
+    const fx = (value) => at(value).toFixed(1)
+    const beyond = (value) => value > hi ? 1 : (value < lo ? -1 : 0)
 
     const ticks = []
-    const step = max > 0.4 ? 0.1 : 0.05
-    for (let t = Math.ceil(min / step) * step; t <= max; t += step) {
-        ticks.push(`<line x1="${x(t).toFixed(1)}" y1="${top - 8}" x2="${x(t).toFixed(1)}" y2="${height - 26}"
-            stroke="var(--grid)" stroke-width="1"/>
-          <text x="${x(t).toFixed(1)}" y="${height - 10}" fill="var(--muted)" font-size="11"
-            text-anchor="middle">${(t * 100).toFixed(0)}%</text>`)
+    for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step) {
+        /*  --ink-2, not --muted. At 11px --muted measures 3.55:1 on the light
+            card, under the 4.5:1 floor for small text - and these numerals
+            are the only thing telling you what the marks beside them mean. */
+        ticks.push('<line x1="' + at(t).toFixed(1) + '" y1="' + (top - 8) + '" x2="' +
+            at(t).toFixed(1) + '" y2="' + (height - 26) + '" stroke="var(--grid)" ' +
+            'stroke-width="1"/><text x="' + at(t).toFixed(1) + '" y="' + (height - 10) +
+            '" fill="var(--ink-2)" font-size="11" text-anchor="middle">' +
+            (t * 100).toFixed(0) + '%</text>')
     }
+
+    /*  ONE STEEL ACCENT, SO THE HIERARCHY IS THICKNESS AND SHAPE.
+
+        --clearing is 3.42:1 on the LIGHT card at full strength (8.14 on the
+        dark one). Every step of opacity below 1 puts a mark under the 3:1
+        floor for non-text graphics - 0.32, which is what the middle-half bar
+        used, measures 1.41. So opacity is not a dimension this chart has,
+        and the ladder is in units of thickness instead: 12, 9, 3, 2, 1.
+
+        It was upside down before. On the dark card the cheapest-tenth tick
+        measured 3.45, the DECORATIVE dashed connector 2.44, and the middle
+        half - the statistic the chart exists for - 2.04.
+
+        And the two series are 1.03:1 AGAINST EACH OTHER on the light card,
+        1.01 on the dark one. --clearing and --ask are the same lightness by
+        construction, because the system is mono and --ask is a neutral ramp
+        step rather than a second hue. Two filled dots of one radius are one
+        dot to a greyscale printer and to a reader with a colour vision
+        deficiency, so the median is SOLID and the ask is a RING. That
+        difference, not the colour, is what makes them two things. */
+    const BAND_H = 12
+    const DOT_R = 4.5
+    const RANGE_W = 3
+    const CAP_H = 9
+    const ASK_R = 4.5
+    const ASK_W = 2
+    const gapColumn = width - right + 8
 
     const marks = rows.map((row, index) => {
         const y = top + index * rowHeight + rowHeight / 2
         const parts = []
 
-        parts.push(`<text x="0" y="${y + 4}" fill="var(--ink)" font-size="12.5">${escapeHtml(row.label.slice(0, 52))}</text>`)
+        /*  Truncated with a mark that says so. slice(0, 52) cut mid-word in
+            silence, which reads as corrupt data rather than as a narrow
+            column; the full label is in the tooltip either way. */
+        const label = row.label.length > LABEL_CHARS
+            ? row.label.slice(0, LABEL_CHARS - 1) + '…'
+            : row.label
+        parts.push('<text x="0" y="' + (y + 4).toFixed(1) + '" fill="var(--ink)" ' +
+            'font-size="12.5">' + escapeHtml(label) + '</text>')
 
-        /*  THE WHOLE SPREAD, not just the middle of it.
+        /*  The connector first, so every other mark paints over it: the
+            dashes then show only in the stretch between the clearing
+            distribution and the ask, which is the only place they say
+            anything. */
+        if (Number.isFinite(row.ask) && Number.isFinite(row.p50)) {
+            parts.push('<line class="link" x1="' + fx(row.p50) + '" y1="' + y + '" x2="' +
+                fx(row.ask) + '" y2="' + y + '" stroke="var(--axis)" stroke-width="1" ' +
+                'stroke-dasharray="2 3"/>')
+        }
 
-            This drew p25 to p75 alone, and the owner's objection was exactly
-            right for somebody buying: "why wouldn't I be interested in
-            anything above or below those thresholds?" The cheap quarter is
-            the quarter they are hunting, and it was the part not drawn - the
-            chart showed where the market is comfortable and hid where the
-            bargains are.
-
-            A hairline from p10 to p90 for the range, the heavy bar kept for
-            the middle half, and a tick at p10 because that is the number
-            somebody is trying to beat. */
-        if (Number.isFinite(row.p10) && Number.isFinite(row.p90)) {
-            parts.push(`<line x1="${x(row.p10).toFixed(1)}" y1="${y}" x2="${x(row.p90).toFixed(1)}" y2="${y}"
-                stroke="var(--clearing)" stroke-width="1" opacity="0.22" stroke-linecap="round"/>`)
-            parts.push(`<line x1="${x(row.p10).toFixed(1)}" y1="${y - 5}" x2="${x(row.p10).toFixed(1)}" y2="${y + 5}"
-                stroke="var(--clearing)" stroke-width="1.5" opacity="0.55"/>`)
-        }
-        if (Number.isFinite(row.p25) && Number.isFinite(row.p75)) {
-            parts.push(`<line x1="${x(row.p25).toFixed(1)}" y1="${y}" x2="${x(row.p75).toFixed(1)}" y2="${y}"
-                stroke="var(--clearing)" stroke-width="4" opacity="0.32" stroke-linecap="round"/>`)
-        }
-        if (Number.isFinite(row.p50)) {
-            parts.push(`<circle cx="${x(row.p50).toFixed(1)}" cy="${y}" r="5"
-                fill="var(--clearing)" stroke="var(--surface)" stroke-width="2"/>`)
-        }
-        if (Number.isFinite(row.ask)) {
-            parts.push(`<circle cx="${x(row.ask).toFixed(1)}" cy="${y}" r="5"
-                fill="var(--ask)" stroke="var(--surface)" stroke-width="2"/>`)
-            /* Direct label on the gap - the number the user came for. */
-            if (Number.isFinite(row.p50)) {
-                const mid = (x(row.p50) + x(row.ask)) / 2
-                parts.push(`<line x1="${x(row.p50).toFixed(1)}" y1="${y}" x2="${x(row.ask).toFixed(1)}" y2="${y}"
-                    stroke="var(--axis)" stroke-width="1" stroke-dasharray="2 3"/>`)
-                parts.push(`<text x="${mid.toFixed(1)}" y="${y - 9}" fill="var(--ink-2)" font-size="11"
-                    text-anchor="middle">+${((row.ask - row.p50) * 100).toFixed(0)}pp</text>`)
+        /*  THE WHOLE SPREAD, not just the middle of it - the owner's
+            objection, still right: "why wouldn't I be interested in anything
+            above or below those thresholds?" The cheap tenth is the part
+            somebody is hunting. Three units now, not a 1.26:1 hairline that
+            was in practice not drawn at all. */
+        const low = [row.p10, row.p25].find(Number.isFinite)
+        const high = [row.p90, row.p75].find(Number.isFinite)
+        if (low !== undefined && high !== undefined) {
+            parts.push('<line class="range" x1="' + fx(low) + '" y1="' + y + '" x2="' +
+                fx(high) + '" y2="' + y + '" stroke="var(--clearing)" stroke-width="' +
+                RANGE_W + '"/>')
+            for (const end of [[low, -1], [high, 1]]) {
+                if (beyond(end[0]) === 0) {
+                    parts.push('<line class="cap" x1="' + fx(end[0]) + '" y1="' +
+                        (y - CAP_H / 2).toFixed(1) + '" x2="' + fx(end[0]) + '" y2="' +
+                        (y + CAP_H / 2).toFixed(1) + '" stroke="var(--clearing)" ' +
+                        'stroke-width="' + RANGE_W + '"/>')
+                } else {
+                    parts.push(premiumPin(at(end[0]), y, end[1], 'var(--clearing)', 'range',
+                        (end[1] < 0 ? 'cheapest tenth at ' : 'dearest tenth at ') +
+                        pct(end[0]) + ', past the ' + (end[1] < 0 ? 'left' : 'right') +
+                        ' of this axis'))
+                }
             }
         }
-        parts.push(`<title>${escapeHtml(row.label)}: clears ${pct(row.p50)}, cheapest tenth at ${pct(row.p10)}, asks ${pct(row.ask)} (n=${row.n})</title>`)
+
+        /*  The middle half. A rect rather than a stroked line, because
+            thickness is the whole argument and a rect states it in an
+            attribute a test can read. A floor on the width so a row whose
+            quartiles coincide still draws something. */
+        if (Number.isFinite(row.p25) && Number.isFinite(row.p75)) {
+            const x1 = at(row.p25)
+            const w = Math.max(at(row.p75) - x1, 3)
+            parts.push('<rect class="band" x="' + x1.toFixed(1) + '" y="' +
+                (y - BAND_H / 2).toFixed(1) + '" width="' + w.toFixed(1) + '" height="' +
+                BAND_H + '" rx="1.5" fill="var(--clearing)"/>')
+        }
+
+        if (Number.isFinite(row.p50)) {
+            parts.push('<circle class="mid" cx="' + fx(row.p50) + '" cy="' + y + '" r="' +
+                DOT_R + '" fill="var(--clearing)" stroke="var(--surface)" stroke-width="2.5"/>')
+        }
+
+        if (Number.isFinite(row.ask)) {
+            if (beyond(row.ask) === 0) {
+                /*  A --surface disc punched under the ring, because --ask on
+                    --clearing is 1.03:1 and the ask would otherwise vanish
+                    into the band wherever the two overlap. */
+                parts.push('<circle cx="' + fx(row.ask) + '" cy="' + y + '" r="' +
+                    (ASK_R + ASK_W / 2 + 0.5).toFixed(1) + '" fill="var(--surface)"/>')
+                parts.push('<circle class="ask" cx="' + fx(row.ask) + '" cy="' + y + '" r="' +
+                    ASK_R + '" fill="none" stroke="var(--ask)" stroke-width="' + ASK_W + '"/>')
+            } else {
+                parts.push(premiumPin(at(row.ask), y, beyond(row.ask), 'var(--ask)', 'ask',
+                    'asks ' + pct(row.ask) + ', past the right of this axis'))
+            }
+            /*  THE NUMBER SOMEBODY CAME FOR, in its own column.
+
+                It used to sit above the midpoint of the connector, which
+                stops meaning anything the moment one of the two dots is
+                pinned to an edge - and put the number in a different place
+                on every row besides, in the air where it could collide with
+                the row above's whisker.
+
+                The sign is DERIVED. '+' was hard-coded, so a coin type whose
+                shelf asks LESS than its auctions clear at - which is exactly
+                the find this tool exists for - rendered "+-4pp". */
+            if (Number.isFinite(row.p50)) {
+                const gap = (row.ask - row.p50) * 100
+                parts.push('<text class="gap" x="' + gapColumn + '" y="' + (y + 4).toFixed(1) +
+                    '" fill="var(--ink-2)" font-size="11.5">' +
+                    (gap < 0 ? '&#8722;' : '+') + Math.abs(gap).toFixed(0) + 'pp</text>')
+            }
+        }
+
+        parts.push('<title>' + escapeHtml(row.label) + ': clears ' + pct(row.p50) +
+            ', middle half ' + pct(row.p25) + ' to ' + pct(row.p75) + ', cheapest tenth ' +
+            pct(row.p10) + ', dearest tenth ' + pct(row.p90) + ', asks ' + pct(row.ask) +
+            ' (n=' + row.n + ')</title>')
         return '<g>' + parts.join('') + '</g>'
     })
 
-    return `
-<div class="legend" title="Premium is measured over each coin's own metal content, so the comparison holds as the metal price moves.">
-  <span><span class="swatch" style="background:var(--clearing)"></span>Where auctions cleared &mdash; dot is the middle one, bar the middle half, tick the cheapest tenth</span>
-  <span><span class="swatch" style="background:var(--ask)"></span>What Buy-It-Now lots are asking now &mdash; a different set of listings, not these sales</span>
-</div>
-<div class="scroll"><svg viewBox="0 0 ${width} ${height}" width="100%" height="${height}"
-  role="img" aria-label="Clearing premium versus asking premium by coin type">
-  ${ticks.join('')}
-  ${marks.join('')}
-</svg></div>
-`
+    /*  THREE WORDS EACH, AND THE KEY IN THE TOOLTIP.
+
+        Written out in full this legend ran to five lines and was taller than
+        the chart it was keying - on the coin-type page, where there is
+        exactly one row, it was most of the card. Same rule as the rest of
+        the page: the label names the mark, the tooltip says how to read it.
+        Every row also carries all five of its figures in its own tooltip, so
+        nothing here is the only place a number can be found. */
+    return '\n<div class="legend" title="Premium is measured over each coin&#39;s own metal ' +
+'content, so the comparison holds as the metal price moves.">\n' +
+'  <span title="The bar is the middle half of what cleared, the dot the middle sale, and the ' +
+'line the whole spread from the cheapest tenth to the dearest."><span class="swatch" ' +
+'style="background:var(--clearing)"></span>Where auctions cleared</span>\n' +
+'  <span title="A different set of listings from the sales beside them - what is on the shelf ' +
+'now, which nobody has paid."><svg width="12" height="12" viewBox="0 0 12 12" ' +
+'aria-hidden="true" style="vertical-align:-2px;margin-right:6px"><circle cx="6" cy="6" r="4" ' +
+'fill="none" stroke="var(--ask)" stroke-width="2"/></svg>What Buy-It-Now asks</span>\n' +
+'  <span title="The axis is fitted to where coins actually clear, so one asking price cannot ' +
+'flatten every row. A value past either end is drawn at the edge instead; hover it for the ' +
+'figure."><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" ' +
+'style="vertical-align:-2px;margin-right:6px"><path d="M 3 2 L 9 6 L 3 10" fill="none" ' +
+'stroke="var(--ink-2)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>' +
+'</svg>Past this edge</span>\n' +
+'</div>\n' +
+'<div class="scroll"><svg viewBox="0 0 ' + width + ' ' + height + '" width="100%" height="' +
+height + '" role="img" aria-label="Clearing premium versus asking premium by coin type">\n' +
+'  <text x="' + gapColumn + '" y="14" fill="var(--ink-2)" font-size="10.5">vs ask</text>\n  ' +
+ticks.join('') + '\n  ' + marks.join('') + '\n</svg></div>\n'
 }
 
 /* Uplift curve: one series, magnitude across ordered buckets -> bars. */
