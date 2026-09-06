@@ -3170,6 +3170,20 @@ test('the coin-type page offers the bar control, and says what it does', async (
         'the bar does not say what its primary button does')
     assert.match(bar, /ticked down the left/,
         'the bar no longer explains the tick and cross, which still need ticks')
+
+    /*  And a rule between the two kinds of gesture. Save changes acts on what
+        you edited; the pair beside it act on what you ticked, and one of them
+        is a rejection - three buttons in an undifferentiated row put the safe
+        one hard against the destructive one.
+
+        Asserted on the ORDER, not merely on the presence of a divider
+        somewhere in the bar: one after the cross would satisfy a bare
+        includes() and separate nothing. */
+    const order = [...bar.matchAll(/name="(save|bulk)"|class="filter-divider"/g)].map(m => m[0])
+    assert.deepStrictEqual(
+        order.map(x => x.includes('divider') ? '|' : x.replace(/name="|"/g, '')),
+        ['save', '|', 'bulk', 'bulk'],
+        'the divider does not sit between Save changes and the tick and cross')
     opened.db.close()
 })
 

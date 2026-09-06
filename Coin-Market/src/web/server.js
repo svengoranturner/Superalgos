@@ -2750,6 +2750,16 @@ function bulkBar (rows, hint, extras) {
         '<button class="btn btn-primary" name="save" value="1" title="Apply every dropdown ' +
         'you have changed on this page, and mark those coins genuine. Rows you have not ' +
         'touched are left alone - no ticking needed.">Save changes</button>' +
+        /*  A rule between the two kinds of gesture. Save changes acts on what
+            you edited and asks for nothing else; the pair beside it act on
+            what you ticked, and one of them is a rejection. Three buttons in
+            an undifferentiated row put the safe one hard against the
+            destructive one with nothing to say they are different things.
+
+            .filter-divider rather than a second class of its own - it is this
+            stylesheet's one divider primitive and it is already reused
+            outside the filter rows it was named for. */
+        '<span class="filter-divider"></span>' +
         '<button class="btn btn-secondary icon-btn no" name="bulk" value="' +
         LEARNED.VERDICT.NOT_TRACKED + '" title="' + escapeHtml(words.notOne) +
         ' - everything ticked">' + RENDER.icon('cross') + '</button>' +
