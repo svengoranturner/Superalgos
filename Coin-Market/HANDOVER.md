@@ -718,13 +718,36 @@ the row count stood at 15,295 exactly, not once**. Every market memo, every
 composition, the menu-bar counts and the tracked-type set were being thrown
 away and rebuilt from cold at that rate.
 
-The row is now written only when one of its answers differs. **This one needs
-the collector restarted to take effect** — the dashboard has it, the collector
-process is still running the old code:
+The row is now written only when one of its answers differs. **Live since
+2026-09-06 10:29**, and it took two goes to get there — which is the part worth
+remembering.
+
+The fix was deployed, and then the collector ran on for another 38 hours with
+the old code loaded, because a `git pull` changes the file on disk and not the
+process holding it. A long-running Node service keeps whatever it started with.
+The pages stayed slow, the memo went on being evicted about 14 times a minute,
+and every measurement taken in that window was of the old behaviour.
+
+**So verify a restart rather than assuming one.** The service's own record is
+the evidence, not what anybody remembers doing:
 
 ```
 sudo systemctl restart coin-market-collector
+systemctl show coin-market-collector -p ActiveEnterTimestamp -p NRestarts
+ps -o pid,lstart,etime -p $(systemctl show coin-market-collector -p MainPID --value)
 ```
+
+If `ActiveEnterTimestamp` predates the commit you are testing, you are measuring
+the old code. Confirm by watching the table itself — the count should hold still
+while the collector works:
+
+```
+SELECT COUNT(*), MAX(assigned_at) FROM listing_instrument;
+```
+
+Sampled every few seconds: before, `MAX` moved every 2.5s with the count static
+at 15,354. After, it did not move once in 75 seconds while the collector
+resolved outcomes and wrote snapshots.
 
 ## The fourth: a cache window that was pretending to be a safety bound
 
