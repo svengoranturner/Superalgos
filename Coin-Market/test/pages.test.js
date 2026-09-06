@@ -2188,7 +2188,13 @@ test('a coin that IS counted shows the group counting it, with no guess to fall 
     const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
     const body = (await fetchAll(opened, ['/review']))['/review'].body
 
-    assert.ok(body.includes('counted in the statistics'), 'the fixture is not counted at all')
+    /*  A tick now, not five words. The owner asked for the lists to agree
+        and this was the example they gave: "'counted in the statistics'
+        instead of the tick we use on the sold page". */
+    assert.ok(body.includes('title="Counted in the statistics"'),
+        'the fixture is not counted at all, or the tick has gone')
+    assert.ok(!body.includes('>counted in the statistics<'),
+        'the row still spells out in five words what the tick beside it already says')
     assert.ok(body.includes('Sovereign (proof)'),
         'the row says it is counted in the statistics without saying in which')
     assert.ok(!body.includes('no group'), 'a placed coin was reported as unplaced')
@@ -3324,34 +3330,30 @@ test('the tick sits beside the title, not inside it', async () => {
     opened.db.close()
 })
 
-test('a row with no tick still keeps the gutter', async () => {
-    /*  The review queue has no tick - a queued lot is not counted in
-        anything - and if it skipped the slot its titles would sit 20px left
-        of the scanner's, which is the same misalignment one column over. */
+test('every row reserves the gutter, whether it has a tick or not', async () => {
+    /*  If a row skipped the slot its title would sit 20px left of its
+        neighbours', which is the same misalignment this whole change is
+        about, one column over. Asserted across every row rather than on one:
+        the invariant is that the slot is always emitted, and a single row
+        cannot tell "always" from "this time". */
     const opened = twoSeriesStore()
     const body = (await fetchAll(opened, ['/review']))['/review'].body
 
-    const lotText = body.split('<div class="lot-text">')[1]
-    assert.ok(lotText !== undefined, 'no lot cell rendered')
-    const slot = lotText.split('<div class="lot-title">')[0]
-    assert.ok(slot.includes('<span class="tick-slot"></span>'),
-        'an unticked row dropped the gutter instead of leaving it empty')
+    const rows = body.split('<tbody>')[1].split('</tr>').filter(r => r.includes('lot-text'))
+    assert.ok(rows.length >= 2, 'only ' + rows.length + ' rows; "every" needs more than one')
+
+    for (const row of rows) {
+        const before = row.split('<div class="lot-title">')[0]
+        assert.ok(before.includes('class="tick-slot'),
+            'a row emitted no tick slot, so its title starts 20px left of its neighbours')
+        /*  And the tick is never back inside the title, which is what made
+            the two lines disagree in the first place. */
+        const title = row.split('<div class="lot-title">')[1].split('</div>')[0]
+        assert.ok(!title.includes('ticked'), 'the tick is inside the title again')
+    }
     opened.db.close()
 })
 
-/*
-    THE CHIP SAYS CHEAP OR DEAR FOR THIS COIN, NOT AGAINST SPOT.
-
-    The owner: green for under and red for over, "in relation to what coins in
-    that lot's allocated category go for". The number is unchanged - it is
-    still the premium over the metal - and only the fill moves.
-
-    This test used to assert the old meaning: a fill at five per cent under
-    spot. Its fixture has no completed sales at all, so under the new meaning
-    there is nothing to compare against and nothing should be coloured. That
-    is worth keeping as a test rather than deleting, because saying nothing is
-    the behaviour a cold store must have.
-*/
 test('a coin type with no completed sales is left uncoloured, and says why', async () => {
     const opened = scannerStore()
     const body = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body

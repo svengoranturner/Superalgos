@@ -2059,7 +2059,7 @@ function marketPage (opened, url, reference) {
     const VIEW_BODIES = {
         nearSpot: shown.length === 0
             ? opportunityHtml
-            : scanTable(shown, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
+            : scanTable(shown, sweepAt, whereYouAre(url), scanOrder,
                 (key) => filterHref({ order: key })),
         /*  The offers panel keeps its own row renderer: its whole point is
             the suggested figure and what it is measured against, which is a
@@ -2083,7 +2083,7 @@ function marketPage (opened, url, reference) {
             empty list is empty is the kind of prose this UI keeps growing. */
         ending: endingSoon.length === 0
             ? ''
-            : scanTable(endingShown, opportunityVerdict, sweepAt, whereYouAre(url), scanOrder,
+            : scanTable(endingShown, sweepAt, whereYouAre(url), scanOrder,
                 (key) => filterHref({ order: key }))
     }
     const viewBody = VIEW_BODIES[scanView]
@@ -3885,7 +3885,11 @@ function bandTitle (row, band) {
     return sits
 }
 
-function scanRow (row, verdictCell, sweepAt) {
+/*  No verdictCell. It was declared here and never read: scanTable built one
+    per row and handed it over, and this function has always drawn its own
+    two buttons instead. The plausibility badge it made reaches the page on
+    /review and /listings, and never reached the scanner at all. */
+function scanRow (row, sweepAt) {
     const id = escapeHtml(String(row.legacyId))
     const total = PREMIUM.totalCost(row.price, row.shipping)
     const metalValue = Number.isFinite(row.metalValue) ? row.metalValue : null
@@ -4054,7 +4058,7 @@ function queueTableRow (row, verdictCell) {
             path rather than the title, because the picture opens over a row
             whose title is already on screen. */
         lotCell(row, rest.join('<span aria-hidden="true"> \u00b7 </span>'),
-            { caption: row.categoryPath || '' }) +
+            { caption: row.categoryPath || '', counted: row.priced }) +
         /*  The badge itself, wrapped in the link the scanner grew: everything
             a coin type is worth lives on /listings, and the queue is where
             you find out you wanted to look. */
@@ -4142,7 +4146,7 @@ const SCAN_HEAD = sortableHead(SCAN_COLUMNS, null, () => '#')
     the other view that shares this table: judging a coin in "ending within the
     hour" bounced you to near-spot, losing the list you were working through.
     The caller knows which view it is rendering; this function does not. */
-function scanTable (rows, verdictCell, sweepAt, back, order, hrefFor) {
+function scanTable (rows, sweepAt, back, order, hrefFor) {
     if (rows.length === 0) {
         return '<p class="thin">Nothing here right now.</p>'
     }
@@ -4153,7 +4157,7 @@ function scanTable (rows, verdictCell, sweepAt, back, order, hrefFor) {
         '<div class="card scan-card"><table class="scan">' +
         (hrefFor === undefined ? SCAN_HEAD : sortableHead(SCAN_COLUMNS, order, hrefFor)) +
         '<tbody>' +
-        rows.map(row => scanRow(row, verdictCell, sweepAt)).join('') +
+        rows.map(row => scanRow(row, sweepAt)).join('') +
         '</tbody></table></div>' +
         '<p class="thin scan-note"><span class="ticked">' + RENDER.TICKED +
         '</span> counted in the statistics &nbsp; ' +
@@ -4244,7 +4248,11 @@ function queueMeta (row) {
         meta.push('<span class="badge" title="' + escapeHtml(reason.full) + '">' +
             escapeHtml(reason.short) + '</span>')
     }
-    if (row.priced) { meta.push('<span class="badge">counted in the statistics</span>') }
+    /*  The tick says this, and says it in the same place on every list -
+        five words in a meta line and a 14px mark two columns over were the
+        same fact told twice, differently, depending which page you were on.
+        The owner named this one: "'counted in the statistics' instead of the
+        tick we use on the sold page". */
     /*  Not twice. "wrong category: Costume Jewellery" already names it. */
     const leaf = leafCategory(row.categoryPath)
     if (leaf !== null && (reason === null || !reason.short.endsWith(leaf))) {
@@ -4342,7 +4350,9 @@ function queueRow (row, verdictCell) {
   ${pick}
   ${shot(row.imageUrl, caption)}
   <div class="q-main">
-    <div class="q-title">${row.itemWebUrl
+    <div class="q-title">${row.priced
+        ? '<span class="ticked" title="Counted in the statistics">' + RENDER.TICKED + '</span>'
+        : ''}${row.itemWebUrl
         ? '<a href="' + escapeHtml(row.itemWebUrl) + '" target="_blank" rel="noopener">' + escapeHtml(row.title) + '</a>'
         : escapeHtml(row.title)}</div>
     <div class="q-meta">${meta.join('<span aria-hidden="true">·</span>')}</div>
