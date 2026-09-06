@@ -726,6 +726,37 @@ process is still running the old code:
 sudo systemctl restart coin-market-collector
 ```
 
+## The fourth: a cache window that was pretending to be a safety bound
+
+`marketsFor` and `compositionFor` are memoised on `marketWatermark()` **and on
+a clock bucket**, because they are not a pure function of the store — a lot
+leaves `activeListings` when its end time passes, which is a change in the
+clock with no write for the watermark to notice.
+
+That bucket was **one minute**, so the first request in any minute rebuilt
+every market in the app from cold: **4.1s against 0.76s warm**, on the front
+page, once a minute, for as long as anybody was using it.
+
+What the minute was actually protecting, traced rather than assumed:
+`ALERT_RULES.evaluate` has one consumer and it discards every rule but
+`BEST_OFFER_IN_REACH`, so the exposure is the offers panel naming a lot that
+has just ended. Everything else downstream is a display count — the live count
+per coin type, the composition chart — moving by one lot in a few hundred.
+
+I assumed that exposure was nil on the grounds that a Buy-It-Now runs until it
+is pulled. **Measured instead: 1,625 of the 13,461 Best Offer lots carry an end
+time, 962 of them still live.** True of seven in eight, not of all.
+
+So the check moved into the alert loop (`rules.js`), where it is a date
+comparison against each lot's own end time — exact rather than bounded — and
+the window became a cache window: **five minutes**. Still bounded, because two
+figures the pages print are counts of what is live, and five minutes against an
+hourly sweep is five times tighter than the data behind it changes.
+
+**If you widen it further, re-read that alert loop first.** The window is only
+safe to move because nothing depends on it for correctness any more; that is a
+property of the current consumers, not of the memo.
+
 ## What is actually still wrong on the market page
 
 Measured, not guessed: **318 of 3,459 live listings (9.2%)**, and it is a mix.
