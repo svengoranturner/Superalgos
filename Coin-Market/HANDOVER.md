@@ -689,6 +689,91 @@ The queue itself now leads with the listings that are *making a number wrong*
 - flagged as uncertain and still counted - because newest-first buried those
 among 1,536 already-dropped rows shown for auditability.
 
+## The fifth performance bug, and the one that was actually causing the errors
+
+The owner hit `database is locked` changing a lot from 1 coin to 5. **It was
+not a missing setting** — WAL was already on and `busy_timeout` was already
+5000 ms. My own first reading said otherwise and was wrong: I probed
+`PRAGMA busy_timeout` on a fresh connection and read *that connection's*
+default, not the app's.
+
+The cause was that **the collector never batched**. Each listing costs four to
+eight statements and every one was its own autocommit transaction, so a
+200-listing Browse page was of the order of a thousand acquire / fsync /
+release cycles back to back — with `synchronous` never set, so `FULL`, a real
+fsync each time, on an SD card, every five minutes all day. A single-row label
+write had to land in a gap, and SQLite's busy handler backs off with
+increasing sleeps, so waiting made the odds *worse*.
+
+**Measured on the live Pi, the same US.MORGAN sweep leg before and after**
+(≈18,720 listings seen each time, hourly):
+
+| sweep completed | duration |
+|---|---|
+| 11:49, 12:50, 13:51, 14:50, 15:49 (old) | 923s, 955s, 963s, 1007s, 924s |
+| 16:52 (chunked) | **287s** |
+
+**954s → 287s, 3.3× faster on identical work.** That is the window in which
+the write lock is contended, cut from 26% of every hour to 8%.
+
+### `BEGIN IMMEDIATE` is the part that is easy to miss
+
+A bare `BEGIN` is *deferred*: it takes the write lock at the first WRITE. Every
+transaction in this codebase reads first, and SQLite **cannot honour
+`busy_timeout` on that upgrade** — waiting would mean handing back a snapshot
+another connection has already contradicted — so it returns `SQLITE_BUSY`
+immediately, whatever the timeout says. Raising the timeout alone would have
+fixed much less than it looked like. Everything now goes through
+`STORE.inTransaction`, which takes the lock up front.
+
+That helper is also **re-entrant**, via `db.isTransaction`. That is what lets
+`/apply` wrap a whole batch while `RECLASSIFY.one` keeps its own transaction
+and *joins* rather than throwing "cannot start a transaction within a
+transaction". Joining rather than `SAVEPOINT` on purpose: a savepoint would let
+an inner block roll back half a batch.
+
+Detecting busy: read `err.errcode` **masked to its low byte**, never `err.code`
+— node:sqlite puts `ERR_SQLITE_ERROR` on `code` for everything, and the
+extended codes 261 / 517 / 773 are all 5 in the low byte. 517 is exactly what a
+snapshot conflict returns.
+
+### The log was 149 MB, and resetting it did NOT speed up reads
+
+`wal_autocheckpoint` runs PASSIVE, which copies pages back into the database
+but can only rewind the log when no reader holds it — and with three processes
+on the file there is nearly always one. The log had reached **149 MB against a
+4 MB threshold** on a 635 MB database. A `TRUNCATE` checkpoint now runs at the
+tail of each sweep, with the shortest busy timeout in the system so it can
+never become the thing in the way, and it logs the difference between "a reader
+held it" and "copied but not reset" — the state that had been happening
+unnoticed for months. On the first run: **142 MB → 0**.
+
+**But it made no measurable difference to page load times**, and the plan said
+it would be "likely the single biggest read-speed win available". That was
+wrong. Measured either side of the reset:
+
+| page | before | after |
+|---|---|---|
+| `/` cold / warm | 6.95s / 0.79s | 7.09s / 0.81s |
+| `/types` cold / warm | 2.66s / 0.13s | 2.72s / 0.11s |
+| `/premiums` | 0.07s | 0.07s |
+
+The cold front page is the market memo rebuilding, which is already documented
+above. The log reset is still worth having — an unbounded log is a disk
+problem, a backup-size problem and a recovery-time problem — but it is not a
+performance fix and should not be sold as one.
+
+### Still open, and it is the largest write-lock holder left
+
+`RECLASSIFY.run` wraps roughly 20,000 writes in one transaction and is called
+**from the request thread** — `server.js` on a country toggle, on accepting a
+rule and on deleting one. No retry helps, because a retry *waits for it*. It
+cannot simply be chunked either: it deletes `listing_instrument`, `instrument`
+and `review_queue` and then rebuilds, so chunking means a window in which the
+dashboard shows an empty store. The right answer is to take it off the request
+thread — the click records that a rebuild is wanted, the scheduler does it, and
+the page says so.
+
 ## Two performance bugs, both the same shape
 
 **A full reclassify was not in a transaction.** Every insert was its own
