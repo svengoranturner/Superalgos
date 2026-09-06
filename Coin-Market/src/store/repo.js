@@ -5,6 +5,50 @@ const SERIES = require('../catalogue/series/index.js')
 const STORE = require('./db.js')
 
 /*
+    EVERYTHING THAT HANGS OFF A LISTING, AND THE ONLY PLACE IT IS WRITTEN
+    DOWN.
+
+    There are no foreign keys in this schema and `PRAGMA foreign_keys` is
+    never set, so nothing in the database enforces that deleting a listing
+    takes its children with it. Two call sites did it by hand - purgeExpired
+    here and purgeUser in ebay/notifications.js - from two separate string
+    arrays, and they had already drifted: `alert` was in one and not the
+    other, so the daily retention purge left alert rows behind for ever while
+    the deletion endpoint removed them.
+
+    That gap is currently unreachable, which is the only reason it never bit:
+    `alert` is written by newDispatcher in alerts/channels.js, and that
+    function has no callers - alerts are evaluated live on the page and
+    thrown away. The table holds zero rows on the live store. It is one wiring
+    change away from holding data, and a table nobody remembers to delete
+    from is worse than one nobody writes to.
+
+    ORDER MATTERS: `listing` is last. Every other entry is found BY browse_id,
+    and a caller that deletes the parent first has nothing left to find the
+    children with - which is why the two arrays both put it there, and why
+    a single list is safer than a convention two files agree to follow.
+*/
+const LISTING_CHILD_TABLES = ['listing_snapshot', 'aspect', 'listing_instrument',
+    'review_queue', 'listing_outcome', 'alert', 'listing']
+exports.LISTING_CHILD_TABLES = LISTING_CHILD_TABLES
+
+/*
+    One slice of listings, gone from every table that knows about them.
+
+    The CALLER owns the transaction, deliberately, because the two callers
+    want different ones: retention housekeeping commits per chunk so it never
+    holds the write lock for the whole pass, and a deletion obligation wraps
+    every chunk in one so a user's rows cannot half-disappear.
+*/
+exports.deleteListingSlice = function (db, browseIds) {
+    if (browseIds.length === 0) { return }
+    const marks = browseIds.map(() => '?').join(',')
+    for (const table of LISTING_CHILD_TABLES) {
+        db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')').run(...browseIds)
+    }
+}
+
+/*
     Data access.
 
     Two policies are enforced here rather than left to callers:
@@ -1906,17 +1950,9 @@ exports.newRepository = function (db, options) {
             */
             const ids = doomed.map(r => r.browse_id)
             const chunk = 400
-            const tables = ['listing_snapshot', 'aspect', 'listing_instrument',
-                'review_queue', 'listing_outcome', 'listing']
             for (let i = 0; i < ids.length; i += chunk) {
                 const slice = ids.slice(i, i + chunk)
-                STORE.inTransaction(db, () => {
-                    const marks = slice.map(() => '?').join(',')
-                    for (const table of tables) {
-                        db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')')
-                            .run(...slice)
-                    }
-                })
+                STORE.inTransaction(db, () => exports.deleteListingSlice(db, slice))
             }
             return doomed.length
         },

@@ -2,6 +2,7 @@
 
 const CRYPTO = require('node:crypto')
 const STORE = require('../store/db.js')
+const REPO = require('../store/repo.js')
 
 /*
     eBay Marketplace Account Deletion / Closure notifications.
@@ -116,12 +117,10 @@ exports.purgeUser = function (repository, db, identifiers) {
     */
     STORE.inTransaction(db, () => {
         for (let i = 0; i < ids.length; i += 400) {
-            const slice = ids.slice(i, i + 400)
-            const marks = slice.map(() => '?').join(',')
-            for (const table of ['listing_snapshot', 'aspect', 'listing_instrument',
-                'review_queue', 'listing_outcome', 'alert', 'listing']) {
-                db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')').run(...slice)
-            }
+            /*  The table list lives in repo.js and nowhere else. It used to
+                live here too, and the two copies had drifted: this one named
+                `alert` and the retention purge did not. */
+            REPO.deleteListingSlice(db, ids.slice(i, i + 400))
         }
     })
     return ids.length

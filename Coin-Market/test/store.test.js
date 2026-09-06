@@ -1730,3 +1730,91 @@ test('the derived columns on an instrument can still be repaired', () => {
     assert.notStrictEqual(after.level, 9, 'a stale level survived a full rebuild')
     db.close()
 })
+
+
+/* ============================================================= deletion */
+
+/*
+    DELETING A LISTING HAS TO TAKE EVERYTHING WITH IT.
+
+    There are no foreign keys in this schema and `PRAGMA foreign_keys` is
+    never set, so nothing in the database enforces this - it was two
+    hand-maintained string arrays in two files, and they had drifted. `alert`
+    was named by the deletion endpoint and not by the daily retention purge,
+    so an expired listing left its alert rows behind for ever.
+
+    Nothing bit, because `alert` is written by newDispatcher in
+    alerts/channels.js and that function has no callers - the live table holds
+    zero rows. It is one wiring change from holding data.
+
+    ASSERTED AGAINST THE SCHEMA, not against a second copy of the list. A
+    hard-coded expectation is the same class of thing as the arrays it is
+    checking: add a table with a browse_id, forget to delete from it, and a
+    hard-coded test agrees with you. This asks the database what tables exist.
+*/
+test('every table that hangs off a listing is deleted with it', () => {
+    const { db } = fixture()
+    const tables = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ).all().map(row => row.name)
+
+    const children = tables.filter(name => name !== 'listing' &&
+        db.prepare('PRAGMA table_info(' + name + ')').all().some(c => c.name === 'browse_id'))
+    assert.ok(children.length > 3,
+        'found only ' + children.length + ' child tables, so this test is not looking at the ' +
+        'real schema')
+
+    const REPO = require('../src/store/repo.js')
+    for (const table of children) {
+        assert.ok(REPO.LISTING_CHILD_TABLES.includes(table),
+            table + ' has a browse_id and is never deleted when its listing is, so its rows ' +
+            'outlive the listing for ever')
+    }
+
+    /*  And the parent goes last, or there is nothing left to find the
+        children by. */
+    assert.strictEqual(REPO.LISTING_CHILD_TABLES[REPO.LISTING_CHILD_TABLES.length - 1], 'listing',
+        'listing is not deleted last, so the children are orphaned before they are reached')
+    db.close()
+})
+
+test('a purge removes a listing from every one of those tables', () => {
+    /*  The list being right is necessary and not sufficient - this runs the
+        deleter and looks. */
+    const { db, repository } = fixture()
+    const REPO = require('../src/store/repo.js')
+    const now = new Date().toISOString()
+    const browseId = 'v1|doomed|0'
+
+    repository.saveListing({
+        browseId, legacyId: 'doomed', title: 'Gold Sovereign 1974',
+        buyingOptions: 'AUCTION', sellerId: 'someone', endTime: now
+    }, now)
+    repository.saveSnapshot(browseId, { price: 400, shipping: 0, observedAt: now })
+    repository.saveClassification(browseId, [{ key: 'GB.SOV.BULLION.FULL', level: 0 }],
+        0.9, 'title', 0.2354, {})
+    repository.queueForReview(browseId, 'Low confidence', 'GB.SOV.BULLION.FULL', 0.5)
+    repository.saveOutcome(browseId, {
+        endTime: now, sold: true, finalPrice: 410, shipping: 0,
+        bidCount: 3, saleType: 'AUCTION', censored: false, source: 'test'
+    })
+    /*  And an alert, which nothing in the running app writes - inserted by
+        hand precisely because that is why the gap went unnoticed. */
+    db.prepare('INSERT INTO alert (rule, browse_id, fired_at, payload) VALUES (?,?,?,?)')
+        .run('near-spot', browseId, now, '{}')
+
+    const held = REPO.LISTING_CHILD_TABLES.filter(table => db.prepare(
+        'SELECT COUNT(*) AS n FROM ' + table + ' WHERE browse_id = ?').get(browseId).n > 0)
+    assert.ok(held.length >= 6,
+        'the fixture only populated ' + held.length + ' tables (' + held.join(', ') +
+        '), so a deleter that missed one could still pass')
+
+    REPO.deleteListingSlice(db, [browseId])
+
+    for (const table of REPO.LISTING_CHILD_TABLES) {
+        assert.strictEqual(
+            db.prepare('SELECT COUNT(*) AS n FROM ' + table + ' WHERE browse_id = ?').get(browseId).n,
+            0, table + ' still holds rows for a listing that has been deleted')
+    }
+    db.close()
+})
