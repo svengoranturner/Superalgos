@@ -840,6 +840,36 @@ test('the title and the meta line share a column', () => {
         'the title is in the tick gutter')
 })
 
+/*
+    THE TICK IS AN INLINE MARK, AND THE SHEET HAS TO SAY SO.
+
+    `display: flex` is block-level. In the table layout that is invisible - the
+    mark is a grid item there, and a grid item's display is blockified - so the
+    rule read as correct for as long as nobody looked at the card list, where
+    .q-title is an ordinary block and a block-level tick takes its own line.
+
+    Asserted against the RULE rather than against a rendered row, because the
+    markup was never wrong: the same span, in the same place, generating a
+    different box.
+*/
+test('the tick generates an inline box, not a block one', () => {
+    const css = STATIC.css()
+    const at = /(?:^|\n)\.ticked\s*\{([^}]*)\}/.exec(css)
+    assert.ok(at !== null, 'no .ticked rule at all')
+
+    const display = /display:\s*([a-z-]+)/.exec(at[1])
+    assert.ok(display !== null, '.ticked sets no display, so it inherits whatever it lands in')
+    assert.strictEqual(display[1], 'inline-flex',
+        '.ticked is ' + display[1] + ', which is block-level - inside a .q-title it takes its ' +
+        'own line and pushes the title onto the next one')
+
+    /*  And the override that existed only to undo the block-level base goes
+        with it, or the next reader restores the bug to make the two agree. */
+    assert.ok(!/\.scan-note\s+\.ticked\s*\{/.test(css),
+        'the .scan-note .ticked override is still there, which means the base rule is still ' +
+        'being fought rather than fixed')
+})
+
 test('the meta line is no smaller than the rest of the small print', () => {
     /*  It was 11px against a 16px title. Anchored to the .lot-meta block
         rather than grepping the sheet, where .thin already satisfies a bare

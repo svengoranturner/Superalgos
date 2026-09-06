@@ -765,6 +765,40 @@ function liveOrder (body) {
     return [...upTo.matchAll(/name="pick" value="([^"]*)"/g)].map(m => m[1])
 }
 
+/*
+    THE TICK BELONGS ON THE TITLE'S LINE.
+
+    The markup here was never wrong and is not what broke: the CSS gave this
+    span a block-level box, so the browser put it on a line of its own and grew
+    every priced row. The rule is asserted in static.test.js, where it belongs.
+
+    This is the other half - that the tick and the title still share one block,
+    so nobody "fixes" the height by lifting the mark out of the title instead.
+*/
+test('the tick sits inside the title, on its line', async () => {
+    const opened = orderingStore()
+    const path = '/listings?key=' + opened.key + '&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const titles = [...body.matchAll(/<div class="q-title">([\s\S]*?)<\/div>/g)].map(m => m[1])
+    assert.ok(titles.length > 0, 'the drill-down rendered no card titles at all')
+
+    const ticked = titles.filter(t => t.includes('class="ticked"'))
+    assert.ok(ticked.length > 0,
+        'no row is ticked, so this test would pass with the tick rendered anywhere at all')
+
+    for (const title of ticked) {
+        /*  Both in the one block, and the mark first - that is the whole
+            contract the stylesheet is written against. Asserted on the
+            listing's own text rather than on an <a>, because a row without an
+            itemWebUrl renders the title bare and would slip past. */
+        assert.ok(/class="ticked"[\s\S]*Gold Sovereign/.test(title),
+            'a ticked row has no title beside its mark, so the tick has been lifted out of ' +
+            'the title rather than made inline')
+    }
+    opened.db.close()
+})
+
 test('a bare drill-down URL is the auction view, and Everything must ask', async () => {
     const opened = orderingStore()
     const bare = '/listings?key=' + opened.key
@@ -2578,6 +2612,126 @@ test('choosing a pool on a row carries through the form to the coin', async () =
         'AND i.level = 0 WHERE li.browse_id = ?').get(id) || {}).k
     assert.strictEqual(key, 'GB.SOV.PROOF.FULL', 'the coin did not move')
     db.close()
+})
+
+/*
+    THE BAR SETS THE KIND ONCE, FOR EVERYTHING TICKED.
+
+    The batch itself has always worked. What it could not do is the thing the
+    owner was actually asking for - "these ten are all common date" - because
+    the only place to say so was the row, ten times.
+
+    Three rows, all filed as UNATTRIBUTED to start with, so "the bar applied"
+    and "nothing happened" cannot look the same.
+*/
+function bulkPoolStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const KEY = 'US.MORGAN.UNATTRIBUTED.DOLLAR'
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAG', 25, null, 'test')
+
+    for (const legacyId of ['one', 'two', 'three']) {
+        const id = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId: id, legacyId, title: '1921 Morgan Silver Dollar ' + legacyId,
+            buyingOptions: 'FIXED_PRICE', endTime: null
+        }, now)
+        repository.saveSnapshot(id, { price: 40, shipping: 0, observedAt: now })
+        repository.setListingSeries(id, 'US.MORGAN')
+        repository.saveClassification(id, [{ key: KEY, level: 0 }], 0.6, 'title', 0.7734, {})
+    }
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return {
+        db, repository, spotAt, key: KEY,
+        view: MARKET.newMarketView(repository, spotAt, {})
+    }
+}
+
+const poolOf = (opened, legacyId) =>
+    (opened.repository.labels().find(l => l.legacyId === legacyId) || {}).pool
+
+test('one dropdown on the bar sets the kind for every ticked row', async () => {
+    const opened = bulkPoolStore()
+    await post(opened, '/apply', {
+        bulk: 'TRACKED', pick: ['one', 'two', 'three'],
+        bulk_pool: 'COMMON', back: '/listings?key=' + opened.key
+    })
+    for (const id of ['one', 'two', 'three']) {
+        assert.strictEqual(poolOf(opened, id), 'COMMON',
+            'row "' + id + '" kept its old kind, so the bar reached only some of the batch')
+    }
+    opened.db.close()
+})
+
+test('the bar beats the row it is set above, and only on a batch', async () => {
+    /*  Precedence, stated once. "Set all of these to common" has to mean it
+        even where a row's own dropdown still shows what the classifier
+        guessed - every row posts its p_ field whether or not anybody touched
+        it, so without this the row would always win and the bar would do
+        nothing at all. */
+    const opened = bulkPoolStore()
+    await post(opened, '/apply', {
+        bulk: 'TRACKED', pick: ['one', 'two'],
+        p_one: 'KEY_DATE', bulk_pool: 'COMMON', back: '/listings?key=' + opened.key
+    })
+    assert.strictEqual(poolOf(opened, 'one'), 'COMMON',
+        'the row beat the bar, so setting the kind once cannot work')
+
+    /*  And a per-row button is NOT the bar. It acts on its own row whether
+        or not anything is ticked, so a dropdown left set on the bar must not
+        reach a row somebody pressed individually. */
+    const alone = bulkPoolStore()
+    await post(alone, '/apply', {
+        genuine: 'three', p_three: 'KEY_DATE', bulk_pool: 'COMMON',
+        back: '/listings?key=' + alone.key
+    })
+    assert.strictEqual(poolOf(alone, 'three'), 'KEY_DATE',
+        'the bar reached a row pressed on its own, which nobody asked it to')
+    alone.db.close()
+    opened.db.close()
+})
+
+test('an untouched bar leaves every row its own answer', async () => {
+    const opened = bulkPoolStore()
+    await post(opened, '/apply', {
+        bulk: 'TRACKED', pick: ['one', 'two'],
+        p_one: 'KEY_DATE', p_two: 'COMMON', bulk_pool: '',
+        back: '/listings?key=' + opened.key
+    })
+    assert.strictEqual(poolOf(opened, 'one'), 'KEY_DATE', 'a blank bar overwrote a row')
+    assert.strictEqual(poolOf(opened, 'two'), 'COMMON', 'a blank bar overwrote a row')
+    opened.db.close()
+})
+
+test('the coin-type page offers the bar control, and says what it does', async () => {
+    const opened = bulkPoolStore()
+    /*  sale=bin because the page opens on auctions and every row here is a
+        Buy-It-Now - on the auction tab there are no sections, so there is no
+        bar, and this would pass or fail for the wrong reason. */
+    const path = '/listings?key=' + opened.key + '&sale=bin'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const bar = body.split('class="bulkbar"')[1].split('</div>')[0]
+    assert.match(bar, /name="bulk_pool"/,
+        'the bar has no kind control, so setting one for the batch is still ten dropdowns')
+    /*  And the sentence, which is most of why the batch looked missing: this
+        page passed an empty hint while every other list explains itself. */
+    assert.match(bar, /Tick down the left/,
+        'the bar still explains nothing, which is how a working batch reads as a broken one')
+    opened.db.close()
+})
+
+test('a batch says how many it changed', async () => {
+    /*  handlePost has always appended ?applied=N on the way back and only
+        /review ever rendered it, so the same batch here looked like a no-op. */
+    const opened = bulkPoolStore()
+    const path = '/listings?key=' + opened.key + '&applied=3&verdict=TRACKED'
+    const body = (await fetchAll(opened, [path]))[path].body
+    assert.match(body, /<strong>3<\/strong> listings marked genuine/,
+        'the coin-type page swallowed the confirmation it was redirected with')
+    opened.db.close()
 })
 
 test('an untouched pool dropdown is stored as no answer, not as an empty one', async () => {

@@ -2621,7 +2621,7 @@ function soldControls (sale) {
     NOT_TRACKED on the wire and in the store, and were migrated to those
     spellings long ago. Only the label a person reads is series-specific.
 */
-function bulkBar (rows, hint) {
+function bulkBar (rows, hint, extras) {
     const words = SERIES.words(rows)
     /*  A tick and a cross. The same pair as every row, at the same size.
 
@@ -2636,6 +2636,11 @@ function bulkBar (rows, hint) {
         '<button class="btn btn-secondary icon-btn yes" name="bulk" value="' +
         LEARNED.VERDICT.TRACKED + '" title="Genuine - everything ticked">' +
         RENDER.icon('check') + '</button>' +
+        /*  Anything the page wants to set ONCE for the whole batch, between
+            the buttons and the sentence that explains them. The review queue
+            has nothing to put here - it is every coin type at once, so there
+            is no vocabulary to offer. A single coin type does. */
+        (extras || '') +
         (hint ? '<span class="thin">' + hint + '</span>' : '') +
         '</div>'
 }
@@ -2690,19 +2695,28 @@ function matchesSale (row, sale) {
     return sale === 'auction' ? wasAuction : !wasAuction
 }
 
-function reviewPage (opened, url) {
-    /*  Say what the last click did. A batch decision is the one action here
-        where you cannot see the result by looking at the row you pressed. */
-    const appliedCount = url === undefined ? 0 : Number(url.searchParams.get('applied'))
-    const appliedVerdict = url === undefined ? null : url.searchParams.get('verdict')
-    const applied = Number.isFinite(appliedCount) && appliedCount > 0
-        ? '<div class="card" style="border-color:var(--good)"><p style="margin:0">' +
-          '<strong>' + appliedCount + '</strong> listing' + (appliedCount === 1 ? '' : 's') +
-          ' marked ' + (appliedVerdict === LEARNED.VERDICT.TRACKED
-              ? 'genuine' : SERIES.words(chosen).notOne.toLowerCase()) +
-          '. <span class="thin">Each one is undoable from its own row.</span></p></div>'
-        : ''
+/*
+    SAY WHAT THE LAST CLICK DID.
 
+    A batch decision is the one action in this app where you cannot see the
+    result by looking at the row you pressed - the rows you pressed have gone.
+    handlePost has always appended ?applied=N&verdict=... on the way back
+    (see the redirect at the foot of /apply), but only the review queue ever
+    rendered it, so the same batch on a coin-type page looked like a no-op and
+    the owner reasonably concluded batches did not work.
+*/
+function appliedBanner (url, hint) {
+    const count = url === undefined ? 0 : Number(url.searchParams.get('applied'))
+    if (!Number.isFinite(count) || count <= 0) { return '' }
+    const verdict = url === undefined ? null : url.searchParams.get('verdict')
+    return '<div class="card" style="border-color:var(--good)"><p style="margin:0">' +
+        '<strong>' + count + '</strong> listing' + (count === 1 ? '' : 's') +
+        ' marked ' + (verdict === LEARNED.VERDICT.TRACKED
+            ? 'genuine' : escapeHtml(SERIES.words(hint).notOne.toLowerCase())) +
+        '. <span class="thin">Each one is undoable from its own row.</span></p></div>'
+}
+
+function reviewPage (opened, url) {
     /*  The whole queue, not a page of it - it is sorted by impact below and
         truncating before sorting would hide exactly the rows that matter. */
     /*  Fetch one more than we will admit to, so a full page can tell the
@@ -2746,6 +2760,13 @@ function reviewPage (opened, url) {
     const realSeries = seriesCounts.filter(c => c.series !== '?')
     const fallback = (realSeries[0] || seriesCounts[0] || {}).series || null
     const chosen = seriesCounts.some(c => c.series === requested) ? requested : fallback
+
+    /*  Below `chosen`, which it reads for the series-specific word. It used to
+        sit at the top of this function and get away with it, because the whole
+        banner was one lazy ternary that never touched `chosen` unless a batch
+        had just been applied - so the temporal dead zone was real and simply
+        unreachable on the ordinary path. */
+    const applied = appliedBanner(url, chosen)
 
     /*  A single group needs no chooser - one tab is not a choice. */
     /*  Each filter carries the other. Without that, switching one silently
@@ -4651,12 +4672,52 @@ function listingsPage (opened, url) {
         the top. What the cap drops is what the SECTION is ordered by, so the
         note has to name that ordering rather than assume one. */
     const CAP = 200
-    /*  One coin type by definition - the key IS the coin. */
-    const bar = bulkBar(key, '')
 
+    /*
+        ONE COIN TYPE, SO THE BAR CAN OFFER THE VOCABULARY ONCE.
+
+        The batch has always worked - a section is one form, every row carries
+        a pick box, and /apply loops the ticks reading each row's own fields.
+        What it could not do is the thing actually being asked for on this
+        page, which is "all of these are common date": that still meant opening
+        ten dropdowns, because the only place to say it was the row.
+
+        Here the key IS the coin, so there is exactly one pool vocabulary for
+        the whole page and it can go on the bar. Rendered only when the pack
+        offers a choice - poolsFor returns just its blank placeholder for a
+        series with no pools, and a select with one option is a question with
+        no answer.
+    */
+    const bulkChoice = (name, values, placeholder, title) => values.length < 2
+        ? ''
+        : '<select name="' + name + '" title="' + escapeHtml(title) + '">' +
+          '<option value="" selected>' + placeholder + '</option>' +
+          values.filter(v => v !== '').map(v => '<option value="' + escapeHtml(v) + '">' +
+              escapeHtml(String(v).toLowerCase().replace(/_/g, ' ')) + '</option>').join('') +
+          '</select>'
+
+    const bulkFields =
+        bulkChoice('bulk_pool', poolsFor(key), 'set kind…',
+            'Set the kind for everything ticked, in one go. Overrides the dropdown on each ' +
+            'ticked row. Leave it alone and each row keeps its own.') +
+        bulkChoice('bulk_denomination', denominationsFor(key), 'set denomination…',
+            'Set the denomination for everything ticked. Overrides the dropdown on each ticked ' +
+            'row. Leave it alone and each row keeps its own.')
+
+    /*  The sentence /review has always carried, plus the half that is new
+        here. A control nobody is told about is a control nobody uses, and the
+        empty hint on this page is most of why the batch looked missing. */
+    const bar = bulkBar(key, 'Tick down the left, set the kind once if they share one, then ' +
+        'one click. Anything you have not ticked is untouched. If the coin is real but filed ' +
+        'wrong, correct it and mark it genuine rather than dismissing it.', bulkFields)
+
+    /*  whereYouAre, not a rebuilt URL. This was assembled from key and sale
+        alone, so a decision made after searching or re-sorting threw both
+        away and dropped you back on an unfiltered page - the one moment you
+        least want to lose your place. Every other list in the app already
+        does it this way. */
     const list = (items, ordering) => '<form method="post" action="/apply">' +
-        '<input type="hidden" name="back" value="' +
-        escapeHtml('/listings?key=' + encodeURIComponent(key) + '&sale=' + sale) + '">' +
+        '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
         bar +
         '<div class="card"><div class="queue">' +
         items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
@@ -4680,6 +4741,7 @@ function listingsPage (opened, url) {
 
     return RENDER.page(name + ' - Coin Market', `
 <h1>${escapeHtml(name)}</h1>
+${appliedBanner(url, key)}
 <p class="sub">Every listing counted under this coin type. Anything here that is not this coin is
 moving the numbers on the front page.${sale === 'all' ? '' :
     ' Showing the ' + (sale === 'auction' ? 'auctions' : 'Buy-It-Now lots') +
@@ -4818,6 +4880,19 @@ function handlePost (opened, pathname, form) {
         if (ids.length === 0) { return back }
 
         const chosen = allowedCountries(repository)
+
+        /*  WHAT THE BAR SAID, FOR EVERY TICKED ROW.
+
+            Read only on the batch path. A per-row button is deliberately not
+            the bar - it acts on its own row whether or not anything is ticked
+            (see the note above), so a dropdown left set on the bar must not
+            silently reach a row somebody pressed individually.
+
+            Null when blank, which is the whole point: an untouched bar means
+            "leave each row alone", and every row's own field still applies. */
+        const barPool = single ? null : (form.get('bulk_pool') || null)
+        const barDenomination = single ? null : (form.get('bulk_denomination') || null)
+
         let applied = 0
         for (const legacyId of ids) {
             const title = repository.titleFor(legacyId)
@@ -4830,13 +4905,13 @@ function handlePost (opened, pathname, form) {
                     honours a denomination or quantity set on any row in it -
                     the second pass and the third can be the same pass. */
                 denomination: verdict === LEARNED.VERDICT.SOVEREIGN
-                    ? (form.get('d_' + legacyId) || null)
+                    ? (barDenomination || form.get('d_' + legacyId) || null)
                     : null,
                 /*  Like the denomination: only meaningful alongside
                     "genuine", and an untouched dropdown must not be stored
                     as a correction. */
                 pool: verdict === LEARNED.VERDICT.SOVEREIGN
-                    ? (form.get('p_' + legacyId) || null)
+                    ? (barPool || form.get('p_' + legacyId) || null)
                     : null,
                 /*  And the series, where the reader had to supply one because
                     no pack could. Written through to the label so the gate in

@@ -807,7 +807,23 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
   overflow: hidden; text-overflow: ellipsis;
   white-space: nowrap; max-width: 400px }
 .lot-title a:hover { color: var(--color-accent) }
-.ticked { flex: none; display: flex; color: var(--color-accent) }
+/*  INLINE, BECAUSE THE TICK IS PART OF A SENTENCE IN TWO OF ITS FOUR HOMES.
+
+    `display: flex` is BLOCK-level, and that only went unnoticed because the
+    table layout puts this mark in a grid cell, where a grid item's display is
+    blockified anyway and the flex box merely centres the 14px SVG. In
+    .q-title - an ordinary block box (see .q-title above) - the same rule
+    generated its own block, pushed the title anchor onto the next line and
+    grew every priced row by the height of the mark.
+
+    The stylesheet was already carrying the evidence: `.scan-note .ticked`
+    existed purely to undo this in the one other inline context, and is now
+    gone because the base case is finally the inline one.
+
+    Still correct in the grid: `inline-flex` on a grid item computes to
+    `flex`. */
+.ticked { flex: none; display: inline-flex; vertical-align: -3px;
+  color: var(--color-accent) }
 /*  12px, which is .thin's size - the meta line carries the same class of
     fact .thin carries everywhere else, and 11.5 (.badge) or 12.5 would put a
     fourth size on a three-size scale. It was 11px against a 16px title. */
@@ -857,7 +873,6 @@ table.scan td.verdict-cell .settled { font-size: 11px; margin-right: 4px }
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
   margin-top: var(--space-3); font-size: 11px;
 }
-.scan-note .ticked { display: inline-flex }
 
 /* ─────────────────────────────────────────────────────────────────────────
    THE REVIEW QUEUE, WHICH IS THE SAME TABLE WITH TWO MORE COLUMNS.
