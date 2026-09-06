@@ -487,7 +487,7 @@ exports.premiumChart = function (rows) {
     })
 
     return `
-<div class="legend">
+<div class="legend" title="Premium is measured over each coin's own metal content, so the comparison holds as the metal price moves.">
   <span><span class="swatch" style="background:var(--clearing)"></span>Where auctions cleared &mdash; dot is the middle one, bar the middle half, tick the cheapest tenth</span>
   <span><span class="swatch" style="background:var(--ask)"></span>What Buy-It-Now lots are asking now &mdash; a different set of listings, not these sales</span>
 </div>
@@ -496,7 +496,7 @@ exports.premiumChart = function (rows) {
   ${ticks.join('')}
   ${marks.join('')}
 </svg></div>
-<p class="thin">Premium is measured over the coin's gold content, so the comparison holds as the gold price moves.</p>`
+`
 }
 
 /* Uplift curve: one series, magnitude across ordered buckets -> bars. */

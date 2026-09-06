@@ -846,8 +846,11 @@ test('the ordering blurb follows the tab rather than being written down', async 
     const bin = '/listings?key=' + opened.key + '&sale=bin'
     const pages = await fetchAll(opened, [auctions, bin])
 
-    /*  Every auction has an end time, so the qualifier would be noise. */
-    assert.match(pages[auctions].body, /Ending soonest first &mdash;/)
+    /*  Every auction has an end time, so the qualifier would be noise. The
+        em-dash and the sentence after it have gone into the tooltip; what is
+        asserted here is unchanged, which is that the blurb is DERIVED from
+        what the tab actually holds rather than written down. */
+    assert.match(pages[auctions].body, /Ending soonest first\./)
     assert.ok(!/undated last/.test(pages[auctions].body),
         'the auction tab claims undated lots it does not have')
 
@@ -871,7 +874,7 @@ test('an auctions-only view shows no Buy-It-Now statistic', async () => {
         (liquidity.js:44). Printing it under an auctions-only view is the
         cross-pollution the filter exists to prevent, and it is the DEFAULT
         view - so this is the one that would be wrong on every page load. */
-    const asking = /median <strong>asking<\/strong> premium/
+    const asking = /median <strong>ask<\/strong>/
     assert.ok(!asking.test(pages[auctions].body),
         'the auction view shows a Buy-It-Now-only asking median')
     assert.ok(asking.test(pages[bin].body),
@@ -882,24 +885,30 @@ test('an auctions-only view shows no Buy-It-Now statistic', async () => {
     /*  Everything shows the UNION. The bids figure is auction-only by
         nature, which is a reason to label it rather than to make it
         unreachable from the view whose whole point is to show everything. */
-    const bids = /median bids on auctions that got any/
+    const bids = /<div class="l">median bids<\/div>/
     assert.ok(bids.test(pages[auctions].body), 'the auction view lost its bids figure')
     assert.ok(bids.test(pages[all].body),
         'the Everything view cannot reach a statistic the auction view shows')
     assert.ok(!bids.test(pages[bin].body),
         'the Buy-It-Now view shows an auction-only statistic')
 
-    /*  Each figure names the population it is drawn from, so a filtered
-        count and a corpus-wide metric can sit side by side honestly. */
-    assert.match(pages[bin].body, /across live Buy-It-Now lots/)
-    assert.match(pages[auctions].body, /auctions actually <strong>cleared<\/strong> at/)
+    /*  Each figure still names the population it is drawn from, so a
+        filtered count and a corpus-wide metric can sit side by side honestly
+        - in the tooltip now rather than in a caption three lines deep, which
+        is the whole of what changed. Asserted on the tooltip, because that is
+        where the claim moved to and an assertion on the label alone would
+        pass with the population dropped entirely. */
+    assert.match(pages[bin].body, /title="[^"]*across the live Buy-It-Now lots/)
+    assert.match(pages[auctions].body, /title="[^"]*auctions actually cleared at/)
 
     /*  Every FILTER-SCOPED count says which filter, including the judged
         tile - it sits in the same hero row as two counts that do, so being
         the one that does not is how a number gets read as corpus-wide. */
     for (const [sale, page] of [['auction', pages[auctions]], ['bin', pages[bin]]]) {
         const noun = sale === 'auction' ? 'at auction' : 'at Buy-It-Now'
-        for (const label of ['completed sales', 'live']) {
+        /*  'sold', not 'completed sales' - the caption lost its explanation,
+            not its scope, which is what this loop is about. */
+        for (const label of ['sold', 'live']) {
             assert.ok(page.body.includes(label + ' ' + noun),
                 '"' + label + '" is not scoped to the ' + sale + ' tab')
         }
@@ -5207,6 +5216,49 @@ test('a coin type can be reached from the lot that belongs to it', async () => {
     opened.db.close()
 })
 
+/*
+    THE COMMENTARY CAME OFF THE FACE OF THE PAGE.
+
+    The owner: "You've built a summary and then taken up a third of the
+    visible screen with very little information supplemented by commentary."
+    Every heading carried a paragraph arguing for itself.
+
+    What is asserted is not "the page is short" - that would pass for a page
+    that had lost the facts as well. It is that the three worst offenders are
+    gone from the body AND that what they said is still reachable, which is
+    the difference between editing and deleting.
+*/
+test('the coin-type page states its figures rather than arguing for them', async () => {
+    const opened = orderingStore()
+    const path = '/listings?key=' + opened.key + '&sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    /*  The standfirst under the h1 said three sentences, two of which the tab
+        strip already carried as counts. */
+    assert.ok(!/<p class="sub">/.test(body),
+        'the coin-type page still opens with a paragraph of standfirst')
+    /*  ...and the warning it existed to give is still there to be found. */
+    assert.match(body, /<h1 title="[^"]*moving the numbers on the front page/,
+        'the standfirst was deleted rather than moved - the warning it carried has gone')
+
+    /*  "Sold - what someone actually paid" explained a heading that already
+        reads as English. */
+    assert.match(body, /<h2[^>]*>Sold \(\d+\)<\/h2>/,
+        'the Sold heading still explains itself in its own title')
+    assert.match(body, /<h2 title="[^"]*not somebody's opinion/,
+        'the sentence under the Sold heading was deleted rather than moved')
+
+    /*  The paragraph under the tab strip explained the filter beside the
+        filter. tabs() has always taken a title per option. */
+    assert.ok(!/A completed lot is filtered on how it actually sold/.test(
+        body.split('<h2')[0].replace(/title="[^"]*"/g, '')),
+        'the filter is still explained in prose under the tabs')
+    assert.match(body, /class="tab[^"]*"[^>]*title="[^"]*how it actually sold/,
+        'the tabs explain nothing, so the paragraph was deleted rather than moved')
+
+    opened.db.close()
+})
+
 test('a coin type says when its sales happened', async () => {
     /*  Every clearing figure here is over 180 days with a 45-day half-life,
         and a type whose sales all closed 170 days ago rendered identically to
@@ -5215,7 +5267,11 @@ test('a coin type says when its sales happened', async () => {
     const path = '/listings?key=GB.SOV.BULLION.FULL'
     const body = (await fetchAll(opened, [path]))[path].body
 
-    assert.match(body, /Priced from \d+ sales? between \d{4}-\d{2}-\d{2} and \d{4}-\d{2}-\d{2}/,
+    /*  Shorter than it was - the 180-day window and the 45-day half-life are
+        in the tooltip now - but the three facts that must not silently vanish
+        are still on the face of it: how many sales, and both ends of the
+        period they cover. */
+    assert.match(body, /Priced from \d+ sales?, \d{4}-\d{2}-\d{2} to \d{4}-\d{2}-\d{2}\./,
         'the page does not say what period its figures cover')
 
     /*  The span of the sales actually behind the figure, not the window they

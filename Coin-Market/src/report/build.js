@@ -32,11 +32,17 @@ exports.build = function (opened, outputPath) {
         ? headline.liquidity.askClearingSpread * headline.fineOz * headline.spot.gbpPerOz
         : null
 
+    /*  p10 and p90 as well. The chart's legend has always promised a range
+        from the cheapest tenth to the dearest, and this caller never sent
+        either - so the emailed report drew a key describing marks it had not
+        supplied the data for. */
     const chartRows = markets.slice(0, 12).map(entry => ({
         label: INSTRUMENTS.displayName(entry.row.key),
+        p10: entry.market.fairValue.p10,
         p25: entry.market.fairValue.p25,
         p50: entry.market.fairValue.p50,
         p75: entry.market.fairValue.p75,
+        p90: entry.market.fairValue.p90,
         ask: entry.market.liquidity.medianAskPremium,
         n: entry.market.fairValue.n
     }))
@@ -82,8 +88,8 @@ exports.build = function (opened, outputPath) {
 <div class="card">${RENDER.upliftChart(curve)}</div>
 
 <div class="card"><p class="thin" style="margin:0">
-Premiums are measured over each coin's fine gold content, so figures stay comparable as the
-gold price moves. Clearing prices come from completed auctions only — Buy-It-Now sales tell
+Premiums are measured over each coin's own fine metal content, so figures stay comparable as
+the metal price moves - this report covers silver as well as gold. Clearing prices come from completed auctions only — Buy-It-Now sales tell
 you what one buyer would pay on demand, not where the market clears. Accepted Best Offers are
 excluded entirely, because eBay never publishes what was actually paid for them.
 </p></div>`

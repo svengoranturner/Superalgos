@@ -852,6 +852,34 @@ test('the title and the meta line share a column', () => {
     markup was never wrong: the same span, in the same place, generating a
     different box.
 */
+/*
+    THE CHART SAID "GOLD" ON A SILVER PAGE.
+
+    premiumChart's footnote was a hard-coded literal - "measured over the
+    coin's gold content" - in a function that is handed no metal and cannot
+    know one. So it was wrong on every silver dollar page, and on /premiums,
+    where sovereigns and silver dollars are drawn on the same axis, it could
+    not have been right for either.
+
+    Worded for the general case rather than threaded through as a parameter,
+    because the multi-metal caller has no single answer to give it.
+*/
+test('the premium chart does not claim every coin is gold', () => {
+    const svg = RENDER.premiumChart([{
+        label: 'Silver Dollar (unattributed)',
+        p10: -0.114, p25: -0.018, p50: 0.083, p75: 0.179, p90: 0.280, ask: 1.255, n: 14
+    }])
+
+    /*  The claim still has to be MADE somewhere - asserting only that the
+        word "gold" is absent passes for a chart that dropped the footnote
+        entirely, and passes even more easily for one that failed to render. */
+    const note = /title="([^"]*metal content[^"]*)"/.exec(svg)
+    assert.ok(note !== null,
+        'the chart no longer says what its premium is measured over at all')
+    assert.ok(!/gold/i.test(note[1]),
+        'the chart still tells a silver dollar it is measured over gold: ' + note[1])
+})
+
 test('the tick generates an inline box, not a block one', () => {
     const css = STATIC.css()
     const at = /(?:^|\n)\.ticked\s*\{([^}]*)\}/.exec(css)

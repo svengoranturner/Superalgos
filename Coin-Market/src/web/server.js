@@ -2550,10 +2550,21 @@ const SALE_DEFAULT = 'auction'
 function saleTabs (basePath, current, params, counts) {
     const n = (key) => counts === undefined || counts === null ||
         !Number.isFinite(counts[key]) ? '' : ' (' + counts[key] + ')'
+    /*  tabs() has always taken a title per option and this passed none, so
+        the paragraph explaining the strip sat under it as prose - on two
+        pages, in two wordings. It is one fact about the filter and it
+        belongs on the filter. */
     return tabs(basePath, 'sale', [
-        { value: 'auction', label: 'Auctions' + n('auction'), isDefault: true },
-        { value: 'bin', label: 'Buy-It-Now' + n('bin') },
-        { value: 'all', label: 'Everything' + n('all') }
+        { value: 'auction', label: 'Auctions' + n('auction'), isDefault: true,
+            title: 'Lots sold or offered at auction. A completed lot is filtered on how it ' +
+                'actually sold, a live one on how it is offered.' },
+        { value: 'bin', label: 'Buy-It-Now' + n('bin'),
+            title: 'Lots at a fixed price, offers allowed or not. No Buy-It-Now lot has a ' +
+                'recorded outcome - they carry no end time, so the tool never learns whether ' +
+                'they sold.' },
+        { value: 'all', label: 'Everything' + n('all'),
+            title: 'Both markets at once. They clear at different premiums, so a figure ' +
+                'across the two describes neither.' }
     ], current, params)
 }
 
@@ -4587,18 +4598,39 @@ function listingsPage (opened, url) {
     const capped = saleCounts[sale] > rows.length
 
     const metalName = METAL_NAMES[market.metal] || market.metal
-    const askTile = '<div><div class="n">' + pct(market.liquidity.medianAskPremium) + '</div>' +
-        '<div class="l">median <strong>asking</strong> premium over ' + escapeHtml(metalName) +
-        ' content, across live Buy-It-Now lots</div></div>'
-    const clearTile = '<div><div class="n">' +
-        (market.fairValue.sufficient ? pct(market.fairValue.p50) : '&mdash;') + '</div>' +
-        '<div class="l">median premium auctions actually <strong>cleared</strong> at over ' +
-        escapeHtml(metalName) + ' content' +
-        (market.fairValue.sufficient ? '' : ' &mdash; needs three sales to say') +
-        '</div></div>'
+
+    /*
+        A NUMBER AND WHAT IT IS. NOT A NUMBER AND AN ESSAY.
+
+        These captions ran to two and three lines each against a 30ch column,
+        so five tiles filled a third of the screen with sentences nobody reads
+        twice. The rule this app already follows elsewhere - see the note in
+        tabs() - is that the label names the figure and the explanation lives
+        in the tooltip. Applied here.
+    */
+    const tile = (figure, label, title) =>
+        '<div' + (title ? ' title="' + escapeHtml(title) + '"' : '') + '>' +
+        '<div class="n">' + figure + '</div>' +
+        '<div class="l">' + label + '</div></div>'
+
+    const askTile = tile(pct(market.liquidity.medianAskPremium),
+        'median <strong>ask</strong>',
+        'The median asking premium over ' + metalName + ' content across the live Buy-It-Now ' +
+        'lots. An asking price is an opinion - nobody has paid it.')
+    const clearTile = tile(
+        market.fairValue.sufficient ? pct(market.fairValue.p50) : '&mdash;',
+        'median <strong>cleared</strong>',
+        /*  The population is named whether or not there is a number to give
+            it. A tile reading an em-dash with a tooltip that only says "needs
+            three sales" has dropped the one thing that made the figure
+            legible - which of the two markets it would have described. */
+        'The median premium auctions actually cleared at, over ' + metalName + ' content. ' +
+        (market.fairValue.sufficient
+            ? 'This is the figure everything else on the site is measured against.'
+            : 'Needs three completed sales before there is a median to give.'))
     const bidsTile = Number.isFinite(market.liquidity.medianBidCount)
-        ? '<div><div class="n">' + market.liquidity.medianBidCount + '</div>' +
-          '<div class="l">median bids on auctions that got any</div></div>'
+        ? tile(market.liquidity.medianBidCount, 'median bids',
+            'Across the auctions that got any bids at all.')
         : ''
 
     /*  Everything shows the union, not the intersection. The bids figure
@@ -4721,90 +4753,101 @@ function listingsPage (opened, url) {
         bar +
         '<div class="card"><div class="queue">' +
         items.slice(0, CAP).map(r => queueRow(r, verdictCell(r))).join('') + '</div>' +
-        (items.length > CAP
-            ? '<p class="thin" style="margin:12px 0 0">Showing the first ' + CAP +
-              ' of ' + items.length + ', ' +
-              escapeHtml((ordering || 'dearest first').toLowerCase()) + '.' +
-              /*  items.length counts the FETCH, not the store. Presenting a
-                  fetch artefact as a total is how "of 474" reads as the
-                  whole market when it is 474 of a capped 500. */
-              (capped
-                  ? ' This coin type has ' + saleCounts[sale] + ' lots on this tab; the page ' +
-                    'fetched the dearest ' + rows.length + ' of them.'
-                  : '') +
+        /*  items.length counts the FETCH, not the store. Presenting a fetch
+            artefact as a total is how "of 474" reads as the whole market
+            when it is 474 of a capped 500 - so the caveat stays, in the
+            tooltip. It renders three times on a full page and used to be
+            two sentences each time. */
+        (items.length > CAP || capped
+            ? '<p class="thin" style="margin:12px 0 0" title="' + escapeHtml(
+                (items.length > CAP
+                    ? 'Ordered ' + (ordering || 'dearest first').toLowerCase() + '. '
+                    : '') +
+                (capped
+                    ? 'This coin type has ' + saleCounts[sale] + ' lots on this tab; the page ' +
+                      'fetched the dearest ' + rows.length + ' of them, so this is a count of ' +
+                      'what was fetched rather than of the market.'
+                    : '')) + '">' +
+              (items.length > CAP
+                  ? 'First ' + CAP + ' of ' + items.length + '.'
+                  : items.length + ' of ' + saleCounts[sale] + ' fetched.') +
               '</p>'
-            : (capped
-                ? '<p class="thin" style="margin:12px 0 0">This coin type has ' +
-                  saleCounts[sale] + ' lots on this tab; the page fetched the dearest ' +
-                  rows.length + ' of them.</p>'
-                : '')) + '</div>' + bar + '</form>'
+            : '') + '</div>' + bar + '</form>'
 
+    /*
+        THE PAGE SAYS WHAT EACH THING IS. IT DOES NOT ARGUE FOR IT.
+
+        The owner, looking at this screen: "You've built a summary and then
+        taken up a third of the visible screen with very little information
+        supplemented by commentary." Every heading carried a paragraph, every
+        tile carried a sentence, and the reasoning was on the page rather than
+        behind it - so the page had to be read before it could be scanned.
+
+        Nothing has been deleted for the sake of it. Each of these went into a
+        title= where the thing it explains lives, which is the rule this app
+        already states in tabs() and in bulkBar(): the label names the figure,
+        the tooltip says why it matters. What did go is the two sentences that
+        were said twice - the tab strip explained itself in a paragraph under
+        the tabs, and "Sold - what someone actually paid" explained a heading
+        that already reads as English.
+    */
     return RENDER.page(name + ' - Coin Market', `
-<h1>${escapeHtml(name)}</h1>
+<h1 title="Every listing counted under this coin type. Anything here that is not this coin is moving the numbers on the front page.">${escapeHtml(name)}</h1>
 ${appliedBanner(url, key)}
-<p class="sub">Every listing counted under this coin type. Anything here that is not this coin is
-moving the numbers on the front page.${sale === 'all' ? '' :
-    ' Showing the ' + (sale === 'auction' ? 'auctions' : 'Buy-It-Now lots') +
-    ' only &mdash; ' + saleCounts[sale === 'auction' ? 'bin' : 'auction'] +
-    ' lots are on the other tab.'}</p>
 
 <div class="card hero">
-  <div><div class="n">${sold.length}</div><div class="l">completed sales${saleNoun}
-    &mdash; the evidence everything else is measured against</div></div>
-  <div><div class="n">${live.length}</div><div class="l">live${saleNoun} counted here</div></div>
+  ${tile(sold.length, 'sold' + saleNoun,
+      'Completed sales. The evidence everything else on this page is measured against.')}
+  ${tile(live.length, 'live' + saleNoun,
+      'Live lots counted under this coin type right now.')}
   ${statTiles}
-  <div><div class="n">${unflagged}</div>
-    <div class="l">of them never flagged for review &mdash; they classified confidently, so this
-      page is the only way to reach them</div></div>
-  ${settled > 0 ? '<div><div class="n">' + settled + '</div><div class="l">you have judged' +
-    saleNoun + '</div></div>' : ''}
+  ${tile(unflagged, 'never flagged for review',
+      'They classified confidently, so the review queue cannot reach them and this page is ' +
+      'the only way to.')}
+  ${settled > 0
+      ? tile(settled, 'you have judged' + saleNoun,
+          'Your own decisions on this coin type. Each one is undoable from its own row.')
+      : ''}
 </div>
 ${sampleSpan === null
     ? ''
-    : '<p class="thin">Priced from ' + sampleSpan.n + ' sale' + (sampleSpan.n === 1 ? '' : 's') +
-      ' between ' + escapeHtml(sampleSpan.from) + ' and ' + escapeHtml(sampleSpan.to) +
-      ' &mdash; ' + (sampleSpan.days === 0 ? 'all on one day' : sampleSpan.days + ' days') +
-      ', inside a 180-day window weighted so a sale 45 days old counts half as much as ' +
-      'today\'s.</p>'}
+    : '<p class="thin" title="' + escapeHtml(
+        (sampleSpan.days === 0 ? 'All on one day' : sampleSpan.days + ' days') +
+        ', inside a 180-day window weighted so a sale 45 days old counts half as much as ' +
+        "today's.") + '">Priced from ' + sampleSpan.n + ' sale' +
+      (sampleSpan.n === 1 ? '' : 's') + ', ' + escapeHtml(sampleSpan.from) + ' to ' +
+      escapeHtml(sampleSpan.to) + '.</p>'}
 ${typeChart}
 
 <div class="card">
   ${saleTabs('/listings', sale, { key }, saleCounts)}
   ${drillControls}
   ${drillNarrowed}
-  <p class="thin" style="margin:10px 0 0">A completed lot is filtered on how it actually sold, a
-  live one on how it is offered. Note that no Buy-It-Now lot has a recorded outcome &mdash; they
-  carry no end time, so the tool never learns whether they sold.</p>
 </div>
 
-<h2>Sold &mdash; what someone actually paid (${sold.length})</h2>
-<p class="thin">The only prices here that are not somebody's opinion. Everything the tool says a
-coin is worth is built from these, so a wrong one costs more than a wrong asking price.
-Most recent first.</p>
+<h2 title="The only prices here that are not somebody's opinion. Everything the tool says a coin is worth is built from these, so a wrong one costs more than a wrong asking price. Most recent first.">Sold (${sold.length})</h2>
 ${sold.length === 0
-    ? '<p class="thin">No completed sales under this coin type yet. They arrive as auctions this ' +
-      'tool was already watching close, so the count only grows with time on the market.</p>'
+    ? '<p class="thin">No completed sales yet. They arrive as auctions this tool was already ' +
+      'watching close, so the count only grows with time on the market.</p>'
     : list(sold, 'most recent first')}
 
 <h2>On sale now (${live.length})</h2>
-<p class="thin">${liveOrdering} &mdash; ${timed === 0
-    ? 'within one coin type the dearest lot is also the highest premium, and a lot priced far ' +
-      'from its neighbours is both the most likely to be wrong and the most visible when it is'
+<p class="thin" title="${escapeHtml(timed === 0
+    ? 'Within one coin type the dearest lot is also the highest premium, and a lot priced far ' +
+      'from its neighbours is both the most likely to be wrong and the most visible when it ' +
+      'is. Click a photo to see it large.'
     : (capped
-        ? 'ordered within the ' + rows.length + ' dearest lots this page fetched, which is not ' +
-          'the same as the soonest overall &mdash; a cheap lot closing shortly can be outside ' +
-          'that sample'
-        : 'the top of this list is the part you can still bid on')}. Click a photo to see it large.
-If the coin is real but the denomination is wrong, set it in the dropdown and mark it genuine
-rather than dismissing it.</p>
+        ? 'Ordered within the ' + rows.length + ' dearest lots this page fetched, which is not ' +
+          'the same as the soonest overall - a cheap lot closing shortly can be outside that ' +
+          'sample. Click a photo to see it large.'
+        : 'The top of this list is the part you can still bid on. Click a photo to see it ' +
+          'large.'))}">${liveOrdering}.</p>
 ${live.length === 0
     ? '<p class="thin">Nothing live under this coin type' +
       (sale === 'all' ? '' : ' on this tab') + '.</p>'
     : list(live, liveOrdering)}
 
-${unsold.length === 0 ? '' : `<h2>Ended without selling (${unsold.length})</h2>
-<p class="thin">The asking price was refused. Useful for the sell-through rate, and worth
-nothing at all as a clearing price.</p>
+${unsold.length === 0 ? '' : `<h2 title="The asking price was refused. Useful for the sell-through rate, and worth nothing at all as a clearing price.">Ended without selling (${unsold.length})</h2>
 ${list(unsold, 'dearest first')}`}
 
 <p style="margin-top:18px"><a href="/">Back to the market</a></p>
