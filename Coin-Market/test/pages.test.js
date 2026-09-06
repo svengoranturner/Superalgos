@@ -1994,6 +1994,143 @@ test('a page with only auction sales says so plainly', async () => {
     asking price". A confident price next to a blank premium reads as a
     display fault rather than as the admission it is.
 */
+/*
+    THE SOLD LIST IS TWO MARKETS.
+
+    The owner, looking at it: "is there supposed to be a way of filtering
+    between BIN / Auction etc?" There was not. The "Selling as" control
+    rendered on the near-spot and ending views and nowhere else, and
+    recentSales has never taken a sale type.
+
+    It matters most on this page of all. Every clearing figure in the tool is
+    built from exactly these rows, and channels.js opens by arguing that an
+    auction result and a Buy-It-Now result describe different things and must
+    never be averaged. Measured on the live store, of the 100 rows this page
+    fetches: 41 auctions, 37 bought outright, 22 through an accepted offer.
+*/
+function soldMixStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const KEY = 'GB.SOV.BULLION.FULL'
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const sell = (id, saleType, censored) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id,
+            buyingOptions: saleType === 'AUCTION' ? 'AUCTION' : 'FIXED_PRICE|BEST_OFFER',
+            endTime: now, imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price: 900, shipping: 0, observedAt: now })
+        repository.saveClassification(browseId, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(browseId, {
+            endTime: now, sold: true, finalPrice: 900, shipping: 0,
+            bidCount: saleType === 'AUCTION' ? 4 : null,
+            saleType, censored, source: 'test'
+        })
+    }
+    /*  Tokens rather than readable titles: "bought outright" also appears in
+        the How it sold column's own tooltip, so an assertion on the phrase
+        matched the header and passed with the filter doing nothing. */
+    sell('LOT-AUCTION', 'AUCTION', false)
+    sell('LOT-OUTRIGHT', 'FIXED_PRICE', false)
+    sell('LOT-OFFER', 'BEST_OFFER', true)
+
+    /*  A live lot, or the coin type reaches `markets` through neither a
+        clearing price nor an ask and the page short-circuits. */
+    const live = 'v1|shelf|0'
+    repository.saveListing({
+        browseId: live, legacyId: 'shelf', title: 'on the shelf',
+        buyingOptions: 'FIXED_PRICE', endTime: null,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(live, { price: 1000, shipping: 0, observedAt: now })
+    repository.saveClassification(live, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+test('the sold list can be parted into its two markets', async () => {
+    const opened = soldMixStore()
+    const table = (body) => {
+        const after = body.split('id="sold"')[1]
+        assert.ok(after !== undefined, 'no sold section on the page')
+        return after.split('<h2')[0]
+    }
+    const paths = ['/?min=1&view=sold', '/?min=1&view=sold&sale=auction',
+        '/?min=1&view=sold&sale=bin']
+    const pages = await fetchAll(opened, paths)
+
+    /*  UNFILTERED FIRST. Without this the two assertions below are satisfied
+        by a page that shows nothing at all. */
+    const everything = table(pages[paths[0]].body)
+    for (const title of ['LOT-AUCTION', 'LOT-OUTRIGHT', 'LOT-OFFER']) {
+        assert.ok(everything.includes(title), title + ' is missing before any filter')
+    }
+
+    const auctions = table(pages[paths[1]].body)
+    assert.ok(auctions.includes('LOT-AUCTION'), 'the auction went missing from the auctions')
+    assert.ok(!auctions.includes('LOT-OUTRIGHT'), 'a Buy-It-Now is showing among auctions')
+    assert.ok(!auctions.includes('LOT-OFFER'), 'an accepted offer is showing among auctions')
+
+    const shelf = table(pages[paths[2]].body)
+    assert.ok(!shelf.includes('LOT-AUCTION'), 'an auction is showing among the Buy-It-Now')
+    assert.ok(shelf.includes('LOT-OUTRIGHT'), 'the outright sale went missing')
+    /*  An accepted offer is a Buy-It-Now with a button, not a third market -
+        the same reading fairByChannel takes, and it has to hold here too. */
+    assert.ok(shelf.includes('LOT-OFFER'),
+        'an accepted offer was treated as neither an auction nor a Buy-It-Now')
+    opened.db.close()
+})
+
+test('the sold list opens on everything it holds, not on auctions', async () => {
+    /*  The scanner opens on auctions because that is where the tool has
+        outcomes to learn from. Every row on THIS page is an outcome, so the
+        same default would hide 59 of every 100 rows it has and answer a
+        narrower question than the one being asked. */
+    const opened = soldMixStore()
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const control = body.split('class="filters"')[1].split('</div>')[0]
+    assert.match(control, /Sold as/, 'the sold view offers no format control at all')
+    /*  Which option is marked as the one in force - `seg-opt on` - decides
+        what you are looking at, and it must be Both. */
+    const on = /<a class="seg-opt on"[^>]*>([^<]*)</.exec(control)
+    assert.ok(on !== null, 'no option is marked as the one in force')
+    assert.strictEqual(on[1], 'Both',
+        'the sold list opens on ' + on[1] + ', hiding the rest of what it holds')
+
+    /*  And the scanner is unchanged - it still opens on auctions. */
+    const scanner = (await fetchAll(opened, ['/?min=1']))['/?min=1'].body
+    const scanControl = scanner.split('class="filters"')[1].split('</div>')[0]
+    const scanOn = /<a class="seg-opt on"[^>]*>([^<]*)</.exec(scanControl)
+    assert.strictEqual(scanOn && scanOn[1], 'Auctions',
+        'the scanner default moved too, which was not the change')
+    opened.db.close()
+})
+
+test('the sold table can be ordered by how it sold', async () => {
+    const opened = soldMixStore()
+    const path = '/?min=1&view=sold&order=format'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const rows = body.split('id="sold"')[1].split('<h2')[0].split('<tr>').slice(1)
+
+    const titles = ['LOT-AUCTION', 'LOT-OUTRIGHT', 'LOT-OFFER']
+    const seen = rows
+        .map(r => titles.find(t => r.includes(t)))
+        .filter(t => t !== undefined)
+
+    /*  Gathered by how far the price can be trusted: a hammer price, then a
+        published asking price, then a ceiling eBay will not resolve. */
+    assert.deepStrictEqual(seen, titles,
+        'ordering by how it sold did not gather the three formats in that order')
+    opened.db.close()
+})
+
 test('a sold row is ticked when it counts, and not when eBay withheld the price', async () => {
     /*  The tick means one thing everywhere: counted in the statistics. On a
         completed sale that is the clearing price for its coin type - so a

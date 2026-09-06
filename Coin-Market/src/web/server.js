@@ -242,9 +242,24 @@ function coinWord (segment) {
         (words.length > 1 ? ' ' + words.slice(1).join(' ') : '')
 }
 
-function saleFromScan (url) {
+/*  The default sale type depends on the view, the same way the price band
+    does a few lines down.
+
+    The scanner opens on auctions because that is where the tool has outcomes
+    to learn from. The sold list is the opposite case: every row on it IS an
+    outcome, auction or not, and the page's whole question is "what has
+    actually sold" - so opening it on auctions would hide 59 of every 100 rows
+    it holds and answer a narrower question than the one being asked.
+
+    Both still take an explicit ?sale=, so the control works the same on
+    either; this only decides where you land. */
+function saleDefault (view) {
+    return view === 'sold' ? 'all' : 'auction'
+}
+
+function saleFromScan (url, view) {
     const asked = url === undefined ? null : url.searchParams.get('sale')
-    return SALES.includes(asked) ? asked : 'auction'
+    return SALES.includes(asked) ? asked : saleDefault(view)
 }
 
 /*  The default band depends on the view, and deliberately.
@@ -1257,6 +1272,14 @@ function marketPage (opened, url, reference) {
         every count on the page describes the same set the table is drawn
         from. */
     const scanView = viewFrom(url)
+    /*  Beside the view it depends on, and above everything that reads it.
+
+        It used to be declared three hundred lines down, next to the scanner's
+        own filters, which was fine while only the scanner used it. The sold
+        list reads it now, and reading a `const` before its declaration is not
+        an error you see: the router renders a 500 as a 200-shaped page, so it
+        shows up as five tests quietly disagreeing about a heading. */
+    const sale = saleFromScan(url, scanView)
     const metals = metalsFrom(url)
     const inMetals = (row) => row.metal === undefined || row.metal === null ||
         metals.includes(row.metal)
@@ -1277,9 +1300,30 @@ function marketPage (opened, url, reference) {
         different quantities and always have been: the opportunities panel
         has its own ending-soonest tabs, and this is the sold table's.
     */
-    const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title', 'ident']
+    const SOLD_SORTS = ['newest', 'oldest', 'dearest', 'cheapest', 'title', 'ident', 'format']
     const pageTerms = searchTerms(url)
-    const soldControlled = applyRowControls(allSales, url, SOLD_SORTS, 'newest')
+    /*  THE SOLD LIST IS TWO MARKETS, AND SAID SO WITHOUT LETTING YOU PART
+        THEM.
+
+        The "Selling as" control rendered on the near-spot and ending views
+        and nowhere else, and recentSales has never taken a sale type - so
+        this page mixed auctions with the Buy-It-Now shelf and offered no way
+        to separate them. Measured on the live store, of the 100 rows it
+        fetches: 41 auctions, 37 bought outright, 22 through an accepted
+        offer. Fifty-nine of them are not auctions.
+
+        That matters here more than anywhere. Every clearing figure in the
+        tool is built from exactly these rows, and channels.js opens by
+        arguing that an auction result and a Buy-It-Now result describe
+        different things and must never be averaged. A page that shows them
+        interleaved with no filter is the one place that argument is hardest
+        to act on.
+
+        matchesSale already knows how to read a completed sale - it prefers
+        sale_type and falls back to buying_options - so this is the same
+        filter the review queue and the scanner use, not a third one. */
+    const soldByFormat = allSales.filter(row => matchesSale(row, sale))
+    const soldControlled = applyRowControls(soldByFormat, url, SOLD_SORTS, 'newest')
     /*  THE METAL FILTER APPLIES HERE TOO, and did not.
 
         The Silver and Gold toggles render on all four views and were wired
@@ -1545,7 +1589,6 @@ function marketPage (opened, url, reference) {
     /*  Kept for the segmented control, which still offers the two orderings
         that answer "what do I do next" rather than all ten. */
     const sort = scanOrder === 'vsspot' ? 'spot' : 'ending'
-    const sale = saleFromScan(url)
     const band = bandFrom(url, scanView)
     const coin = coinFrom(url)
     const inCoin = (row) => {
@@ -2250,6 +2293,12 @@ what it has already found.">Rescan</a>
   ${scanView === 'nearSpot' || scanView === 'ending'
     ? '<span class="filter-divider"></span><span class="filter-label">Selling as</span>' + saleControl +
       '<span class="filter-label">Price</span>' + bandControl
+    : ''}
+  ${scanView === 'sold'
+    /*  Selling as, but no price band: a band filters live lots by what they
+        are asking against their metal, and these are not asking anything any
+        more - they went for what they went for. */
+    ? '<span class="filter-divider"></span><span class="filter-label">Sold as</span>' + saleControl
     : ''}
   <span class="filter-label right">Sort</span>
   ${viewSort}
@@ -3249,7 +3298,27 @@ const ROW_SORTS = {
     bids: {
         label: 'Most bids',
         compare: (a, b) => numberDesc(a.bidCount, b.bidCount)
+    },
+
+    /*  How it sold, gathered rather than alphabetical: FORMAT_ORDER runs
+        auction, bought outright, offer accepted, which is the order of how
+        much the price can be trusted - a hammer price, then a published
+        asking price, then a ceiling eBay will not resolve. Sorting by the
+        label would put "Auction" beside "Buy-It-Now" and both away from
+        "Buy-It-Now, offers allowed", which is the least useful of the three
+        possible orders. */
+    format: {
+        label: 'By how it sold',
+        compare: (a, b) => FORMAT_ORDER(a) - FORMAT_ORDER(b)
     }
+}
+
+const FORMAT_RANK = { AUCTION: 0, FIXED_PRICE: 1, BEST_OFFER: 2 }
+function FORMAT_ORDER (row) {
+    const found = formatOf(row)
+    if (found === null) { return 9 }
+    const rank = FORMAT_RANK[Object.keys(FORMATS).find(k => FORMATS[k] === found)]
+    return rank === undefined ? 9 : rank
 }
 
 /*  Null-last in both directions. Written once because every comparator above
@@ -4119,7 +4188,7 @@ const SOLD_COLUMNS = [
     { label: 'Sold', className: 'figure when', key: 'newest', back: 'oldest' },
     { label: 'Coin type', className: 'ident', key: 'ident' },
     { label: 'Price', className: 'figure bid', key: 'dearest', back: 'cheapest' },
-    { label: 'How it sold', className: 'fmt-cell',
+    { label: 'How it sold', className: 'fmt-cell', key: 'format',
         title: 'A gavel is an auction, with the number of bids it drew. A tag was bought ' +
             'outright at the asking price. A tag with a plus means the seller took ' +
             'offers, so the lot went for that price or less and eBay will not say ' +
