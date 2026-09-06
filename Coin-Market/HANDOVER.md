@@ -915,11 +915,37 @@ exactly this. Keep the chunked full rebuild underneath as the safety net: the
 CLI `reclassify` genuinely means everything, and a scoped path that is ever
 wrong is a store that silently disagrees with itself, with no signal.
 
-One more thing found while measuring and NOT fixed: `purgeUser`
-(`src/ebay/notifications.js`) uses a raw `db.exec('BEGIN')` with no retry, and
-its caller returns HTTP 200 when it fails - so eBay is told a deletion request
-succeeded while the data is still on disk. It should move onto
-`STORE.inTransaction` regardless of anything else here.
+### The deletion endpoint, fixed
+
+`purgeUser` (`src/ebay/notifications.js`) used a raw `db.exec('BEGIN')` with no
+retry, and its caller answered **HTTP 200 when it failed** - so eBay recorded
+the deletion as delivered while the rows were still on disk, and nothing
+anywhere remembered they should not be. The module's own header says the POST
+is *"handled for real rather than merely acknowledged"*.
+
+- The purge goes through `STORE.inTransaction`: `BEGIN IMMEDIATE` and a retry.
+  A bare `BEGIN` is deferred, and SQLite cannot honour `busy_timeout` on the
+  upgrade - and this runs in its own process against a file the collector
+  writes to every five minutes.
+- **One** transaction across every chunk, unlike `purgeExpired` beside it.
+  That one is retention housekeeping where a half-finished pass finishes
+  tomorrow; this is a deletion obligation, and half a user's rows removed is
+  the state that must not exist.
+- A failed purge now answers **503**, so eBay retries. The comment defending
+  the 200 worried about the keyset, and that worry is real for *sustained*
+  failure - but it is the right trade both ways: a transient failure gets
+  retried and the data does go, a persistent one is a broken database that
+  should be loud. Only the deletion path answers this way; a malformed payload
+  still gets 200, because we hold no data for it.
+
+Verified after deploying that the challenge path still returns the exact
+SHA-256 eBay validates against - that is what gates the production keyset and
+it must never regress.
+
+Still not fixed, and separate: `alert` is in `purgeUser`'s table list but not
+in `purgeExpired`'s, so orphaned `alert` rows can exist. Nothing in the running
+app reads that table (`newDispatcher` has no callers), so it is a tidiness
+problem rather than a live one.
 
 ### Still open elsewhere
 
