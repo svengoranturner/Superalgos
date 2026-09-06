@@ -1994,6 +1994,63 @@ test('a page with only auction sales says so plainly', async () => {
     asking price". A confident price next to a blank premium reads as a
     display fault rather than as the admission it is.
 */
+test('a sold row is ticked when it counts, and not when eBay withheld the price', async () => {
+    /*  The tick means one thing everywhere: counted in the statistics. On a
+        completed sale that is the clearing price for its coin type - so a
+        censored one is the single kind of sold row without a tick, because
+        eBay never published what it went for and it feeds no figure.
+
+        Both halves, because "no tick on a censored sale" is equally satisfied
+        by a table that lost the tick altogether. */
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    const KEY = 'GB.SOV.BULLION.FULL'
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const sell = (id, censored) => {
+        const browseId = 'v1|' + id + '|0'
+        repository.saveListing({
+            browseId, legacyId: id, title: id, buyingOptions: 'FIXED_PRICE|BEST_OFFER',
+            endTime: now, imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+        }, now)
+        repository.saveSnapshot(browseId, { price: 900, shipping: 0, observedAt: now })
+        repository.saveClassification(browseId, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+        repository.saveOutcome(browseId, {
+            endTime: now, sold: true, finalPrice: 900, shipping: 0, bidCount: null,
+            saleType: censored ? 'BEST_OFFER' : 'FIXED_PRICE', censored, source: 'test'
+        })
+    }
+    sell('a published sale', false)
+    sell('a withheld sale', true)
+    /*  A live lot so the coin type reaches `markets` and a table renders. */
+    const live = 'v1|shelf|0'
+    repository.saveListing({
+        browseId: live, legacyId: 'shelf', title: 'on the shelf',
+        buyingOptions: 'FIXED_PRICE', endTime: null,
+        imageUrl: 'https://i.ebayimg.com/images/g/AAA/s-l225.jpg'
+    }, now)
+    repository.saveSnapshot(live, { price: 1000, shipping: 0, observedAt: now })
+    repository.saveClassification(live, [{ key: KEY, level: 0 }], 0.9, 'title', 0.2354, {})
+
+    const spotAt = SPOT.newSpotLookup(db, {})
+    const opened = { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+    const path = '/?min=1&view=sold'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const rowFor = (title) => {
+        const at = body.indexOf('>' + title + '<')
+        assert.ok(at > -1, 'row missing: ' + title)
+        return body.slice(body.lastIndexOf('<tr>', at), body.indexOf('</tr>', at))
+    }
+
+    assert.match(rowFor('a published sale'), /class="tick-slot ticked"/,
+        'a sale that feeds the clearing price carries no tick')
+    assert.ok(!/class="tick-slot ticked"/.test(rowFor('a withheld sale')),
+        'a sale whose price eBay never published is ticked as though it counted')
+    db.close()
+})
+
 test('a Best Offer sale is never reported as a price somebody paid', async () => {
     const db = newDatabase(':memory:')
     const repository = newRepository(db, { sellerSalt: 'test' })
