@@ -1225,20 +1225,44 @@ test('a resolved sale and a new spot reading each invalidate the market memo', (
 })
 
 test('the market memo expires with the clock, not only with writes', () => {
-    /*  These are not a pure function of the store. A live lot is admitted only
-        while its end_time is in the future, so an auction ending drops out
-        with the clock and no write happens at all. The memo is keyed to the
-        minute so a lot cannot look live for longer than that. */
+    /*  These are not a pure function of the store: a lot is admitted only
+        while its end time is in the future, so it drops out with the clock
+        and no write happens at all.
+
+        The window was a minute, which made the first request in any minute
+        rebuild every market in the app from cold - 4.1s against 0.76s warm on
+        the Pi, once a minute, for as long as anybody was using it. What that
+        bought was one thing: the offers panel could name a lot that had just
+        ended. That is checked exactly now, in rules.js, against each lot's own
+        end time - so this is a cache window rather than a safety bound, and it
+        is wider.
+
+        Still bounded, because two figures the pages print are counts of what
+        is live. Five minutes against an hourly sweep. */
     const { db, view, KEY } = marketStore()
-    const t = Date.now()
+
+    /*  ANCHORED TO A WINDOW BOUNDARY, not to whatever moment this runs at.
+
+        Off a bare Date.now() the +90s reading lands in the next window
+        whenever "now" happens to sit within 90 seconds of an edge - a test
+        that fails one run in three and passes the rest, which is worse than
+        one that fails always. */
+    const WINDOW = 5 * 60 * 1000
+    const t = Math.floor(Date.now() / WINDOW) * WINDOW
 
     const first = view.marketsFor([KEY], new Date(t).toISOString()).get(KEY)
-    const sameMinute = view.marketsFor([KEY], new Date(t + 1000).toISOString()).get(KEY)
-    assert.strictEqual(sameMinute, first, 'the memo did not survive one second')
+    assert.strictEqual(view.marketsFor([KEY], new Date(t + 1000).toISOString()).get(KEY), first,
+        'the memo did not survive one second')
 
-    const laterMinute = view.marketsFor([KEY], new Date(t + 61000).toISOString()).get(KEY)
-    assert.notStrictEqual(laterMinute, first,
-        'the memo survived a minute, so an auction can look live after it has ended')
+    /*  The old bound, asserted from the other side: surviving a minute is the
+        point of the change, and a test that only checked the far edge would
+        pass with the minute still in place. */
+    assert.strictEqual(view.marketsFor([KEY], new Date(t + 90 * 1000).toISOString()).get(KEY),
+        first, 'the memo was rebuilt after 90 seconds, so the minute bucket is still there')
+
+    const later = view.marketsFor([KEY], new Date(t + WINDOW + 1000).toISOString()).get(KEY)
+    assert.notStrictEqual(later, first,
+        'the memo never expires with the clock at all, so a live count can go stale for good')
     db.close()
 })
 

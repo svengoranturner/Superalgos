@@ -37,6 +37,47 @@ function viewOf (listings, sweepAt) {
     }
 }
 
+/*
+    A LOT THAT HAS ENDED IS NOT AN OFFER, WHATEVER THE MARKET SAYS.
+
+    The market handed to this function is memoised, and a lot leaves `active`
+    when its end time passes - a change in the clock, with no write for the
+    watermark to notice. That used to be bounded by keying the whole memo to
+    the minute, which made every page in the app rebuild its markets from
+    cold once a minute to protect this one loop: 4.1s against 0.76s warm.
+
+    So the check lives here now, where it is exact instead of bounded and
+    costs a date comparison. This test is what allows that memo to be reused
+    for five minutes rather than one: it says the lot is rejected because it
+    has ended, not because the market it came from was rebuilt in time.
+
+    It matters more than "a Buy-It-Now runs until it is pulled" suggests -
+    measured on the live store, 1,625 of 13,461 Best Offer lots carry an end
+    time and 962 of those are still live.
+*/
+test('an offer is never raised on a lot that has already ended', () => {
+    const hour = 3600 * 1000
+    const ending = (offset) => lotCosting(CEILING * 1.09, {
+        endTime: new Date(Date.now() + offset).toISOString()
+    })
+
+    /*  The same lot, the same price, the same everything but the clock. */
+    const live = RULES.evaluate(viewOf([ending(hour)]), null, {})
+    assert.strictEqual(live.length, 1,
+        'a lot with an hour still to run raised no offer, so the pair below proves nothing')
+
+    const over = RULES.evaluate(viewOf([ending(-hour)]), null, {})
+    assert.strictEqual(over.length, 0,
+        'an offer was raised on a lot that ended an hour ago - which is what a market memo ' +
+        'older than the lot would hand this loop')
+
+    /*  And a lot with no end time at all is untouched: seven in eight Buy-It-
+        Now lots are Good-\u2019Til-Cancelled, and rejecting those would empty
+        the panel rather than clean it. */
+    const forever = RULES.evaluate(viewOf([lotCosting(CEILING * 1.09)]), null, {})
+    assert.strictEqual(forever.length, 1, 'a lot with no end time was dropped as though ended')
+})
+
 test('a Best Offer lot above the ceiling is worth an offer; a rigid one is not', () => {
     const near = RULES.evaluate(viewOf([lotCosting(CEILING * 1.09)]), null, {})
     assert.strictEqual(near.length, 1)

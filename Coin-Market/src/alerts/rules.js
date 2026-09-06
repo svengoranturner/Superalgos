@@ -50,6 +50,23 @@ exports.evaluate = function (view, curve, options) {
         */
         if (!FRESHNESS.isActionable(listing.lastSeen, sweepAt, config.staleAfterHours)) { continue }
 
+        /*
+            AND IT MUST NOT ALREADY BE OVER.
+
+            The market this reads is memoised, and a lot leaves `active` when
+            its end time passes - which is a change in the clock rather than a
+            write, so the memo cannot notice it. It was bounded by keying that
+            memo to the minute, which made every page in the app rebuild its
+            markets from cold once a minute to protect this one loop.
+
+            Checked here instead, where it costs a date comparison and is
+            exact rather than bounded. It matters more than it looks: 1,625 of
+            the 13,461 Best Offer lots on the live store carry an end time,
+            962 of them still live, so "a Buy-It-Now runs until it is pulled"
+            is true of seven in eight and not of the rest.
+        */
+        if (listing.endTime && new Date(listing.endTime).getTime() <= now) { continue }
+
         const total = PREMIUM.totalCost(listing.price, listing.shipping)
         if (!Number.isFinite(total) || total <= 0) { continue }
 

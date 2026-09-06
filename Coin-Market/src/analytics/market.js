@@ -57,13 +57,32 @@ exports.newMarketView = function (repository, spotAt, options) {
         per process - there is one dashboard. */
     let curveMemo = null
 
-    /*  Markets, kept until something they are computed from changes.
+    /*  HOW LONG A MARKET MAY BE REUSED ACROSS THE CLOCK.
 
-        Keyed on the watermark AND on the minute, because these are not a pure
-        function of the store: activeListings admits a lot only while
-        end_time is still in the future, so an auction ending drops out with
-        the clock rather than with a write. A minute bounds how long a lot can
-        look live after it has ended, against an hourly sweep behind it.
+        These are not a pure function of the store: activeListings admits a
+        lot only while its end time is in the future, so a lot drops out with
+        the clock and no write happens for the watermark to notice.
+
+        It was a minute, which cost more than it was worth. Every page in the
+        app shares this memo, so the first request in any minute rebuilt every
+        market from cold - measured on the Pi at 4.1s against 0.76s warm, on
+        the front page, once a minute, for as long as anybody was using it.
+
+        What that minute was protecting, traced rather than assumed: the
+        offers panel could name a lot that had just ended. Everything else
+        downstream is a display count - the live count per coin type and the
+        composition chart - moving by one lot in a few hundred. So the check
+        moved to the loop that needed it (see rules.js, which now compares
+        each lot's end time to the clock directly, exactly rather than within
+        a bound) and this became a cache window rather than a safety bound.
+
+        Five minutes, not longer, because it is still the age of a count the
+        pages print. Against an hourly sweep that is five times tighter than
+        the data behind it changes.
+    */
+    const CLOCK_BUCKET_MS = 5 * 60 * 1000
+
+    /*  Markets, kept until something they are computed from changes.
 
         The stamp is taken ONCE per batch and handed down. Taking it per
         instrument would cost 80 x 37ms and lose more than the memo saves,
@@ -100,7 +119,7 @@ exports.newMarketView = function (repository, spotAt, options) {
         */
         marketsFor (keys, now) {
             const asOf = now === undefined ? Date.now() : new Date(now).getTime()
-            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / 60000)
+            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / CLOCK_BUCKET_MS)
             if (marketMemo.stamp !== stamp) { marketMemo = { stamp, byKey: new Map() } }
 
             const out = new Map()
@@ -118,13 +137,15 @@ exports.newMarketView = function (repository, spotAt, options) {
             Six COUNTs over 29,672 listings, each with a correlated EXISTS, run
             once per series: 517ms of an 1,100ms render once everything else
             was fixed. It is derived from the same tables under the same
-            watermark, so it invalidates on exactly the same events - and it
-            carries the minute for the same reason marketsFor does, since two
-            of the six count what is live and that changes as auctions end.
+            watermark, so it must invalidate on exactly the same events - and it
+            carries the same clock bucket for the same reason marketsFor does,
+            since two of the six count what is live and that changes as
+            auctions end. Both of those are chart figures, which is why the
+            bucket is a cache window here rather than a bound on anything.
         */
         compositionFor (seriesId, now) {
             const asOf = now === undefined ? Date.now() : new Date(now).getTime()
-            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / 60000)
+            const stamp = repository.marketWatermark() + '|' + Math.floor(asOf / CLOCK_BUCKET_MS)
             if (compositionMemo.stamp !== stamp) { compositionMemo = { stamp, byId: new Map() } }
 
             const id = seriesId === undefined || seriesId === null ? '' : String(seriesId)
