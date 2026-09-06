@@ -1,6 +1,7 @@
 'use strict'
 
 const CRYPTO = require('node:crypto')
+const STORE = require('../store/db.js')
 
 /*
     eBay Marketplace Account Deletion / Closure notifications.
@@ -91,8 +92,29 @@ exports.purgeUser = function (repository, db, identifiers) {
     if (doomed.length === 0) { return 0 }
 
     const ids = doomed.map(row => row.browse_id)
-    db.exec('BEGIN')
-    try {
+    /*
+        ONE TRANSACTION, AND IT TAKES THE LOCK UP FRONT.
+
+        This was a bare `db.exec('BEGIN')` with no retry. A bare BEGIN is
+        DEFERRED: it takes the write lock at the first write, and SQLite
+        cannot honour busy_timeout on that upgrade - it would have to hand
+        back a snapshot another connection has already contradicted - so it
+        returns SQLITE_BUSY at once however long the timeout is. This process
+        shares the file with the collector, which writes every five minutes,
+        so losing that race was routine rather than exotic.
+
+        And the comment on the handler below called this "a local SQLite
+        delete measured in milliseconds", which stopped being true the moment
+        anything else could hold the lock for longer.
+
+        Deliberately ONE transaction across every chunk, unlike purgeExpired
+        beside it: that one is retention housekeeping, where a half-finished
+        pass is finished tomorrow. This is a deletion obligation. Half a
+        user's rows removed and half left is the state that must not exist,
+        and the row count here is one seller's listings rather than every
+        expired row in the store.
+    */
+    STORE.inTransaction(db, () => {
         for (let i = 0; i < ids.length; i += 400) {
             const slice = ids.slice(i, i + 400)
             const marks = slice.map(() => '?').join(',')
@@ -101,11 +123,7 @@ exports.purgeUser = function (repository, db, identifiers) {
                 db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')').run(...slice)
             }
         }
-        db.exec('COMMIT')
-    } catch (err) {
-        db.exec('ROLLBACK')
-        throw err
-    }
+    })
     return ids.length
 }
 
@@ -152,26 +170,62 @@ exports.newHandler = function (options) {
                 const named = identifiers.username !== null || identifiers.userId !== null
 
                 if (named && typeof onDeletion === 'function') {
-                    const removed = onDeletion(identifiers)
-                    note('account deletion: purged ' + removed + ' listings')
+                    try {
+                        const removed = onDeletion(identifiers)
+                        note('account deletion: purged ' + removed + ' listings')
+                    } catch (err) {
+                        /*
+                            A FAILED PURGE MUST NOT ANSWER 200.
+
+                            This used to fall through to the catch below and
+                            answer 200 with {ok:false} - so eBay recorded the
+                            deletion as delivered and moved on, while the
+                            user's rows were still on disk and nothing
+                            anywhere remembered that they should not be. The
+                            module's own header says the POST is "handled for
+                            real rather than merely acknowledged"; a 200 here
+                            is exactly the rubber stamp it promises not to be.
+
+                            The comment defending it worried that failures
+                            cost the keyset its activation, and that is true
+                            of SUSTAINED failure - eBay retries with backoff
+                            and disables a subscription that never recovers.
+                            But that is the right trade in both directions: a
+                            transient failure gets retried and the data does
+                            go, and a persistent one is a broken database that
+                            ought to be loud rather than papered over. The
+                            purge itself now retries and takes the write lock
+                            up front, so contention - the one realistic cause
+                            - no longer reaches here at all.
+
+                            Only the deletion path answers this way. A
+                            malformed payload still gets 200, because we hold
+                            no data for it and there is nothing to retry.
+                        */
+                        note('ERROR account deletion FAILED, data still held: ' + err.message)
+                        return {
+                            status: 503,
+                            contentType: 'application/json',
+                            body: JSON.stringify({ ok: false, retry: true })
+                        }
+                    }
                 } else {
                     note('account deletion received' + (named ? ' (no data held)' : ' (no identifier in payload)'))
                 }
 
-                /*
-                    eBay wants a prompt 200/204. Doing the purge first is
-                    safe here because it is a local SQLite delete measured
-                    in milliseconds; anything slower belongs on a queue.
-                */
+                /*  eBay wants a prompt 200/204, and by here the purge has
+                    actually happened. */
                 return { status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }
             }
 
             return { status: 405, contentType: 'text/plain', body: 'Method not allowed' }
         } catch (err) {
             note('ERROR ' + err.message)
-            /* Still a 200: eBay retries and eventually disables the
-               subscription on repeated failures, and a transient bug on
-               our side should not cost the keyset. */
+            /*  Still a 200, and only for what is left after the deletion
+                path takes its own failures above: a challenge we could not
+                answer, or a body we could not parse. We hold no data for
+                either, so there is nothing for eBay to retry and no reason
+                to spend the keyset's activation on it. */
             return { status: 200, contentType: 'application/json', body: JSON.stringify({ ok: false }) }
         }
     }
