@@ -1841,11 +1841,31 @@ exports.newRepository = function (db, options) {
             way round - the store is what knows how it is written to. */
         inTransaction (work) { return STORE.inTransaction(db, work) },
 
-        /*  Which listings sit in these countries, by the key a decision is
-            recorded against. For the scoped rebuild after the country filter
-            changes: only listings whose country changed side of the filter
-            can have changed verdict. */
-        legacyIdsInCountries (countries) {
+        /*
+            EVERY LISTING'S OWN TITLE, one row per browse id.
+
+            titleCorpus is the neighbouring query and the wrong one for this:
+            it is MIN(title) GROUP BY legacy_id, one title per coin, built for
+            a rule PREVIEW where one row per coin is the right unit. A rebuild
+            works per browse row against that row's own title, and where a
+            relist appended words, MIN is the shorter title - so a scope built
+            from the corpus would test the version WITHOUT the phrase and skip
+            the row that has it.
+
+            No WHERE clause, deliberately. titleCorpus filters legacy_id IS
+            NOT NULL; this must not, because a rebuild has to reach rows that
+            have no legacy id at all - RECLASSIFY.run does, by selecting the
+            whole table.
+        */
+        listingTitles () {
+            return db.prepare('SELECT browse_id AS browseId, title FROM listing').all()
+        },
+
+        /*  Which listings sit in these countries. For the scoped rebuild
+            after the country filter changes: only listings whose country
+            changed side of the filter can have changed verdict. Browse ids,
+            for the same reason listingTitles returns them. */
+        browseIdsInCountries (countries) {
             const list = (countries || []).filter(Boolean)
             if (list.length === 0) { return [] }
             const found = []
@@ -1853,8 +1873,8 @@ exports.newRepository = function (db, options) {
                 const slice = list.slice(start, start + 400)
                 const marks = slice.map(() => '?').join(',')
                 found.push(...db.prepare(
-                    'SELECT DISTINCT legacy_id AS legacyId FROM listing ' +
-                    'WHERE item_country IN (' + marks + ')').all(...slice).map(r => r.legacyId))
+                    'SELECT browse_id AS browseId FROM listing ' +
+                    'WHERE item_country IN (' + marks + ')').all(...slice).map(r => r.browseId))
             }
             return found
         },

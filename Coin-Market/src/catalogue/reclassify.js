@@ -173,9 +173,32 @@ exports.run = function (db, repository, options) {
     The country filter is narrower still: EXCLUSIONS.screenLocation reads
     nothing but the country and the allowed list.
 
-    Callers pass legacy ids because that is what a decision is recorded
-    against and a relisted coin has several browse ids sharing one - the same
-    key `one` uses.
+    CALLERS PASS BROWSE IDS, NOT LEGACY IDS, and that is a correction.
+
+    `one` is keyed by legacy id because a DECISION is recorded against one and
+    a relisted coin has several browse ids sharing it. A REBUILD is not a
+    decision: classifyOne runs per browse row, against that row's own title.
+
+    Selecting by legacy id lost two kinds of listing, both silently:
+
+      - titleCorpus, the obvious way to find matching titles, is
+        `MIN(title) GROUP BY legacy_id` - one title per coin, for a preview.
+        Where a relist appended words to a title, MIN is the SHORTER one, so
+        a rule about the appended junk would test the title without it and
+        skip the row that has it. The repository's own note on that query
+        records 16 of 23,740 legacy ids disagreeing when it was written.
+
+      - legacy_id is nullable (browse.js writes `summary.legacyItemId ||
+        null`), and `legacy_id IN (...)` never matches NULL. `run` visits
+        those rows because it selects the whole table; a legacy-keyed `some`
+        never could, so they would be permanently unreachable by every rule
+        and country change while discover.js kept applying the same rules to
+        newly ingested rows.
+
+    Measured on the live store today: no NULL legacy ids and no disagreeing
+    titles, so neither was biting. Both are representable, both are one line
+    away, and the cost of either is a row that quietly contradicts the rules
+    that produced it, for ever, with nothing to signal it.
 
     THE CALLER MUST BUILD THE SET WITH LEARNED.phrasePattern, not with
     `title.includes(phrase)`. The pattern lowercases, collapses whitespace
@@ -184,8 +207,8 @@ exports.run = function (db, repository, options) {
     actually reaches, and a rule reaching a listing this pass did not visit is
     the silent half-rebuilt store this whole design exists to avoid.
 */
-exports.some = function (db, repository, legacyIds, options) {
-    const ids = [...new Set((legacyIds || []).filter(Boolean).map(String))]
+exports.some = function (db, repository, browseIds, options) {
+    const ids = [...new Set((browseIds || []).filter(Boolean).map(String))]
     if (ids.length === 0) { return emptyCounts() }
 
     /*  Chunked because SQLite binds a limited number of parameters per
@@ -198,7 +221,7 @@ exports.some = function (db, repository, legacyIds, options) {
         listings.push(...db.prepare(
             'SELECT browse_id AS browseId, legacy_id AS legacyId, title, ' +
             'category_path AS categoryPath, item_country AS itemCountry ' +
-            'FROM listing WHERE legacy_id IN (' + marks + ')').all(...slice))
+            'FROM listing WHERE browse_id IN (' + marks + ')').all(...slice))
     }
     return rebuild(db, repository, listings, options)
 }

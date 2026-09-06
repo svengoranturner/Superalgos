@@ -5016,7 +5016,7 @@ ${list(unsold, 'dearest first')}`}
     Everything else about it is unchanged - it is an allow-list because `back`
     arrives in a query string, and an unchecked one is an open redirect. */
 const BACK_PATHS = new Set(
-    ['/', '/review', '/listings', '/rules', '/teach', '/rule-confirm']
+    ['/', '/review', '/listings', '/rules', '/teach', '/rule-confirm', '/rebuild']
         .concat(Object.keys(REFERENCE_PATHS))
 )
 
@@ -5269,7 +5269,7 @@ function handlePost (opened, pathname, form) {
 
         const moved = countriesAffectedBy(repository, was, chosen)
         RECLASSIFY.some(db, repository,
-            repository.legacyIdsInCountries(moved),
+            repository.browseIdsInCountries(moved),
             { allowedCountries: chosen })
         return '/'
     }
@@ -5319,8 +5319,9 @@ function handlePost (opened, pathname, form) {
             Scoped, it is also the number the page actually claims: how many
             of the listings this phrase reaches stopped being priced.
         */
-        const phraseSet = form.getAll('phrase').map(x => String(x).trim()).filter(Boolean)
-        const scope = reachedByPhrases(repository, phraseSet)
+        /*  Once. This walks every title in the store, and it cannot change
+            across the rebuild - it reads `listing`, never `learned_rule`. */
+        const scope = reachedByPhrases(repository, phrases)
         const priced = () => {
             if (scope.length === 0) { return 0 }
             let total = 0
@@ -5328,9 +5329,8 @@ function handlePost (opened, pathname, form) {
                 const slice = scope.slice(start, start + 400)
                 const marks = slice.map(() => '?').join(',')
                 total += db.prepare(
-                    'SELECT COUNT(DISTINCT li.browse_id) AS n FROM listing_instrument li ' +
-                    'JOIN listing l ON l.browse_id = li.browse_id ' +
-                    'WHERE l.legacy_id IN (' + marks + ')').get(...slice).n
+                    'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument ' +
+                    'WHERE browse_id IN (' + marks + ')').get(...slice).n
             }
             return total
         }
@@ -5365,8 +5365,7 @@ function handlePost (opened, pathname, form) {
             this hardware to answer a question about, typically, a few hundred
             rows: measured on the live corpus, "proof" reaches 1,401 titles of
             23,740 and "harrington & byrne" reaches eight. */
-        const reached = reachedByPhrases(repository, phrases)
-        RECLASSIFY.some(db, repository, reached,
+        RECLASSIFY.some(db, repository, scope,
             { allowedCountries: allowedCountries(repository) })
 
         const dropped = before - priced()
@@ -5380,6 +5379,28 @@ function handlePost (opened, pathname, form) {
                 'added=' + phrases.length + '&dropped=' + dropped
         }
         return '/rules?just=' + encodeURIComponent(phrases[0]) + '&dropped=' + dropped
+    }
+
+    /*
+        THE FULL SWEEP, WHICH NOW NEEDS ASKING FOR.
+
+        Accepting a rule used to reclassify all thirty thousand listings, and
+        that was doing two jobs: applying the rule, and quietly repairing the
+        whole store against whatever the tool's own parsing had learned to do
+        since the last time anybody clicked. Scoping the rule buttons took the
+        first job down from twenty seconds to a tenth of one - and took the
+        second away entirely, because a change to exclusions.js, to a series
+        pack's recogniser, or to a fineOz constant reaches listings no phrase
+        matches and no country moved.
+
+        So the repair path gets a door of its own rather than riding on a
+        button that no longer goes there. It is the exceptional case now, it
+        costs about twenty seconds, and it says so.
+    */
+    if (pathname === '/rebuild') {
+        const counts = RECLASSIFY.run(db, repository,
+            { allowedCountries: allowedCountries(repository) })
+        return '/rules?rebuilt=' + counts.total
     }
 
     if (pathname === '/rule/delete') {
@@ -5416,11 +5437,22 @@ function handlePost (opened, pathname, form) {
     A NULL series is NOT "might be either". `series` is set from
     SERIES.recognise BEFORE classification runs (discover.js:150-157), so
     NULL means no pack claimed the title and it went to the review queue
-    without ever meeting a learned rule. 85% of the store is in that state
-    and none of it is priced. Those listings are unreachable by any rule,
-    which is worth counting and saying out loud rather than folding into a
-    number: "proof" matches 1,401 titles and 581 of them cannot be touched,
-    so a preview reporting 1,401 promises a clear-out it will not deliver.
+    without ever meeting a NOT_TRACKED rule. 85% of the store is in that
+    state and none of it is priced. Those listings are unreachable by a
+    rejection, which is worth counting and saying out loud rather than
+    folding into a number: "proof" matches 1,401 titles and 581 of them
+    cannot be touched, so a preview reporting 1,401 promises a clear-out it
+    will not deliver.
+
+    "UNREACHABLE BY ANY RULE" WOULD BE TOO STRONG, AND THIS SAID IT.
+
+    An INCLUDE rule reaches a listing with no series precisely BECAUSE it has
+    none: reclassify.js consults learned.seriesFor(title) only when
+    claim.pack === null. So this preview under-reports an inclusion rule's
+    reach - a separate problem, and the reason the series filter below must
+    never be copied into reachedByPhrases, which decides what a REBUILD
+    visits rather than what a preview promises. Narrowing that set by series
+    would make every inclusion rule a no-op.
 */
 /*
     WHICH LISTINGS A PHRASE CAN REACH.
@@ -5446,9 +5478,14 @@ function handlePost (opened, pathname, form) {
 function reachedByPhrases (repository, phrases) {
     const patterns = phrases.map(phrase => LEARNED.phrasePattern(phrase))
     if (patterns.length === 0) { return [] }
-    return repository.titleCorpus()
+    /*  listingTitles, not titleCorpus. The corpus is MIN(title) GROUP BY
+        legacy_id - one title per coin, for a preview - and it drops rows with
+        no legacy id. Both losses are silent here: a relist whose appended
+        words are what the rule is about would be tested on the version
+        without them. See the note on listingTitles. */
+    return repository.listingTitles()
         .filter(row => patterns.some(test => test.test(row.title)))
-        .map(row => row.legacyId)
+        .map(row => row.browseId)
 }
 
 /*
@@ -5980,6 +6017,15 @@ reversible and nothing here is a black box — each rule is the phrase you accep
 
 <h2>Rules</h2>
 ${ruleRows}
+
+<div class="card">
+  <form method="post" action="/rebuild">
+    <div class="bulkbar">
+      <button class="btn btn-secondary" type="submit" title="Reclassify every stored listing from scratch. Accepting or removing a rule only revisits the listings that rule can reach, which is what makes it instant - but a change to the tool's own parsing reaches everything, and nothing else sweeps the whole store. Takes about twenty seconds.">Rebuild everything</button>
+      <span class="thin">After an update to the tool itself. A rule change does not need this.</span>
+    </div>
+  </form>
+</div>
 
 ${blocklistForm()}
 

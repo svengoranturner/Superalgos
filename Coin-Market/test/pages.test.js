@@ -2845,6 +2845,46 @@ function ruleScopeStore () {
     add('other', '2015 Gold Bullion Sovereign Elizabeth II')
     add('bystander', '1982 Gold Half Sovereign')
 
+    /*
+        A RELIST WHOSE TWO ROWS DISAGREE ABOUT THE TITLE.
+
+        One legacy id, two browse ids, and the second is the one the rule is
+        about. This is the case that breaks a scope built from titleCorpus:
+        that query is MIN(title) GROUP BY legacy_id, and MIN of these two is
+        the SHORTER one - the version without the phrase. A rebuild selecting
+        by legacy id would test the wrong title, skip the coin, and leave a
+        row priced that its own rules reject.
+
+        The repository's note on titleCorpus records 16 of 23,740 legacy ids
+        disagreeing when it was written; the live store has none today. It is
+        one relist away from having some again.
+    */
+    const relist = (browseId, title) => {
+        repository.saveListing({
+            browseId, legacyId: 'relisted', title, buyingOptions: 'AUCTION',
+            categoryPath: 'Coins', itemCountry: 'GB',
+            endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 400, shipping: 0, observedAt: now })
+    }
+    relist('v1|relisted|0', '1974 Gold Sovereign')
+    /*  A prefix of the other, so MIN(title) really is the row WITHOUT the
+        phrase - which is the whole point. Get this backwards and the test
+        passes against the bug. */
+    relist('v1|relisted|1', '1974 Gold Sovereign - Gold Proof presentation')
+
+    /*  AND A LISTING WITH NO LEGACY ID AT ALL. browse.js writes
+        `summary.legacyItemId || null`, and `legacy_id IN (...)` never matches
+        NULL - so a legacy-keyed rebuild could never reach this row, while the
+        collector went on applying the same rules to everything it ingested. */
+    repository.saveListing({
+        browseId: 'v1|nolegacy|0', legacyId: null,
+        title: '1911 Gold Proof Sovereign, no legacy id', buyingOptions: 'AUCTION',
+        categoryPath: 'Coins', itemCountry: 'GB',
+        endTime: new Date(Date.now() + 3600000).toISOString()
+    }, now)
+    repository.saveSnapshot('v1|nolegacy|0', { price: 400, shipping: 0, observedAt: now })
+
     /*  The store and the SETTING have to agree before a scoped rebuild can
         be asked to move between two filters - it reclassifies what changed
         side of the filter, so it cannot repair a store that was classified
@@ -2891,6 +2931,22 @@ test('accepting a rule reaches every listing it can, not just the obvious ones',
         assert.strictEqual(priced(id), 0, id + ' still prices, so the rule did not reach it')
     }
     assert.ok(priced('other') > 0, 'a listing the phrase cannot reach was dropped anyway')
+
+    /*  The relisted row whose OTHER row does not mention the phrase. A scope
+        built from titleCorpus tests MIN(title) - the shorter one, without the
+        phrase - and skips this. */
+    const row = (browseId) => opened.db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get(browseId).n
+    assert.strictEqual(row('v1|relisted|1'), 0,
+        'the relisted row carrying the phrase was skipped, which is what selecting through ' +
+        "titleCorpus's MIN(title) GROUP BY legacy_id does")
+    assert.ok(row('v1|relisted|0') > 0,
+        'the sibling row, whose own title the rule does not match, was dropped with it')
+
+    /*  And the row with no legacy id, which legacy_id IN (...) can never
+        match however the set is built. */
+    assert.strictEqual(row('v1|nolegacy|0'), 0,
+        'a listing with no legacy id is unreachable by any rule change, for ever')
     opened.db.close()
 })
 
@@ -2953,6 +3009,33 @@ test('changing the country filter reaches every listing that changed side of it'
         'a full rebuild after widening the country filter changed the store, so untick-everything ' +
         'leaves listings excluded by a filter that is no longer on')
     assert.ok(priced('v1|abroad|0') > 0, 'the US listing did not come back')
+    opened.db.close()
+})
+
+test('the full rebuild is still reachable, now that no rule button runs one', async () => {
+    /*  Scoping the three buttons took twenty seconds off each of them and
+        took something away with it: they were the only thing that ever swept
+        the whole store, and they were repairing far more than rule changes.
+        A change to exclusions.js, to a series recogniser or to a fineOz
+        constant reaches listings no phrase matches and no country moved, and
+        after scoping nothing would have visited them - the store would hold
+        two generations of classification side by side, with no signal. */
+    const opened = ruleScopeStore()
+    const body = (await fetchAll(opened, ['/rules']))['/rules'].body
+    assert.match(body, /action="\/rebuild"/,
+        'nothing on the rules page runs a full rebuild any more, so a change to the ' +
+        'classifier itself can never reach the listings already stored')
+
+    /*  And it works. Break a stored classification behind the app's back -
+        which is what a code change looks like from the store's side - and
+        assert the button repairs it where no rule or country change could. */
+    opened.db.prepare('DELETE FROM listing_instrument WHERE browse_id = ?').run('v1|other|0')
+    const priced = () => opened.db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get('v1|other|0').n
+    assert.strictEqual(priced(), 0, 'the fixture did not actually lose its classification')
+
+    await post(opened, '/rebuild', {})
+    assert.ok(priced() > 0, 'a full rebuild did not restore a listing no rule phrase reaches')
     opened.db.close()
 })
 
