@@ -3135,53 +3135,50 @@ function reviewPage (opened, url) {
     const only = sale === 'auction' ? ' at auction' : (sale === 'bin' ? ' at Buy-It-Now' : '')
     const among = sale === 'all' ? '' : ' on this tab'
 
+    /*
+        THE SAME EDIT AS THE COIN-TYPE PAGE, FOR THE SAME REASON.
+
+        The owner: "Review page looks a mess. Visually really cluttered."
+        Measured on the live page, 1,587 characters of prose stood between
+        the heading and the first row - a 249-character standfirst, a
+        627-character paragraph explaining what a decision means, a
+        216-character note explaining the tab strip, and a subheading under
+        two of the three sections.
+
+        Every one of them says something true. None of them needed to be on
+        the page: the label names the thing and the explanation goes in a
+        title=, which is the rule this app already states in tabs() and in
+        bulkBar(). The tab-strip paragraph goes entirely - saleTabs carries
+        exactly that sentence in its per-tab tooltips now, so it was being
+        said twice on the same screen.
+
+        What stays on the face of the page is what VARIES: the counts, which
+        tab you are on, and how many of the rows below are already settled.
+    */
+    const settledNote = settled > 0
+        ? '<p class="thin" style="margin:0"><strong>' + settled + '</strong> of the rows below ' +
+          'are already settled.</p>'
+        : ''
+
     return RENDER.page('Needs review - Coin Market', `
-<h1>Needs review</h1>
-<p class="sub">Listings the classifier would not price without a human decision. Every statistic
-in this tool is computed over what survives this filter, so it is shown rather than hidden.${
-    sale === 'all' ? '' : ' You are looking at the ' + (sale === 'auction'
-        ? 'auctions' : 'Buy-It-Now lots') + ' only &mdash; the tabs below carry the rest.'}</p>
+<h1 title="Listings the classifier would not price without a human decision. Every statistic in this tool is computed over what survives this filter, so it is shown rather than hidden.">Needs review</h1>
 ${seriesTabs}
 ${applied}
-
-<div class="card">
-  <p class="thin" style="margin:0">Click a photo to see it large. Mark one and it is settled for
-  good &mdash; the decision is stored against the coin, survives a relist, outranks every rule in
-  the classifier, and the collector applies it to listings it finds tomorrow. Reject one and you
-  are then offered a rule that generalises it, with the count of what it would catch and what it
-  would break &mdash; scoped to this coin, so a good reason to reject
-  ${escapeHtml(SERIES.words(chosen).one === SERIES.MIXED_WORDS.one
-      ? 'one coin' : 'a ' + SERIES.words(chosen).one)} can never empty another series.${seriesTabs === '' ? '' : ' One coin at a time: the tabs above carry the size of ' +
-  'every queue' + (sale === 'all' ? '' : ' on this tab') + ', so working through one never ' +
-  'hides another.'}
-  ${settled > 0 ? '<strong>' + settled + '</strong> of the listings below are already settled.' : ''}</p>
-</div>
+${settledNote === '' ? '' : '<div class="card">' + settledNote + '</div>'}
 
 <div class="card">
   ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen }, queueSaleCounts)}
   ${queueControls}
   ${narrowed}
-  <p class="thin" style="margin:10px 0 0">A live lot is filtered on how it is offered, a
-  completed one on how it actually sold. The queue opens on auctions because that is where the
-  tool has outcomes to learn from &mdash; every resolved sale it holds is one. ${sale === 'bin'
-      ? 'No Buy-It-Now lot has a recorded outcome yet &mdash; they carry no end time, so the tool never learns whether they sold.'
-      : ''}</p>
 </div>
 
-<h2>Making a number wrong right now (${affecting.length}${only})</h2>
-<p class="thin">Flagged as uncertain, but still counted in the market statistics. These are the
-ones behind anything that looks wrong on the front page.${sale === 'all' ? '' :
-    ' Counted over this tab only &mdash; a lot sold the other way can be making a number wrong ' +
-    'too, and it is on the tab above.'}</p>
+<h2 title="Flagged as uncertain, but still counted in the market statistics - these are the ones behind anything that looks wrong on the front page.${sale === 'all' ? '' : ' Counted over this tab only; a lot sold the other way can be making a number wrong too, and it is on the tab above.'}">Making a number wrong right now (${affecting.length}${only})</h2>
 ${list(affecting, 'Nothing uncertain is currently being priced' + among + '.')}
 
-<h2>Uncertain, but not being priced (${inert.length}${only})</h2>
+<h2 title="Awaiting a decision, but not counted in any figure yet.">Uncertain, but not being priced (${inert.length}${only})</h2>
 ${list(inert, 'Nothing else awaiting a decision' + among + '.', 150)}
 
-<h2>Deliberately excluded (${excluded.length}${only})</h2>
-<p class="thin">Mounts, copies, cases and multi-coin lots. If something here looks wrongly
-dropped, mark it genuine &mdash; that overrides the rule that dropped it, which is the failure
-mode worth watching for: a bad rule quietly eating half the market.</p>
+<h2 title="Mounts, copies, cases and multi-coin lots. If something here looks wrongly dropped, mark it genuine - that overrides the rule that dropped it, which is the failure mode worth watching for: a bad rule quietly eating half the market.">Deliberately excluded (${excluded.length}${only})</h2>
 ${list(excluded, 'Nothing excluded' + among + '.', 150)}
 ${truncated ? '<p class="thin warn">The queue is longer than this page reads &mdash; only the first ' + QUEUE_LIMIT + ' rows were fetched, so the counts above are floors rather than totals.</p>' : ''}
 `, whereYouAre(url))

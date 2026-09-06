@@ -5423,6 +5423,41 @@ test('a coin type can be reached from the lot that belongs to it', async () => {
     gone from the body AND that what they said is still reachable, which is
     the difference between editing and deleting.
 */
+test('the review queue states its counts rather than arguing for them', async () => {
+    /*  "Review page looks a mess. Visually really cluttered." Measured on the
+        live page, 1,587 characters of prose stood between the heading and the
+        first row - and one of those paragraphs explained the tab strip, which
+        saleTabs now carries in its own per-tab tooltips, so the same sentence
+        was on screen twice.
+
+        Asserted as a BUDGET rather than against particular strings, because
+        the failure mode is accumulation: any one paragraph looks reasonable
+        on the day it is added. */
+    const opened = bulkPoolStore()
+    const path = '/review?sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const head = body.split('<h2')[0]
+    const prose = [...head.matchAll(/<p class="(?:sub|thin)"[^>]*>([\s\S]*?)<\/p>/g)]
+        .map(m => m[1].replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim())
+        .join(' ')
+    assert.ok(prose.length < 200,
+        'there are ' + prose.length + ' characters of prose above the first section: ' + prose)
+
+    /*  Gone from the page, still reachable - the difference between editing
+        and deleting. */
+    assert.match(body, /<h1 title="[^"]*would not price without a human decision/,
+        'the standfirst was deleted rather than moved')
+    assert.match(body, /<h2 title="[^"]*still counted in the market statistics/,
+        'the section subheading was deleted rather than moved')
+
+    /*  And the sentence that was being said twice is said once. */
+    assert.ok(!/A live lot is filtered on how it is offered/.test(
+        body.replace(/title="[^"]*"/g, '')),
+        'the tab strip is still explained in prose beside tabs that explain themselves')
+    opened.db.close()
+})
+
 test('the coin-type page states its figures rather than arguing for them', async () => {
     const opened = orderingStore()
     const path = '/listings?key=' + opened.key + '&sale=all'
