@@ -2,6 +2,7 @@
 
 const CRYPTO = require('node:crypto')
 const SERIES = require('../catalogue/series/index.js')
+const STORE = require('./db.js')
 
 /*
     Data access.
@@ -1812,26 +1813,51 @@ exports.newRepository = function (db, options) {
            judgement someone made about it is ours and is kept, so a label
            remains a training example after the listing it came from has
            gone. */
+        /*  A transaction, without every caller needing the handle.
+
+            discover.js takes a repository and not a db, and adding one to its
+            dependencies to let it batch its writes would have been the wrong
+            way round - the store is what knows how it is written to. */
+        inTransaction (work) { return STORE.inTransaction(db, work) },
+
         purgeExpired (nowIso) {
             const now = nowIso || new Date().toISOString()
             const doomed = db.prepare('SELECT browse_id FROM listing WHERE expires_at < ?').all(now)
             if (doomed.length === 0) { return 0 }
 
-            db.exec('BEGIN')
-            try {
-                const ids = doomed.map(r => r.browse_id)
-                const chunk = 400
-                for (let i = 0; i < ids.length; i += chunk) {
-                    const slice = ids.slice(i, i + chunk)
+            /*
+                A COMMIT PER CHUNK, NOT ONE AT THE END.
+
+                The deletes were already chunked by 400 and then all committed
+                together, so the whole purge - six tables across every expired
+                row, with 180-day retention and one snapshot per listing per
+                sweep - was a single write lock held for as long as it took.
+                Unattended, once a day, on an SD card. Anything the dashboard
+                tried to write while it ran waited for the whole thing.
+
+                Chunked commits make the maximum lock hold one chunk instead,
+                which the busy timeout can absorb. What that costs is
+                atomicity across the purge: an interrupted run leaves some
+                expired rows deleted and some not. That is the right trade
+                here and it would not be everywhere - these rows are already
+                past their retention date, deleting them is idempotent, and
+                the next daily run finishes the job. A half-finished purge is
+                a purge that will complete tomorrow; a half-finished label is
+                a wrong answer.
+            */
+            const ids = doomed.map(r => r.browse_id)
+            const chunk = 400
+            const tables = ['listing_snapshot', 'aspect', 'listing_instrument',
+                'review_queue', 'listing_outcome', 'listing']
+            for (let i = 0; i < ids.length; i += chunk) {
+                const slice = ids.slice(i, i + chunk)
+                STORE.inTransaction(db, () => {
                     const marks = slice.map(() => '?').join(',')
-                    for (const table of ['listing_snapshot', 'aspect', 'listing_instrument', 'review_queue', 'listing_outcome', 'listing']) {
-                        db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')').run(...slice)
+                    for (const table of tables) {
+                        db.prepare('DELETE FROM ' + table + ' WHERE browse_id IN (' + marks + ')')
+                            .run(...slice)
                     }
-                }
-                db.exec('COMMIT')
-            } catch (err) {
-                db.exec('ROLLBACK')
-                throw err
+                })
             }
             return doomed.length
         },

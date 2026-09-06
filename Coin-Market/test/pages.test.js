@@ -2661,6 +2661,61 @@ function bulkPoolStore () {
 const poolOf = (opened, legacyId) =>
     (opened.repository.labels().find(l => l.legacyId === legacyId) || {}).pool
 
+test('a batch that fails partway leaves nothing behind it', async () => {
+    /*
+        A thirty-row cull used to be thirty labels and thirty rebuilds, each
+        its own transaction. A failure at row seventeen left sixteen applied,
+        fourteen not, and a redirect that said nothing about which - and the
+        error page threw away every field the form was carrying, so there was
+        no way back to what you had typed either.
+
+        The owner met the failure half of this for real: "database is locked"
+        while changing one lot from 1 coin to 5. A batch applied with one
+        click has to land with one outcome.
+
+        A plain error rather than a busy one, so this measures ATOMICITY
+        alone - a busy error is retried, which would make the call count say
+        something about the retry instead.
+    */
+    const opened = bulkPoolStore()
+    const real = opened.repository.label.bind(opened.repository)
+    let calls = 0
+    opened.repository.label = (entry) => {
+        calls++
+        if (calls === 2) { throw new Error('the disk fell off') }
+        return real(entry)
+    }
+
+    await post(opened, '/apply', {
+        bulk: 'TRACKED', pick: ['one', 'two', 'three'],
+        bulk_pool: 'COMMON', back: '/listings?key=' + opened.key
+    })
+    opened.repository.label = real
+
+    assert.strictEqual(calls, 2, 'the batch carried on past the row that threw')
+    assert.strictEqual(opened.repository.labels().length, 0,
+        'the row before the failure was left applied, so a batch can still half-land')
+    opened.db.close()
+})
+
+test('a locked database is reported as busy, not as a stack trace', async () => {
+    /*  What the owner actually saw was "Something went wrong / Error:
+        database is locked / at bindAll" - a stack trace on a page, which
+        says nothing anybody can act on and reads as the tool being broken
+        rather than busy. */
+    const opened = bulkPoolStore()
+    opened.repository.label = () => {
+        throw Object.assign(new Error('database is locked'), { errcode: 5 })
+    }
+    const response = await post(opened, '/apply', {
+        bulk: 'TRACKED', pick: ['one'], back: '/listings?key=' + opened.key
+    })
+    assert.strictEqual(response.status, 503,
+        'a locked database still answers 500 with a stack trace rather than 503')
+    assert.strictEqual(opened.repository.labels().length, 0, 'something was recorded after all')
+    opened.db.close()
+})
+
 test('one dropdown on the bar sets the kind for every ticked row', async () => {
     const opened = bulkPoolStore()
     await post(opened, '/apply', {

@@ -9,7 +9,23 @@ const SPOT = require('../src/spot/spot.js')
 const MARKET = require('../src/analytics/market.js')
 const UPLIFT = require('../src/analytics/uplift.js')
 
+const STORE = require('../src/store/db.js')
+const DISCOVER = require('../src/collect/discover.js')
+const FS = require('node:fs')
+const OS = require('node:os')
+const PATH = require('node:path')
+
 const DAY_MS = 86400000
+
+/*  A REAL FILE, because :memory: has no write-ahead log at all - db.js skips
+    the journal switch for it and location() returns null - so every pragma
+    this section is about is unreachable in memory. */
+function onDisk (options) {
+    const dir = FS.mkdtempSync(PATH.join(OS.tmpdir(), 'coin-market-test-'))
+    const db = newDatabase(PATH.join(dir, 'store.db'), options)
+    return { db, dir, path: PATH.join(dir, 'store.db'),
+        done () { db.close(); FS.rmSync(dir, { recursive: true, force: true }) } }
+}
 
 function fixture () {
     const db = newDatabase(':memory:')
@@ -1328,4 +1344,234 @@ test('the cheapest Buy-It-Now lots are the ones that come back', () => {
         'the limit kept the dearest lots and discarded the bargains')
 
     db.close()
+})
+
+
+/* ================================================================ locking */
+
+/*
+    THE OWNER HIT "database is locked" CHANGING A LOT FROM 1 COIN TO 5.
+
+    Not a missing setting - WAL was on and busy_timeout was 5000. The cause
+    was that the collector never batched: four to eight autocommit writes per
+    listing, two hundred listings a page, each with an fsync to an SD card,
+    every five minutes. A single-row label write had to land in a gap, and
+    SQLite's busy handler backs off with increasing sleeps, so waiting made
+    the odds worse rather than better.
+
+    The tests below pin the four things that fixed it.
+*/
+
+test('a busy error is recognised however SQLite spells it', () => {
+    /*  node:sqlite puts 'ERR_SQLITE_ERROR' on `code` for EVERYTHING and the
+        real result code on `errcode` - so reading `code` would treat every
+        error as busy and retry a genuine bug four times, and reading
+        `errcode` without masking would miss the EXTENDED codes, which is
+        exactly what a WAL snapshot conflict returns. */
+    assert.ok(STORE.isBusy({ errcode: 5 }), 'SQLITE_BUSY')
+    assert.ok(STORE.isBusy({ errcode: 6 }), 'SQLITE_LOCKED')
+    assert.ok(STORE.isBusy({ errcode: 517 }), 'SQLITE_BUSY_SNAPSHOT - the deferred-upgrade one')
+    assert.ok(STORE.isBusy({ errcode: 773 }), 'SQLITE_BUSY_TIMEOUT')
+    assert.ok(STORE.isBusy({ message: 'database is locked' }), 'the message, as belt and braces')
+
+    assert.ok(!STORE.isBusy({ errcode: 1 }), 'a plain SQL error read as busy')
+    assert.ok(!STORE.isBusy({ code: 'ERR_SQLITE_ERROR' }),
+        'every sqlite error reads as busy, so a real bug would be retried and then reported')
+    assert.ok(!STORE.isBusy(null) && !STORE.isBusy('nope'), 'a non-error read as busy')
+})
+
+test('a transaction inside a transaction joins it rather than throwing', () => {
+    /*  This is what lets /apply wrap a whole batch while RECLASSIFY.one keeps
+        its own transaction: a nested BEGIN throws "cannot start a transaction
+        within a transaction", so without this the primary workflow would
+        break outright.
+
+        Joining rather than SAVEPOINT, deliberately - a savepoint would let an
+        inner block roll back part of an outer one, and no caller here wants
+        half a batch applied. */
+    const { db } = fixture()
+    const ran = []
+    STORE.inTransaction(db, () => {
+        ran.push('outer')
+        assert.ok(db.isTransaction, 'the outer block is not in a transaction')
+        STORE.inTransaction(db, () => {
+            ran.push('inner')
+        })
+        assert.ok(db.isTransaction, 'the inner block committed the outer one out from under it')
+    })
+    assert.deepStrictEqual(ran, ['outer', 'inner'])
+    assert.ok(!db.isTransaction, 'the transaction was left open')
+    db.close()
+})
+
+test('a transaction that failed busy is retried from the beginning', () => {
+    /*  The retry belongs OUTSIDE the transaction, which is the whole point: a
+        transaction that failed busy is already rolled back, so re-running it
+        from BEGIN is correct by construction. A retry inside would re-run one
+        statement of a unit whose other statements are gone. */
+    const { db } = fixture()
+    let attempts = 0
+    const result = STORE.inTransaction(db, () => {
+        attempts++
+        assert.ok(db.isTransaction, 'attempt ' + attempts + ' is not inside a transaction')
+        if (attempts < 3) { throw Object.assign(new Error('database is locked'), { errcode: 5 }) }
+        return 'done'
+    }, { waitMs: 1 })
+    assert.strictEqual(attempts, 3, 'the busy attempts were not retried')
+    assert.strictEqual(result, 'done')
+
+    /*  And a real error is not retried at all - four attempts at a genuine
+        bug is four times the damage and the same failure. */
+    let real = 0
+    assert.throws(() => STORE.inTransaction(db, () => {
+        real++
+        throw Object.assign(new Error('no such table'), { errcode: 1 })
+    }, { waitMs: 1 }))
+    assert.strictEqual(real, 1, 'a genuine error was retried as though it were contention')
+    db.close()
+})
+
+test('every connection opens with the pragmas that keep it out of the way', () => {
+    const store = onDisk()
+    const of = (name, field) => store.db.prepare('PRAGMA ' + name).get()[field]
+    assert.strictEqual(of('journal_mode', 'journal_mode'), 'wal',
+        'without WAL a dashboard read blocks a collector write')
+    assert.strictEqual(of('synchronous', 'synchronous'), 1,
+        'synchronous is not NORMAL, so every commit fsyncs the log to the SD card')
+    assert.ok(of('busy_timeout', 'timeout') >= 10000,
+        'busy_timeout is ' + of('busy_timeout', 'timeout') + 'ms')
+    store.done()
+})
+
+test('the busy timeout is installed before the journal switch, not after', () => {
+    /*  White-box, and deliberately so: the ordering is not observable from a
+        single uncontended connection, and the ordering IS the bug. The WAL
+        switch takes a brief exclusive lock, and it used to run at a timeout
+        of zero - so a restart landing inside another process's write failed
+        to switch and opened in DELETE mode instead, where a reader DOES block
+        a writer. PRAGMA journal_mode reports the mode it ended up in, not
+        whether it got the one you asked for, so the failure was silent. */
+    const { DatabaseSync } = require('node:sqlite')
+    const seen = []
+    const realExec = DatabaseSync.prototype.exec
+    const realPrepare = DatabaseSync.prototype.prepare
+    DatabaseSync.prototype.exec = function (sql) { seen.push(String(sql)); return realExec.call(this, sql) }
+    DatabaseSync.prototype.prepare = function (sql) { seen.push(String(sql)); return realPrepare.call(this, sql) }
+    let store
+    try { store = onDisk() } finally {
+        DatabaseSync.prototype.exec = realExec
+        DatabaseSync.prototype.prepare = realPrepare
+    }
+
+    const timeoutAt = seen.findIndex(sql => /busy_timeout\s*=/.test(sql))
+    const journalAt = seen.findIndex(sql => /journal_mode\s*=/.test(sql))
+    assert.ok(timeoutAt >= 0, 'busy_timeout is never set')
+    assert.ok(journalAt >= 0, 'journal_mode is never set')
+    assert.ok(timeoutAt < journalAt,
+        'the journal switch runs before the busy timeout is installed, so it runs at zero')
+    store.done()
+})
+
+test('a second writer waits for the timeout rather than failing at once', () => {
+    /*  The one thing that cannot be proved without a real file and two real
+        connections: that isBusy actually recognises what a genuine lock
+        conflict throws, rather than what I assumed it throws. */
+    const store = onDisk({ busyTimeoutMs: 300 })
+    const other = newDatabase(store.path, { busyTimeoutMs: 300 })
+    store.db.exec('BEGIN IMMEDIATE')
+    const began = Date.now()
+    let caught = null
+    try {
+        other.exec('CREATE TABLE blocked (a)')
+    } catch (err) { caught = err }
+    const waited = Date.now() - began
+    store.db.exec('ROLLBACK')
+    other.close()
+
+    assert.ok(caught !== null, 'the second writer was not blocked at all')
+    assert.ok(STORE.isBusy(caught),
+        'a real lock conflict is not recognised as busy: ' + caught.code + ' / ' +
+        caught.errcode + ' / ' + caught.message)
+    assert.ok(waited >= 250, 'it failed after ' + waited + 'ms, so busy_timeout is not in force')
+    store.done()
+})
+
+test('the checkpoint resets the log, and gives up rather than waiting', () => {
+    /*  wal_autocheckpoint has been running all along and never reset the
+        file - it is PASSIVE, which copies pages back but can only rewind the
+        log when no reader holds it. The live log reached 149 MB against a
+        4 MB threshold. TRUNCATE is the only mode that resets it. */
+    const store = onDisk()
+    store.db.exec('CREATE TABLE bulk (a TEXT)')
+    const insert = store.db.prepare('INSERT INTO bulk (a) VALUES (?)')
+    const padding = 'x'.repeat(400)
+    for (let i = 0; i < 4000; i++) { insert.run(padding + i) }
+    assert.ok(FS.statSync(store.path + '-wal').size > 100000,
+        'the log did not grow, so this proves nothing about resetting it')
+
+    const done = STORE.checkpoint(store.db)
+    assert.strictEqual(done.busy, 0, 'the checkpoint gave up with no reader in the way')
+    assert.strictEqual(done.log, 0,
+        'the log still holds ' + done.log + ' pages - it was copied, not reset, which is ' +
+        'exactly what PASSIVE has been doing unnoticed')
+    assert.strictEqual(FS.statSync(store.path + '-wal').size, 0, 'the file was not truncated')
+
+    /*  And with a reader holding it, it must give up FAST rather than block
+        - this connection is a writer's neighbour and must never become the
+        thing in the way. */
+    const reader = newDatabase(store.path)
+    const cursor = reader.prepare('SELECT * FROM bulk').iterate()
+    cursor.next()
+    for (let i = 0; i < 2000; i++) { insert.run(padding + i) }
+    const began = Date.now()
+    const blocked = STORE.checkpoint(store.db)
+    const waited = Date.now() - began
+    assert.ok(waited < 2000, 'the checkpoint waited ' + waited + 'ms on a reader')
+    assert.ok(blocked.busy === 1 || blocked.log > 0,
+        'the checkpoint claims it reset the log while a reader was holding it')
+
+    /*  And it put the timeout back, or every later write on this connection
+        inherits its 400ms temper. */
+    assert.ok(store.db.prepare('PRAGMA busy_timeout').get().timeout >= 10000,
+        'the checkpoint left its own short timeout behind')
+    reader.close()
+    store.done()
+})
+
+test('a sweep commits in chunks, not once per listing', () => {
+    /*  Counting commits rather than rows, because what changed is when the
+        writes become durable, not what is written. */
+    const { db, repository } = fixture()
+    const seen = []
+    const realExec = db.exec.bind(db)
+    db.exec = (sql) => { seen.push(String(sql)); return realExec(sql) }
+
+    const discoverer = DISCOVER.newDiscoverer({}, repository, { allowedCountries: () => [] })
+    const items = []
+    for (let i = 0; i < 120; i++) {
+        items.push({
+            browseId: 'v1|' + i + '|0', legacyId: String(i),
+            title: '2015 Gold Sovereign Elizabeth II', buyingOptions: 'AUCTION',
+            price: 400, shipping: 0, endTime: new Date(Date.now() + 3600000).toISOString(),
+            categoryPath: 'Coins', itemCountry: 'GB'
+        })
+    }
+    return discoverer.ingest(items, new Date().toISOString(), 'GB.SOV').then(() => {
+        db.exec = realExec
+        const begins = seen.filter(sql => /^BEGIN/.test(sql)).length
+        const commits = seen.filter(sql => /^COMMIT/.test(sql)).length
+        assert.strictEqual(begins, 3,
+            '120 listings opened ' + begins + ' transactions; at 50 to a chunk it is 3')
+        assert.strictEqual(commits, 3, 'not every chunk committed')
+        assert.ok(seen.some(sql => /^BEGIN IMMEDIATE/.test(sql)),
+            'the chunks use a deferred BEGIN, which takes the write lock at the first write - ' +
+            'and SQLite cannot honour busy_timeout on that upgrade')
+
+        /*  And no listing was lost or duplicated at a chunk boundary, which
+            is the failure batching could introduce and nothing else here
+            would catch. */
+        const stored = db.prepare('SELECT COUNT(*) AS n FROM listing').get().n
+        assert.strictEqual(stored, 120, 'chunking lost or duplicated listings at a boundary')
+        db.close()
+    })
 })

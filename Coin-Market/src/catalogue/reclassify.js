@@ -5,6 +5,7 @@ const EXCLUSIONS = require('./exclusions.js')
 const INSTRUMENTS = require('./instruments.js')
 const LEARNED = require('./learned.js')
 const SERIES = require('./series/index.js')
+const STORE = require('../store/db.js')
 
 /*
     Re-runs classification over stored listings.
@@ -139,18 +140,15 @@ function classifyOne (listing, label, learned, repository, counts, allowedCountr
     card means one fsync per row across roughly 20,000 writes: a rebuild
     that takes seconds inside a transaction took over two minutes outside
     one, and a button that triggers it was unusable.
+
+    The local copy of this helper has gone to src/store/db.js, which is what
+    lets a caller wrap a whole batch and have `one` below JOIN that
+    transaction instead of throwing "cannot start a transaction within a
+    transaction". It also brings BEGIN IMMEDIATE and a retry, which this
+    never had - and this is the largest write-lock holder in the system, so
+    it is the one that most needed both.
 */
-function inTransaction (db, work) {
-    db.exec('BEGIN')
-    try {
-        const result = work()
-        db.exec('COMMIT')
-        return result
-    } catch (err) {
-        db.exec('ROLLBACK')
-        throw err
-    }
-}
+const inTransaction = STORE.inTransaction
 
 /* Everything. Justified when a rule changes, because a rule can reach any
    listing; wasteful for a single verdict, which is what one() is for. */
@@ -215,8 +213,25 @@ exports.one = function (db, repository, legacyId, options) {
     counts.total = listings.length
     if (listings.length === 0) { return counts }
 
-    const label = repository.labelIndex().get(legacyId) || null
-    const learned = LEARNED.compile(repository.learnedRules())
+    /*
+        READ ONCE BY A CALLER THAT IS ALREADY HOLDING A TRANSACTION.
+
+        These two are a full label-index build and a rule compilation, and
+        they run per invocation. That was harmless while this was only ever
+        called for one listing at a time; the moment /apply wraps a batch of
+        thirty, it is thirty index builds and thirty compilations WHILE
+        HOLDING THE WRITE LOCK - the batch would become atomic and much
+        slower to release, trading one starvation for another.
+
+        Absent overrides this behaves exactly as before, so the callers that
+        use `one` on its own are untouched.
+    */
+    const label = (options && options.label !== undefined)
+        ? options.label
+        : (repository.labelIndex().get(legacyId) || null)
+    const learned = (options && options.learned !== undefined)
+        ? options.learned
+        : LEARNED.compile(repository.learnedRules())
 
     inTransaction(db, () => {
         const clearInstrument = db.prepare('DELETE FROM listing_instrument WHERE browse_id = ?')

@@ -9,6 +9,7 @@ const ALERT_RULES = require('../alerts/rules.js')
 const LEARNED = require('../catalogue/learned.js')
 const CLASSIFY = require('../catalogue/classify.js')
 const RECLASSIFY = require('../catalogue/reclassify.js')
+const STORE = require('../store/db.js')
 const PREMIUM = require('../analytics/premium.js')
 const SERIES = require('../catalogue/series/index.js')
 const FRESHNESS = require('../analytics/freshness.js')
@@ -570,7 +571,31 @@ exports.start = function (opened, options) {
                         record it a second time. */
                     response.writeHead(303, { Location: to })
                     response.end()
-                } catch (err) { fail(err) }
+                } catch (err) {
+                    /*  A BUSY DATABASE IS NOT A BUG REPORT.
+
+                        This threw a raw stack trace onto the page - the
+                        owner's report of it began "Something went wrong /
+                        Error: database is locked / at bindAll" - which says
+                        nothing anybody can act on and reads as the tool being
+                        broken rather than busy. Everything else in this change
+                        makes it rarer; this makes it legible when it still
+                        happens. 503 with a Retry-After is what it actually is.
+
+                        "Nothing was recorded" is now true rather than nearly
+                        true: a batch is one transaction, so a failure leaves
+                        no half-applied rows behind it. */
+                    if (STORE.isBusy(err)) {
+                        response.writeHead(503, Object.assign({ 'Retry-After': '2' }, HTML_HEADERS))
+                        response.end(RENDER.stampTheme(
+                            RENDER.page('Busy', '<h1>The collector is writing</h1>' +
+                                '<p>Nothing was recorded. Try that again in a moment.</p>',
+                                whereYouAre(url)),
+                            themeFrom(request)))
+                        return
+                    }
+                    fail(err)
+                }
             })
             return
         }
@@ -4936,7 +4961,30 @@ function handlePost (opened, pathname, form) {
         const barPool = single ? null : (form.get('bulk_pool') || null)
         const barDenomination = single ? null : (form.get('bulk_denomination') || null)
 
-        let applied = 0
+        /*
+            ONE TRANSACTION FOR THE WHOLE BATCH, IN TWO PASSES.
+
+            A thirty-row cull was thirty labels and thirty rebuilds, each its
+            own transaction: sixty commits, sixty fsyncs, and - if row
+            seventeen threw - sixteen rows applied, fourteen not, and a
+            redirect that said nothing about which. A batch applied with one
+            click has to land with one outcome.
+
+            RECLASSIFY.one still opens a transaction of its own; it now finds
+            this one and joins it. That is what the re-entrancy in db.js is
+            for, and it is why nothing in reclassify.js needed restructuring.
+
+            TWO PASSES BECAUSE THE READS ARE EXPENSIVE AND SHARED. `one`
+            builds a full label index and compiles every learned rule per
+            invocation - fine for a single row, thirty index builds while
+            holding the write lock for a batch. So every label is written
+            first, then the index is built ONCE (inside the transaction, so it
+            sees them all), and the second pass hands each row its own label
+            rather than looking it up again.
+        */
+        const learned = LEARNED.compile(repository.learnedRules())
+        const applied = STORE.inTransaction(db, () => {
+        const written = []
         for (const legacyId of ids) {
             const title = repository.titleFor(legacyId)
             if (title === null) { continue }
@@ -4970,9 +5018,19 @@ function handlePost (opened, pathname, form) {
                     ? Number(form.get('q_' + legacyId)) || 1
                     : 1
             })
-            RECLASSIFY.one(db, repository, legacyId, { allowedCountries: chosen })
-            applied++
+            written.push(legacyId)
         }
+
+        const labels = repository.labelIndex()
+        for (const legacyId of written) {
+            RECLASSIFY.one(db, repository, legacyId, {
+                allowedCountries: chosen,
+                label: labels.get(legacyId) || null,
+                learned
+            })
+        }
+        return written.length
+        })
 
         /*  A single rejection is worth generalising, and offering that is the
             whole point of the teach page. A batch of thirty is not - there is

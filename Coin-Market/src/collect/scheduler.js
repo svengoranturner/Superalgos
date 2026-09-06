@@ -1,6 +1,7 @@
 'use strict'
 
 const SPOT = require('../spot/spot.js')
+const STORE = require('../store/db.js')
 
 /*
     The collector loop.
@@ -44,6 +45,41 @@ exports.newScheduler = function (parts, options) {
 
     function log (job, message) {
         console.log(new Date().toISOString().slice(0, 19) + '  ' + job.padEnd(12) + message)
+    }
+
+    /*
+        RESET THE LOG.
+
+        The write-ahead log had reached 149 MB against a 4 MB autocheckpoint
+        threshold, on a 635 MB database. wal_autocheckpoint runs PASSIVE,
+        which copies pages back into the database but can only rewind the log
+        when no reader holds it - and with the dashboard and the deletion
+        endpoint both open there is nearly always one. Every reader pays for
+        that, because a log that size is a WAL index that size, and a slow
+        read is itself a window in which no checkpoint can rewind. The two
+        feed each other.
+
+        Logged rather than silent, and it distinguishes the two failures that
+        look identical from outside: gave up because somebody was reading, and
+        copied every page but could not rewind - which is the state that has
+        been happening unnoticed for months.
+    */
+    function checkpointNow () {
+        try {
+            const result = STORE.checkpoint(db)
+            if (result === null) { return }
+            if (result.busy === 1) {
+                log('wal', 'checkpoint skipped - a reader holds the log')
+            } else if (result.log > 0) {
+                log('wal', 'copied ' + result.checkpointed + ' pages, ' + result.log +
+                    ' still in the log - it was copied, not reset')
+            } else {
+                log('wal', 'log reset')
+            }
+        } catch (err) {
+            /*  Never the reason a sweep is reported as failed. */
+            log('wal', 'checkpoint failed: ' + err.message)
+        }
     }
 
     /* Runs a job now and on an interval, surviving its own failures. */
@@ -99,6 +135,13 @@ exports.newScheduler = function (parts, options) {
                         ? ' | errors: ' + report.errors.length +
                           ' (' + exports.summariseErrors(report.errors) + ')'
                         : ''))
+
+                /*  At the tail of the sweep rather than on a timer of its
+                    own: this is the moment this process has just finished
+                    writing and holds nothing, and the moment the log is
+                    longest. A separate interval would fire at arbitrary
+                    points, including the middle of a sweep. */
+                checkpointNow()
             })
 
             every(config.endingSoonMinutes, 'ending-soon', async () => {

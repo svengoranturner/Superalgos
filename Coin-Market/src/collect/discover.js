@@ -98,11 +98,53 @@ exports.newDiscoverer = function (browseClient, repository, options) {
         return queries
     }
 
+    /*
+        COMMITTED IN CHUNKS, NOT PER LISTING.
+
+        Nothing changed about WHAT is written - only about when it becomes
+        durable. Each listing costs between four and eight statements
+        (saveListing, saveSnapshot, setListingSeries or queueForReview, and
+        two per instrument key) and every one of them was its own autocommit
+        transaction. A Browse page is 200 listings, so a page was of the order
+        of a thousand lock-acquire / fsync / lock-release cycles back to back.
+        That is what a single-row label write from the dashboard was queueing
+        behind, and why it reported "database is locked": not one long
+        transaction, a thousand short ones with no gap between them. SQLite's
+        busy handler backs off with increasing sleeps, so the waiting writer's
+        odds got worse the longer it waited.
+
+        WHAT BATCHING COSTS. Progress was durable per listing, so a crash
+        mid-sweep kept everything it had. Now it keeps everything up to the
+        last committed chunk and loses the one in flight - at most CHUNK
+        listings. The loss is bounded on purpose and it is cheap: saveListing
+        is an upsert, the sweep is a re-runnable read of a live search, and
+        the next sweep re-observes the same lots within the hour. What is lost
+        is part of the value of one eBay call, not a fact nobody else holds.
+        The one thing that is NOT recoverable is a snapshot of a price at a
+        moment, which is why CHUNK is small rather than "the whole page".
+
+        CHUNK IS SIZED FOR LOCK HOLD TIME, NOT THROUGHPUT. Fifty listings
+        already removes 98% of the commits; two hundred removes 99.5% and
+        holds the write lock four times as long - and holding the write lock
+        is precisely the thing that was starving the dashboard. The marginal
+        fsync saving falls off a cliff; the marginal harm does not.
+
+        AND THE TRANSACTION MUST NOT SPAN AN AWAIT. There is none in the loop
+        and there must never be: node:sqlite is synchronous, so an await
+        inside BEGIN..COMMIT would hand the event loop to another timer in
+        this process, which would BEGIN again and be told it cannot start a
+        transaction within a transaction. The eBay call stays where it is, in
+        the caller.
+    */
+    const INGEST_CHUNK = 50
+
     async function ingest (items, seenAt, seriesId) {
         let created = 0
         let reviewed = 0
 
-        /*  What the owner has already decided, read once per batch.
+        /*  What the owner has already decided, read once per batch and
+            OUTSIDE every transaction - these are the reads, and they must not
+            lengthen a write lock.
 
             Without this a rule accepted today would not apply to anything
             discovered tomorrow - the collector would keep re-admitting the
@@ -112,6 +154,27 @@ exports.newDiscoverer = function (browseClient, repository, options) {
         */
         const labels = repository.labelIndex()
         const learned = LEARNED.compile(repository.learnedRules())
+
+        for (let start = 0; start < items.length; start += INGEST_CHUNK) {
+            /*  Counted from the chunk's own tally and added only after the
+                commit returns. Incrementing the outer totals inside the loop
+                would report a rolled-back chunk as classified, and the sweep
+                log is the only thing anybody reads to know the collector is
+                working. */
+            const counts = repository.inTransaction(() =>
+                ingestChunk(items.slice(start, start + INGEST_CHUNK), seenAt, seriesId,
+                    labels, learned))
+            created += counts.created
+            reviewed += counts.reviewed
+        }
+        return { created, reviewed }
+    }
+
+    /*  The loop body, unchanged down to its three continues - chunking is
+        around the loop, not inside it. */
+    function ingestChunk (items, seenAt, seriesId, labels, learned) {
+        let created = 0
+        let reviewed = 0
 
         for (const item of items) {
             repository.saveListing(item, seenAt)
