@@ -942,10 +942,32 @@ Verified after deploying that the challenge path still returns the exact
 SHA-256 eBay validates against - that is what gates the production keyset and
 it must never regress.
 
-Still not fixed, and separate: `alert` is in `purgeUser`'s table list but not
-in `purgeExpired`'s, so orphaned `alert` rows can exist. Nothing in the running
-app reads that table (`newDispatcher` has no callers), so it is a tidiness
-problem rather than a live one.
+### One list of what hangs off a listing
+
+`alert` was named by `purgeUser`'s table list and not by `purgeExpired`'s, so
+an expired listing left its alert rows behind for ever while a GDPR deletion
+removed them. Nothing had bitten: `alert` is written by `newDispatcher` in
+`alerts/channels.js`, which **has no callers** - alerts are evaluated live on
+the page and thrown away - and the live table holds zero rows. Every other
+child table shows zero orphans.
+
+**The missing entry was not the interesting part.** There are no foreign keys
+in this schema and `PRAGMA foreign_keys` is never set, so nothing in the
+database enforces that deleting a listing takes its children with it. It was
+two hand-maintained arrays in two files, and adding `alert` to one of them
+would just reset the clock on the next drift.
+
+So: `LISTING_CHILD_TABLES` and `deleteListingSlice` live in `repo.js` and
+nowhere else. The **caller** still owns the transaction, because the two want
+different ones - retention housekeeping commits per chunk so it never holds
+the write lock for a whole pass; a deletion obligation wraps every chunk in one
+so a user's rows cannot half-disappear. Order is part of the contract:
+`listing` last, because every other entry is found by `browse_id`.
+
+**The test asks the database, not a second copy of the list.** It reads
+`sqlite_master`, finds every table with a `browse_id` column and requires the
+list to cover all of them - so adding a table and forgetting to delete from it
+fails, where a hard-coded expectation would simply agree with you.
 
 ### Still open elsewhere
 
