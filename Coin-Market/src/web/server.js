@@ -1287,12 +1287,13 @@ function marketPage (opened, url, reference) {
 
         These are the only prices in the tool that somebody actually paid -
         every clearing figure is built from them and nothing else - so seeing
-        fifteen of them was seeing the least of the evidence. A hundred are
-        fetched now and twenty-five shown, with the rest folded away: the fold
-        is collapsed, and the thumbnails inside it are lazy, so the page costs
-        no more to load than it did.
+        fifteen of them was seeing the least of the evidence.
+
+        Twenty-five are drawn now and the rest are a link away rather than a
+        disclosure away - see SOLD_STEP below, and the note on the fetch. The
+        fold that used to sit here could not reach past what had been fetched,
+        so it hid three quarters of a hundred and none of the other 182.
     */
-    const SOLD_SHOWN = 25
     /*  Which list, and which metals, decided before anything is filtered so
         every count on the page describes the same set the table is drawn
         from. */
@@ -1309,7 +1310,33 @@ function marketPage (opened, url, reference) {
     const inMetals = (row) => row.metal === undefined || row.metal === null ||
         metals.includes(row.metal)
 
-    const SOLD_FETCHED = 100
+    /*
+        THE SOLD LIST STOPPED DEAD AT A THIRD OF WHAT IT HAD.
+
+        The owner: "It appears that I can no longer see any more than the last
+        21 sold items. I'm looking and see 280 silver coins sold and only 21
+        that I'm allowed to look at."
+
+        Two caps, stacked, and neither said it was there. The fetch took the
+        100 most recent of 282, so 182 sales were unreachable by any route -
+        and then the table drew 25 of those and folded the remaining 75 into a
+        <details> that reads as a footnote rather than as most of the list.
+        The page did say "Showing the 100 most recent", in a sentence a long
+        way from the table it was describing.
+
+        One window now, which the reader can widen. `sold` is how many rows to
+        DRAW; the fetch follows it with headroom, because the metal, format
+        and search filters all run after the fetch - asking the store for
+        exactly what will be drawn shows fewer than that the moment any filter
+        is on. Bounded at both ends: nobody can ask for a million rows through
+        the query string, and the store is never asked for more than it holds.
+    */
+    const SOLD_STEP = 25
+    const soldAsked = Number(url.searchParams.get('sold'))
+    const soldWant = Number.isFinite(soldAsked) && soldAsked > SOLD_STEP
+        ? Math.min(Math.floor(soldAsked), 2000)
+        : SOLD_STEP
+    const SOLD_FETCHED = Math.min(Math.max(100, soldWant * 3), 6000)
     const allSales = repository.recentSales(SOLD_FETCHED)
 
     /*
@@ -1562,13 +1589,11 @@ function marketPage (opened, url, reference) {
           '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
           bulkBar(sales, 'A wrong sale here moves every clearing figure on the page, ' +
               'because they are all built from these rows and nothing else.') +
-          soldTable(sales.slice(0, SOLD_SHOWN)) +
-          (sales.length > SOLD_SHOWN
-              ? '<details class="more"><summary>Show the other ' +
-                (sales.length - SOLD_SHOWN) + ' completed sale' +
-                (sales.length - SOLD_SHOWN === 1 ? '' : 's') + '</summary>' +
-                soldTable(sales.slice(SOLD_SHOWN)) + '</details>'
-              : '') +
+          soldTable(sales.slice(0, soldWant)) +
+          /*  A link, not a disclosure. <details> was hiding three quarters of
+              what the page had already fetched behind a summary that read as
+              a footnote, and it could not reach past the fetch at all. */
+          soldMore(sales.length) +
           '</form>'
 
     /*
@@ -2013,7 +2038,10 @@ function marketPage (opened, url, reference) {
                 but a link that changes the metal had no reason to throw them
                 away, and did. */
             q: url.searchParams.get('q'), order: url.searchParams.get('order')
-                || (legacySort === null ? null : legacySort)
+                || (legacySort === null ? null : legacySort),
+            /*  So changing the metal while looking at 200 sales does not
+                silently snap back to 25. */
+            sold: soldWant === SOLD_STEP ? null : String(soldWant)
         }
         const next = Object.assign({}, now, changes)
         const params = []
@@ -2023,12 +2051,40 @@ function marketPage (opened, url, reference) {
         if (next.within !== WITHIN_DEFAULT) { params.push('within=' + next.within) }
         if (next.sale !== 'auction') { params.push('sale=' + next.sale) }
         if (next.band !== bandDefault(next.view)) { params.push('band=' + next.band) }
-        for (const name of ['series', 'cond', 'size', 'q', 'order']) {
+        for (const name of ['series', 'cond', 'size', 'q', 'order', 'sold']) {
             if (next[name]) { params.push(name + '=' + encodeURIComponent(next[name])) }
         }
         return '/' + (params.length === 0 ? '' : '?' + params.join('&amp;'))
     }
     const withinHref = (hours) => filterHref({ within: hours })
+
+    /*
+        MORE OF THEM, WITHOUT A LINE OF SCRIPT.
+
+        A link that carries every other filter and asks for a wider window.
+        Two of them, because "another 25" and "all of them" are different
+        questions and a reader with 282 sales should not have to click eleven
+        times to reach the end.
+
+        Anchored to the section so the page comes back where it was left,
+        which is the closest a no-JS page gets to "keep scrolling".
+
+        The count it reports is what the STORE holds, not what this page
+        fetched - a "show more" that stops short of the number in the heading
+        beside it is the bug this is fixing, in a smaller font.
+    */
+    const soldMore = (drawn) => {
+        const reachable = Math.min(soldTotal, Math.max(drawn, soldWant))
+        if (reachable <= soldWant) { return '' }
+        const link = (n, label) => '<a href="' + filterHref({ sold: String(n) }) +
+            '#sold">' + label + '</a>'
+        const step = Math.min(soldWant + SOLD_STEP, soldTotal)
+        return '<p class="thin" style="margin:12px 0 0">Showing ' +
+            Math.min(soldWant, drawn) + ' of ' + soldTotal + '. ' +
+            link(step, 'Show ' + (step - soldWant) + ' more') +
+            (soldTotal > step ? ' &middot; ' + link(soldTotal, 'Show all ' + soldTotal) : '') +
+            '</p>'
+    }
 
     /*  Three dependent selects. Each one lists what survives the OTHER two,
         so choosing a series narrows the conditions and choosing a condition

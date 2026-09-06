@@ -1815,12 +1815,34 @@ test('the sold heading counts the sales, not the fetch', async () => {
 
     assert.ok(body.includes('What has actually sold (105)'),
         'the heading reports the fetch limit rather than the real number of sales')
-    /*  100 fetched, 25 shown, so 75 behind the fold. */
-    assert.ok(body.includes('Show the other 75 completed sales'),
-        'the rest are not reachable behind a fold')
-    /*  And it says plainly that it is not showing all of them. */
-    assert.ok(body.includes('Showing the 100 most recent'),
-        'the page hides that it fetched fewer than exist')
+
+    /*  AND THE REST ARE REACHABLE, which is the half that was not true.
+
+        The owner: "I can no longer see any more than the last 21 sold items.
+        I'm looking and see 280 silver coins sold and only 21 that I'm allowed
+        to look at." Two caps were stacked - the store was asked for the 100
+        most recent, and the table drew 25 of those with the other 75 folded
+        into a <details>. So a third of the sales were behind a summary that
+        reads as a footnote, and the remaining 182 were behind nothing at all:
+        no click anywhere on the page could reach them.
+
+        A fold is not reachability. This asserts the window can actually be
+        widened past the OLD FETCH LIMIT, because that is the cap no amount of
+        clicking used to get past. */
+    assert.ok(body.includes('Showing 25 of 105'),
+        'the page does not say how much of the list it is drawing')
+    assert.match(body, /href="[^"]*sold=50[^"]*"/,
+        'there is no way to ask for more than the first screenful')
+    assert.match(body, /Show all 105/,
+        'a reader with 105 sales has to click their way there twenty-five at a time')
+
+    const wide = '/?min=1&view=sold&sold=105'
+    const all = (await fetchAll(opened, [wide]))[wide].body
+    const rows = (all.split('id="sold"')[1] || '').split('<h2')[0]
+    const drawn = (rows.match(/name="pick" value="/g) || []).length
+    assert.strictEqual(drawn, 105,
+        'asking for all 105 drew ' + drawn + ' - the fetch limit is still capping what any ' +
+        'amount of clicking can reach')
 
     db.close()
 })
