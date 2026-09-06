@@ -2801,6 +2801,161 @@ test('the save button is on the review queue, where the report came from', async
     opened.db.close()
 })
 
+/*
+    A SCOPED REBUILD HAS TO LEAVE THE STORE A FULL ONE WOULD HAVE LEFT.
+
+    Accepting a rule used to reclassify all 30,822 listings - twenty seconds
+    of write lock to answer a question about, typically, a few hundred rows.
+    It now visits only what the phrase can reach.
+
+    That is safe only because every branch in LEARNED.compile is gated on
+    `entry.test.test(title)`, and its failure mode is the worst kind: a
+    listing the rule reaches but the rebuild skipped keeps a classification
+    its own rules disagree with, silently, with nothing to signal it.
+
+    So the property asserted here is not "the right rows changed" - it is that
+    a FULL rebuild afterwards changes nothing. Any listing the scope missed
+    shows up the moment the full pass visits it.
+*/
+function ruleScopeStore () {
+    const db = newDatabase(':memory:')
+    const repository = newRepository(db, { sellerSalt: 'test' })
+    const now = new Date().toISOString()
+    db.prepare('INSERT INTO spot (observed_at, metal, gbp_per_oz, usd_per_oz, source) VALUES (?,?,?,?,?)')
+        .run(now, 'XAU', 3290, null, 'test')
+
+    const add = (legacyId, title) => {
+        const browseId = 'v1|' + legacyId + '|0'
+        repository.saveListing({
+            browseId, legacyId, title, buyingOptions: 'AUCTION',
+            categoryPath: 'Coins', itemCountry: 'GB',
+            endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 400, shipping: 0, observedAt: now })
+    }
+
+    /*  Plain matches, and two the rule reaches but a naive filter would not.
+        phrasePattern lowercases and collapses whitespace runs to \s+, so
+        `title.includes(phrase)` misses both of these - and missing them is
+        exactly the silent half-rebuild this is guarding. */
+    add('plain', '2015 Gold Proof Sovereign Elizabeth II')
+    add('shouty', '2016 GOLD   PROOF Sovereign, boxed')
+    add('spaced', 'Gold\tProof Sovereign 1979')
+    /*  And listings the phrase cannot reach, which must be left alone. */
+    add('other', '2015 Gold Bullion Sovereign Elizabeth II')
+    add('bystander', '1982 Gold Half Sovereign')
+
+    /*  The store and the SETTING have to agree before a scoped rebuild can
+        be asked to move between two filters - it reclassifies what changed
+        side of the filter, so it cannot repair a store that was classified
+        under a filter nobody recorded. allowedCountries falls back to
+        DEFAULT_COUNTRIES when the setting is absent, so leaving it unset
+        would classify under [] and then compute the change from ['GB']. */
+    repository.setSetting('allowedCountries', [])
+    RECLASSIFY_FOR_TEST.run(db, repository, { allowedCountries: [] })
+    const spotAt = SPOT.newSpotLookup(db, {})
+    return { db, repository, spotAt, view: MARKET.newMarketView(repository, spotAt, {}) }
+}
+
+const RECLASSIFY_FOR_TEST = require('../src/catalogue/reclassify.js')
+
+const storeShape = (db) => JSON.stringify({
+    assignments: db.prepare(
+        'SELECT browse_id, key, confidence, method FROM listing_instrument ' +
+        'ORDER BY browse_id, key').all(),
+    instruments: db.prepare('SELECT key, level, metal, fine_oz FROM instrument ORDER BY key').all(),
+    queue: db.prepare('SELECT browse_id, reason FROM review_queue ORDER BY browse_id').all(),
+    series: db.prepare('SELECT browse_id, series FROM listing ORDER BY browse_id').all()
+})
+
+test('accepting a rule reaches every listing it can, not just the obvious ones', async () => {
+    const opened = ruleScopeStore()
+    await post(opened, '/rule', {
+        phrase: 'gold proof', kind: 'NOT_TRACKED', allSeries: '1', support: '3', back: '/rules'
+    })
+
+    /*  The scoped pass has run. A full one must now find nothing to do. */
+    const afterScoped = storeShape(opened.db)
+    RECLASSIFY_FOR_TEST.run(opened.db, opened.repository, { allowedCountries: [] })
+    assert.strictEqual(storeShape(opened.db), afterScoped,
+        'a full rebuild after the scoped one changed the store, so the scope missed a listing ' +
+        'the rule reaches - most likely by matching titles with includes() instead of ' +
+        'LEARNED.phrasePattern')
+
+    /*  And it did something, or the assertion above is satisfied by a rule
+        that reached nothing at all. */
+    const priced = (legacyId) => opened.db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?')
+        .get('v1|' + legacyId + '|0').n
+    for (const id of ['plain', 'shouty', 'spaced']) {
+        assert.strictEqual(priced(id), 0, id + ' still prices, so the rule did not reach it')
+    }
+    assert.ok(priced('other') > 0, 'a listing the phrase cannot reach was dropped anyway')
+    opened.db.close()
+})
+
+test('deleting a rule reaches everything it was deciding', async () => {
+    const opened = ruleScopeStore()
+    await post(opened, '/rule', {
+        phrase: 'gold proof', kind: 'NOT_TRACKED', allSeries: '1', support: '3', back: '/rules'
+    })
+    const rule = opened.repository.learnedRules()[0]
+    assert.ok(rule !== undefined, 'the rule was never saved')
+
+    await post(opened, '/rule/delete', { id: String(rule.id) })
+
+    const afterScoped = storeShape(opened.db)
+    RECLASSIFY_FOR_TEST.run(opened.db, opened.repository, { allowedCountries: [] })
+    assert.strictEqual(storeShape(opened.db), afterScoped,
+        'a full rebuild after the delete changed the store, so undoing a rule leaves listings ' +
+        'still carrying a decision no rule makes any more')
+
+    const priced = opened.db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?')
+        .get('v1|plain|0').n
+    assert.ok(priced > 0, 'deleting the rule did not put the listing back')
+    opened.db.close()
+})
+
+test('changing the country filter reaches every listing that changed side of it', async () => {
+    /*  screenLocation reads nothing but the country and the allowed list, so
+        only listings whose country changed side can have changed verdict -
+        and the empty list means "no filtering" rather than "allow nothing",
+        so narrowing and widening are not mirror images. */
+    const opened = ruleScopeStore()
+    opened.repository.saveListing({
+        browseId: 'v1|abroad|0', legacyId: 'abroad',
+        title: '2015 Gold Bullion Sovereign Elizabeth II', buyingOptions: 'AUCTION',
+        categoryPath: 'Coins', itemCountry: 'US',
+        endTime: new Date(Date.now() + 3600000).toISOString()
+    }, new Date().toISOString())
+    opened.repository.saveSnapshot('v1|abroad|0',
+        { price: 400, shipping: 0, observedAt: new Date().toISOString() })
+    RECLASSIFY_FOR_TEST.run(opened.db, opened.repository, { allowedCountries: [] })
+
+    const priced = (id) => opened.db.prepare(
+        'SELECT COUNT(*) AS n FROM listing_instrument WHERE browse_id = ?').get(id).n
+    assert.ok(priced('v1|abroad|0') > 0, 'the US listing was not priced to begin with')
+
+    /*  Narrow to GB. */
+    await post(opened, '/countries', { country: 'GB' })
+    let shape = storeShape(opened.db)
+    RECLASSIFY_FOR_TEST.run(opened.db, opened.repository, { allowedCountries: ['GB'] })
+    assert.strictEqual(storeShape(opened.db), shape,
+        'a full rebuild after narrowing the country filter changed the store')
+    assert.strictEqual(priced('v1|abroad|0'), 0, 'the US listing survived a GB-only filter')
+
+    /*  And widen again, which is the case the empty list makes asymmetric. */
+    await post(opened, '/countries', {})
+    shape = storeShape(opened.db)
+    RECLASSIFY_FOR_TEST.run(opened.db, opened.repository, { allowedCountries: [] })
+    assert.strictEqual(storeShape(opened.db), shape,
+        'a full rebuild after widening the country filter changed the store, so untick-everything ' +
+        'leaves listings excluded by a filter that is no longer on')
+    assert.ok(priced('v1|abroad|0') > 0, 'the US listing did not come back')
+    opened.db.close()
+})
+
 test('a batch that fails partway leaves nothing behind it', async () => {
     /*
         A thirty-row cull used to be thirty labels and thirty rebuilds, each

@@ -10,6 +10,7 @@ const LEARNED = require('../catalogue/learned.js')
 const CLASSIFY = require('../catalogue/classify.js')
 const RECLASSIFY = require('../catalogue/reclassify.js')
 const STORE = require('../store/db.js')
+const EXCLUSIONS = require('../catalogue/exclusions.js')
 const PREMIUM = require('../analytics/premium.js')
 const SERIES = require('../catalogue/series/index.js')
 const FRESHNESS = require('../analytics/freshness.js')
@@ -5253,8 +5254,23 @@ function handlePost (opened, pathname, form) {
         const chosen = form.getAll('country')
             .map(c => String(c).toUpperCase())
             .filter(c => /^[A-Z]{2}$/.test(c))
+        /*  READ BEFORE WRITING, because the scoped rebuild below needs both
+            lists to work out which countries changed side of the filter.
+
+            And read through allowedCountries rather than off the setting, so
+            the absent case is the same DEFAULT_COUNTRIES the rest of the app
+            classifies under. A scoped rebuild moves the store from one filter
+            to another; it cannot repair a store that was classified under a
+            filter nobody recorded, so "what the app currently believes" is
+            the only correct starting point. A test fixture that classified
+            under [] while the setting said otherwise is what found this. */
+        const was = allowedCountries(repository)
         repository.setSetting(COUNTRY_SETTING, chosen)
-        RECLASSIFY.run(db, repository, { allowedCountries: chosen })
+
+        const moved = countriesAffectedBy(repository, was, chosen)
+        RECLASSIFY.some(db, repository,
+            repository.legacyIdsInCountries(moved),
+            { allowedCountries: chosen })
         return '/'
     }
 
@@ -5288,8 +5304,36 @@ function handlePost (opened, pathname, form) {
             on can say what the click actually did rather than leaving you to
             go and look. A rule you did not mean to accept is only a problem
             if you cannot tell that you accepted it. */
-        const priced = () => db.prepare(
-            'SELECT COUNT(DISTINCT browse_id) AS n FROM listing_instrument').get().n
+        /*
+            COUNTED OVER WHAT THE RULE CAN REACH, NOT OVER THE WHOLE STORE.
+
+            This was a global count taken either side of the rebuild, which
+            was honest only because the rebuild was atomic and nothing else
+            could commit during it. Both of those have changed: the rebuild
+            commits in chunks, and it now runs for a fraction of a second, so
+            the collector can easily land a sweep between the two reads - and
+            a rule that drops thirty listings while a sweep discovers forty
+            would report that nothing stopped being priced, which reads as
+            "your rule did nothing" and invites you to accept a broader one.
+
+            Scoped, it is also the number the page actually claims: how many
+            of the listings this phrase reaches stopped being priced.
+        */
+        const phraseSet = form.getAll('phrase').map(x => String(x).trim()).filter(Boolean)
+        const scope = reachedByPhrases(repository, phraseSet)
+        const priced = () => {
+            if (scope.length === 0) { return 0 }
+            let total = 0
+            for (let start = 0; start < scope.length; start += 400) {
+                const slice = scope.slice(start, start + 400)
+                const marks = slice.map(() => '?').join(',')
+                total += db.prepare(
+                    'SELECT COUNT(DISTINCT li.browse_id) AS n FROM listing_instrument li ' +
+                    'JOIN listing l ON l.browse_id = li.browse_id ' +
+                    'WHERE l.legacy_id IN (' + marks + ')').get(...slice).n
+            }
+            return total
+        }
         const before = priced()
 
         for (const phrase of phrases) {
@@ -5316,8 +5360,14 @@ function handlePost (opened, pathname, form) {
                 agreement: per('agreement') === '' ? null : Number(per('agreement'))
             })
         }
-        /*  One rebuild for the batch, not one per rule. */
-        RECLASSIFY.run(db, repository, { allowedCountries: allowedCountries(repository) })
+        /*  One rebuild for the batch, not one per rule - and only over the
+            listings the phrases can reach. A full pass is twenty seconds on
+            this hardware to answer a question about, typically, a few hundred
+            rows: measured on the live corpus, "proof" reaches 1,401 titles of
+            23,740 and "harrington & byrne" reaches eight. */
+        const reached = reachedByPhrases(repository, phrases)
+        RECLASSIFY.some(db, repository, reached,
+            { allowedCountries: allowedCountries(repository) })
 
         const dropped = before - priced()
         /*  Back to the teach page when that is where the ticks came from, so
@@ -5335,8 +5385,15 @@ function handlePost (opened, pathname, form) {
     if (pathname === '/rule/delete') {
         const id = Number(form.get('id'))
         if (Number.isFinite(id)) {
+            /*  The phrase, before the row holding it is gone. Deleting needs
+                the same set as adding and for the same reason: what must be
+                re-examined is what the rule COULD have been deciding, which
+                is exactly what it matches. */
+            const going = repository.learnedRules().find(rule => rule.id === id)
             repository.deleteLearnedRule(id)
-            RECLASSIFY.run(db, repository, { allowedCountries: allowedCountries(repository) })
+            RECLASSIFY.some(db, repository,
+                going === undefined ? [] : reachedByPhrases(repository, [going.phrase]),
+                { allowedCountries: allowedCountries(repository) })
         }
         return '/rules'
     }
@@ -5365,6 +5422,62 @@ function handlePost (opened, pathname, form) {
     number: "proof" matches 1,401 titles and 581 of them cannot be touched,
     so a preview reporting 1,401 promises a clear-out it will not deliver.
 */
+/*
+    WHICH LISTINGS A PHRASE CAN REACH.
+
+    A learned rule's entire effect is gated on a title match: every branch in
+    LEARNED.compile is `entry.test.test(title)`, and nothing the compiled
+    object returns is an aggregate over the rule set. So adding or deleting a
+    rule with phrase P cannot change the outcome of any listing whose title
+    does not match P, and a rebuild after a rule change need only visit these.
+
+    Built with LEARNED.phrasePattern and nothing else. The pattern lowercases,
+    collapses whitespace runs to \s+, and adds word boundaries only where the
+    phrase starts or ends with a word character - so `title.includes(phrase)`
+    would miss listings the rule genuinely reaches, and a listing the rule
+    reaches but the rebuild skipped is a row that silently disagrees with the
+    rules that produced it. The same function the rule itself is compiled
+    with, or nothing.
+
+    Deleting needs the same set as adding, and for the same reason: the
+    listings that must be re-examined are the ones the rule COULD have been
+    deciding, which is exactly the ones it matches.
+*/
+function reachedByPhrases (repository, phrases) {
+    const patterns = phrases.map(phrase => LEARNED.phrasePattern(phrase))
+    if (patterns.length === 0) { return [] }
+    return repository.titleCorpus()
+        .filter(row => patterns.some(test => test.test(row.title)))
+        .map(row => row.legacyId)
+}
+
+/*
+    AND WHICH LISTINGS A CHANGE OF COUNTRY CAN REACH.
+
+    screenLocation reads nothing but the country and the allowed list, so a
+    listing's verdict changes only if its country's verdict changes. There are
+    a couple of dozen distinct countries in the store, so the exact set is
+    cheap to compute rather than approximate: ask the function itself, under
+    both the old list and the new one, and keep the countries that disagree.
+
+    Asking the function rather than reasoning about it is the point. The empty
+    list means "no filtering" rather than "allow nothing", so widening to
+    every country and narrowing from it are not mirror images, and a listing
+    with no country recorded is never excluded under any list - all three fall
+    out of calling it twice instead of writing the cases down.
+*/
+function countriesAffectedBy (repository, before, after) {
+    return repository.countryCounts()
+        .map(row => row.country)
+        /*  countryCounts COALESCEs a missing country to '??' for display.
+            That is a bucket, not a country - screenLocation is never asked
+            about it, and rows in it are never excluded either way. */
+        .filter(country => country !== '??' && country !== '')
+        .filter(country =>
+            (EXCLUSIONS.screenLocation(country, before) === null) !==
+            (EXCLUSIONS.screenLocation(country, after) === null))
+}
+
 function ruleEffect (repository, phrase, seriesId) {
     const pack = SERIES.get(seriesId) || SERIES.defaultPack()
     const test = LEARNED.phrasePattern(phrase)

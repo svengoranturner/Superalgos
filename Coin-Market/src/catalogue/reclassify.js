@@ -153,12 +153,59 @@ const inTransaction = STORE.inTransaction
 /* Everything. Justified when a rule changes, because a rule can reach any
    listing; wasteful for a single verdict, which is what one() is for. */
 exports.run = function (db, repository, options) {
+    /*  Every listing. The country filter rides through in options - see
+        EXCLUSIONS.screenLocation, and note that filtering to GB alone costs
+        1,268 genuine sovereigns, most of them Australian branch-mint. */
+    return rebuild(db, repository, db.prepare(
+        'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry FROM listing'
+    ).all(), options)
+}
 
-    /*  Empty unless somebody has explicitly chosen to filter by country.
-        See EXCLUSIONS.screenLocation - filtering to GB alone costs 1,268
-        genuine sovereigns, most of them Australian branch-mint coins. */
+/*
+    THE SAME REBUILD, OVER ONLY THE LISTINGS A CHANGE CAN REACH.
+
+    A full rebuild is twenty seconds of work to answer a question that is
+    usually about a few hundred listings. A learned rule's entire effect is
+    gated on a title match - every branch in LEARNED.compile is
+    `entry.test.test(title)`, and nothing in the compiled object is an
+    aggregate over the rule set - so adding or deleting a rule with phrase P
+    cannot change the outcome of any listing whose title does not match P.
+    The country filter is narrower still: EXCLUSIONS.screenLocation reads
+    nothing but the country and the allowed list.
+
+    Callers pass legacy ids because that is what a decision is recorded
+    against and a relisted coin has several browse ids sharing one - the same
+    key `one` uses.
+
+    THE CALLER MUST BUILD THE SET WITH LEARNED.phrasePattern, not with
+    `title.includes(phrase)`. The pattern lowercases, collapses whitespace
+    runs to \s+ and adds word boundaries only where the phrase starts or ends
+    with a word character; a naive substring test would miss listings the rule
+    actually reaches, and a rule reaching a listing this pass did not visit is
+    the silent half-rebuilt store this whole design exists to avoid.
+*/
+exports.some = function (db, repository, legacyIds, options) {
+    const ids = [...new Set((legacyIds || []).filter(Boolean).map(String))]
+    if (ids.length === 0) { return emptyCounts() }
+
+    /*  Chunked because SQLite binds a limited number of parameters per
+        statement, and a rule like "proof" reaches well over a thousand. */
+    const listings = []
+    const READ_CHUNK = 400
+    for (let start = 0; start < ids.length; start += READ_CHUNK) {
+        const slice = ids.slice(start, start + READ_CHUNK)
+        const marks = slice.map(() => '?').join(',')
+        listings.push(...db.prepare(
+            'SELECT browse_id AS browseId, legacy_id AS legacyId, title, ' +
+            'category_path AS categoryPath, item_country AS itemCountry ' +
+            'FROM listing WHERE legacy_id IN (' + marks + ')').all(...slice))
+    }
+    return rebuild(db, repository, listings, options)
+}
+
+function rebuild (db, repository, listings, options) {
+
     const allowedCountries = (options && options.allowedCountries) || []
-
     const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n
     const counts = emptyCounts()
 
@@ -168,9 +215,6 @@ exports.run = function (db, repository, options) {
     const labels = repository.labelIndex()
     const learned = LEARNED.compile(repository.learnedRules())
 
-    const listings = db.prepare(
-        'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry FROM listing'
-    ).all()
     counts.total = listings.length
 
     /*

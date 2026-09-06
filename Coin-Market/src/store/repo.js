@@ -1841,6 +1841,24 @@ exports.newRepository = function (db, options) {
             way round - the store is what knows how it is written to. */
         inTransaction (work) { return STORE.inTransaction(db, work) },
 
+        /*  Which listings sit in these countries, by the key a decision is
+            recorded against. For the scoped rebuild after the country filter
+            changes: only listings whose country changed side of the filter
+            can have changed verdict. */
+        legacyIdsInCountries (countries) {
+            const list = (countries || []).filter(Boolean)
+            if (list.length === 0) { return [] }
+            const found = []
+            for (let start = 0; start < list.length; start += 400) {
+                const slice = list.slice(start, start + 400)
+                const marks = slice.map(() => '?').join(',')
+                found.push(...db.prepare(
+                    'SELECT DISTINCT legacy_id AS legacyId FROM listing ' +
+                    'WHERE item_country IN (' + marks + ')').all(...slice).map(r => r.legacyId))
+            }
+            return found
+        },
+
         purgeExpired (nowIso) {
             const now = nowIso || new Date().toISOString()
             const doomed = db.prepare('SELECT browse_id FROM listing WHERE expires_at < ?').all(now)
