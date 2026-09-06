@@ -763,7 +763,80 @@ above. The log reset is still worth having — an unbounded log is a disk
 problem, a backup-size problem and a recovery-time problem — but it is not a
 performance fix and should not be sold as one.
 
-### Still open, and it is the largest write-lock holder left
+### The rebuild, which WAS the largest write-lock holder left
+
+`RECLASSIFY.run` wrapped roughly 90,000 writes in one transaction and is fired
+from a button on three pages. Measured against a copy of the live store it held
+the write lock for **22 seconds straight**, and every collector write during
+that fails silently.
+
+The three global DELETEs at the top are what forced one transaction: they
+emptied `listing_instrument`, `instrument` and `review_queue` and refilled
+them, so committing partway would have shown an empty store. Clearing **per
+listing** instead - the two statements `one` already used - means a listing
+moves from its old classification straight to its new one and is never missing.
+
+| | total | write lock |
+|---|---|---|
+| one transaction | 22.0s | **21.9s straight** |
+| 250 per chunk | **19.8s** | longest **584ms**, median 155ms |
+
+Faster overall and 37x shorter in the worst case, and the two rebuilds were
+compared row by row on a copy of the live store - 30,822 listings, 89,683
+assignments, 3,885 instruments, 6,688 queue rows, every listing's series -
+and are **identical**.
+
+**Two measurements were needed and the first said 157 seconds.** Committing 125
+times instead of once lets autocheckpoint fire repeatedly *during* the rebuild,
+copying pages into a 538MB file for work the next chunk supersedes. Holding the
+checkpointer off took it to 20s. Then restoring the threshold *before* the last
+transaction put a 13.7s checkpoint inside that transaction's commit - a single
+hold worse than anything chunking had removed. It is restored after every
+transaction now and no checkpoint is forced.
+
+**Two things the DELETE was doing for free**, both now explicit:
+
+- It was the only mechanism refreshing an instrument's derived columns.
+  Without it, changing a `fineOz` constant in a series pack would leave every
+  existing key on the old gold content forever. `upsertInstrument` refreshes
+  `fine_oz` and `level` now; `display_name` stays frozen because
+  `scripts/golden.js` compares stored names against fresh ones to detect
+  exactly that drift.
+- It swept rows no listing claims. Measured: no orphaned assignments or queue
+  rows (both deleters of `listing` remove children in the same transaction),
+  but **four orphaned `instrument` rows** - a real case. The three cleanup
+  statements cost 0.09s together.
+
+### The bigger win still on the table
+
+Chunking made the full rebuild survivable. It did not make it **necessary**.
+
+A learned rule's entire effect is gated on a title match - every branch in
+`LEARNED.compile` is `if (entry.test.test(title))` - so adding or deleting a
+rule with phrase P **cannot change the outcome of any listing whose title does
+not match P**. `/rule` already computes that exact set two functions away, in
+`ruleEffect`, using `repository.titleCorpus()`: "proof" matches 1,401 titles of
+23,740; "harrington & byrne" matches 8.
+
+`/countries` is the same shape - `EXCLUSIONS.screenLocation` reads nothing but
+the country and the allowed list, so only listings whose country changed side
+of the filter need touching.
+
+So `/rule`, `/rule/delete` and `/countries` could go from ~20s to
+milliseconds by reclassifying only what the change can reach, with
+`RECLASSIFY.some(db, repository, legacyIds, options)` - a thin generalisation
+of `exports.one`, which already takes the `label`/`learned` overrides for
+exactly this. Keep the chunked full rebuild underneath as the safety net: the
+CLI `reclassify` genuinely means everything, and a scoped path that is ever
+wrong is a store that silently disagrees with itself, with no signal.
+
+One more thing found while measuring and NOT fixed: `purgeUser`
+(`src/ebay/notifications.js`) uses a raw `db.exec('BEGIN')` with no retry, and
+its caller returns HTTP 200 when it fails - so eBay is told a deletion request
+succeeded while the data is still on disk. It should move onto
+`STORE.inTransaction` regardless of anything else here.
+
+### Still open elsewhere
 
 `RECLASSIFY.run` wraps roughly 20,000 writes in one transaction and is called
 **from the request thread** — `server.js` on a country toggle, on accepting a
