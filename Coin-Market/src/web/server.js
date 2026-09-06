@@ -2666,6 +2666,33 @@ function bulkBar (rows, hint, extras) {
         the button, where it read as "cross selected" and was exactly the
         AI-written clutter the owner has been stripping out of this UI. */
     return '<div class="bulkbar">' +
+        /*
+            SAVE EVERY CHANGE, WITH ONE CLICK.
+
+            The owner, twice: "I just changed a bunch of coins on the review
+            page to bullion from unattributed and clicked the green tick at
+            the top expecting them all to save, but nothing saved. I swear
+            we've already been over this."
+
+            We had, and only halfway. The batch did work - but only on rows
+            you had TICKED, and changing a dropdown ticks nothing. So twenty
+            edited rows and one click did nothing at all, silently: the
+            gesture people reach for first, and no answer either way.
+
+            This button asks nothing of you but the edits. Every row posts a
+            hidden note of what it was drawn with (see callPickers), so the
+            handler can tell an edited row from an untouched one without a
+            line of script - there is none available; the proxy sets
+            script-src 'none'.
+
+            First in the bar and styled as the primary action, because it is
+            what people want most of the time. The tick and cross stay for
+            what they are good at: a verdict on rows you have not edited one
+            by one.
+        */
+        '<button class="btn btn-primary" name="save" value="1" title="Apply every dropdown ' +
+        'you have changed on this page, and mark those coins genuine. Rows you have not ' +
+        'touched are left alone - no ticking needed.">Save changes</button>' +
         '<button class="btn btn-secondary icon-btn no" name="bulk" value="' +
         LEARNED.VERDICT.NOT_TRACKED + '" title="' + escapeHtml(words.notOne) +
         ' - everything ticked">' + RENDER.icon('cross') + '</button>' +
@@ -2742,6 +2769,24 @@ function matchesSale (row, sale) {
     the owner reasonably concluded batches did not work.
 */
 function appliedBanner (url, hint) {
+    /*  A click that did nothing has to say so. Both of these used to redirect
+        back to an unchanged page with no message at all, which is
+        indistinguishable from a click that worked - and is what made a
+        working batch read as a broken one. */
+    const nothing = url === undefined ? null : url.searchParams.get('nothing')
+    if (nothing === 'save') {
+        return '<div class="card" style="border-color:var(--critical)"><p style="margin:0">' +
+            'Nothing to save &mdash; no dropdown on this page was changed. ' +
+            '<span class="thin">Change a coin’s kind or denomination and press it ' +
+            'again; ticking is only for the tick and cross beside it.</span></p></div>'
+    }
+    if (nothing === 'pick') {
+        return '<div class="card" style="border-color:var(--critical)"><p style="margin:0">' +
+            'Nothing was ticked, so nothing was changed. ' +
+            '<span class="thin">The tick and cross act on rows you have ticked down the left. ' +
+            'To apply dropdown changes instead, use Save changes.</span></p></div>'
+    }
+
     const count = url === undefined ? 0 : Number(url.searchParams.get('applied'))
     if (!Number.isFinite(count) || count <= 0) { return '' }
     const verdict = url === undefined ? null : url.searchParams.get('verdict')
@@ -3644,7 +3689,26 @@ function callPickers (row) {
             '</option>')
         .join('')
 
+    /*
+        WHAT THIS ROW LOOKED LIKE WHEN IT WAS DRAWN.
+
+        There is no client JavaScript in this app - the proxy sets
+        script-src 'none' - so nothing on the page can notice that you
+        touched a dropdown and light up a save button. The server can,
+        though, if the row tells it what it started as: every field is
+        posted whether or not anybody touched it, so "changed" is just
+        "posted value differs from the one rendered".
+
+        Carried on the row rather than re-derived on the POST, deliberately.
+        Re-deriving would compare against what the classifier thinks NOW,
+        and the collector may have reclassified the lot between the page
+        being drawn and the form being sent - which would read as a change
+        the reader never made, and write it to the store as their decision.
+    */
+    const was = [pool || '', detected || '', '1'].join('')
+
     return seriesPicker +
+        '<input type="hidden" name="w_' + id + '" value="' + escapeHtml(was) + '">' +
         '<select name="p_' + id + '" title="Which kind of coin this is, and so which ' +
         'pile of clearing prices it is measured against. The tool works this out from the ' +
         'title; if it has it wrong, the premium beside it and any offer on it are wrong too.">' +
@@ -4935,17 +4999,60 @@ function handlePost (opened, pathname, form) {
         }
 
         const single = form.get('genuine') || form.get('reject')
+
+        /*
+            EVERY ROW WHOSE DROPDOWNS NO LONGER MATCH WHAT IT WAS DRAWN WITH.
+
+            w_<id> is written by callPickers and carries the pool, the
+            denomination and the quantity that were rendered. A row that comes
+            back different is a row somebody edited. That is the whole
+            mechanism: no script, no per-row state, and no comparison against
+            the classifier's CURRENT opinion, which the collector may have
+            moved underneath the open page - that would read as a change the
+            reader never made and store it as their decision.
+
+            The separator is a unit separator rather than a comma or a pipe,
+            because a pool or a denomination could contain either and a
+            collision here silently means "unchanged".
+        */
+        const editedRows = () => {
+            const changed = []
+            for (const [name, drawnWith] of form.entries()) {
+                if (!name.startsWith('w_')) { continue }
+                const legacyId = name.slice(2)
+                const nowIs = [
+                    form.get('p_' + legacyId) || '',
+                    form.get('d_' + legacyId) || '',
+                    form.get('q_' + legacyId) || '1'
+                ].join('')
+                if (nowIs !== drawnWith) { changed.push(legacyId) }
+            }
+            return changed
+        }
+        const saving = form.get('save') ? editedRows() : null
+
         const verdict = form.get('genuine')
             ? LEARNED.VERDICT.SOVEREIGN
-            : (form.get('reject') ? LEARNED.VERDICT.NOT_SOVEREIGN : form.get('bulk'))
+            : (form.get('reject')
+                ? LEARNED.VERDICT.NOT_SOVEREIGN
+                /*  Editing a row IS saying it is this coin - it is what the
+                    row's own green tick means, applied to every row you
+                    touched. */
+                : (saving ? LEARNED.VERDICT.TRACKED : form.get('bulk')))
 
         if (!LEARNED.VERDICT[verdict]) { return back }
 
         /*  A per-row button acts on its own row whether or not anything is
             ticked; the bar acts on the ticks. Silently including the ticks in
             a single-row click would be a nasty surprise. */
-        const ids = single ? [single] : form.getAll('pick')
-        if (ids.length === 0) { return back }
+        const ids = single ? [single] : (saving || form.getAll('pick'))
+        /*  Say so. This returned silently, so a click that did nothing was
+            indistinguishable from a click that worked - which is exactly the
+            confusion reported. */
+        if (ids.length === 0) {
+            return back + (back.includes('?') ? '&' : '?') +
+                'nothing=' + (saving ? 'save' : 'pick')
+        }
 
         const chosen = allowedCountries(repository)
 
@@ -4958,8 +5065,11 @@ function handlePost (opened, pathname, form) {
 
             Null when blank, which is the whole point: an untouched bar means
             "leave each row alone", and every row's own field still applies. */
-        const barPool = single ? null : (form.get('bulk_pool') || null)
-        const barDenomination = single ? null : (form.get('bulk_denomination') || null)
+        /*  Neither a per-row button nor a save-my-edits click is the bar, so
+            a dropdown left set on the bar must not reach either. */
+        const fromBar = !single && saving === null
+        const barPool = fromBar ? (form.get('bulk_pool') || null) : null
+        const barDenomination = fromBar ? (form.get('bulk_denomination') || null) : null
 
         /*
             ONE TRANSACTION FOR THE WHOLE BATCH, IN TWO PASSES.

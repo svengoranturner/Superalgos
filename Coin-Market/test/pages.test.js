@@ -2650,6 +2650,9 @@ function bulkPoolStore () {
         repository.saveSnapshot(id, { price: 40, shipping: 0, observedAt: now })
         repository.setListingSeries(id, 'US.MORGAN')
         repository.saveClassification(id, [{ key: KEY, level: 0 }], 0.6, 'title', 0.7734, {})
+        /*  And into the review queue, so /review has sections to render -
+            a classification alone does not put a lot in front of anybody. */
+        repository.queueForReview(id, 'Low confidence', KEY, 0.6)
     }
     const spotAt = SPOT.newSpotLookup(db, {})
     return {
@@ -2660,6 +2663,121 @@ function bulkPoolStore () {
 
 const poolOf = (opened, legacyId) =>
     (opened.repository.labels().find(l => l.legacyId === legacyId) || {}).pool
+
+/*
+    THE GESTURE PEOPLE ACTUALLY REACH FOR.
+
+    The owner, after the batch was supposedly fixed: "I just changed a bunch
+    of coins on the review page to bullion from unattributed and clicked the
+    green tick at the top expecting them all to save, but nothing saved. I
+    swear we've already been over this."
+
+    We had, and only halfway. The batch worked - on rows you had TICKED. But
+    changing a dropdown ticks nothing, so twenty edited rows and one click
+    applied nothing at all, and said nothing about it either.
+
+    "Save changes" needs no ticks. Every row posts a hidden note of what it
+    was drawn with, so an edited row is one that comes back different.
+*/
+const drawnWith = (body, legacyId) => {
+    const found = new RegExp('name="w_' + legacyId + '" value="([^"]*)"').exec(body)
+    assert.ok(found !== null, 'row ' + legacyId + ' carries no record of what it was drawn with')
+    return found[1]
+}
+
+test('changing dropdowns and pressing save applies them, with nothing ticked', async () => {
+    const opened = bulkPoolStore()
+    const path = '/listings?key=' + opened.key + '&sale=bin'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    /*  Exactly what the browser would send: every row's fields, its record of
+        what it was drawn with, and NO pick boxes - because changing a
+        dropdown does not tick one. */
+    const fields = { save: '1', back: '/listings?key=' + opened.key }
+    for (const id of ['one', 'two', 'three']) {
+        fields['w_' + id] = drawnWith(body, id)
+        fields['p_' + id] = id === 'three' ? 'UNATTRIBUTED' : 'COMMON'
+        fields['d_' + id] = 'DOLLAR'
+        fields['q_' + id] = '1'
+    }
+    await post(opened, '/apply', fields)
+
+    assert.strictEqual(poolOf(opened, 'one'), 'COMMON', 'an edited row was not saved')
+    assert.strictEqual(poolOf(opened, 'two'), 'COMMON', 'an edited row was not saved')
+    /*  And the row nobody touched is untouched - a save that applies
+        everything on the page would relabel the whole queue on one click. */
+    assert.strictEqual(opened.repository.labels().length, 2,
+        'a row whose dropdowns were left alone was saved anyway')
+    opened.db.close()
+})
+
+test('a save with nothing changed says so rather than doing nothing quietly', async () => {
+    /*  The silent no-op is the other half of the bug: a click that did
+        nothing looked exactly like a click that worked. */
+    const opened = bulkPoolStore()
+    const path = '/listings?key=' + opened.key + '&sale=bin'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    const fields = { save: '1', back: '/listings?key=' + opened.key }
+    for (const id of ['one', 'two', 'three']) {
+        fields['w_' + id] = drawnWith(body, id)
+        fields['p_' + id] = 'UNATTRIBUTED'
+        fields['d_' + id] = 'DOLLAR'
+        fields['q_' + id] = '1'
+    }
+    const response = await post(opened, '/apply', fields)
+    assert.strictEqual(opened.repository.labels().length, 0, 'an untouched page saved something')
+    assert.match(response.location || '', /nothing=save/,
+        'a save with no changes redirected as though it had worked')
+
+    const landed = (await fetchAll(opened, [path + '&nothing=save']))[path + '&nothing=save'].body
+    assert.match(landed, /Nothing to save/, 'the page says nothing about the click that did nothing')
+    opened.db.close()
+})
+
+test('the tick with nothing ticked says so too', async () => {
+    const opened = bulkPoolStore()
+    const response = await post(opened, '/apply', {
+        bulk: 'TRACKED', back: '/listings?key=' + opened.key
+    })
+    assert.match(response.location || '', /nothing=pick/,
+        'a bulk verdict with nothing ticked still returns silently')
+    opened.db.close()
+})
+
+test('a quantity change is a change, like any other', async () => {
+    /*  The report that started all of this was a quantity: "changing number
+        of coins from 1 to 5". It has to count as an edit, or the one field
+        the owner was using is the one field save ignores. */
+    const opened = bulkPoolStore()
+    const path = '/listings?key=' + opened.key + '&sale=bin'
+    const body = (await fetchAll(opened, [path]))[path].body
+
+    await post(opened, '/apply', {
+        save: '1', back: '/listings?key=' + opened.key,
+        w_one: drawnWith(body, 'one'), p_one: 'UNATTRIBUTED', d_one: 'DOLLAR', q_one: '5',
+        w_two: drawnWith(body, 'two'), p_two: 'UNATTRIBUTED', d_two: 'DOLLAR', q_two: '1'
+    })
+    const saved = opened.repository.labels()
+    assert.strictEqual(saved.length, 1, 'the quantity change was not seen as a change')
+    assert.strictEqual(saved[0].legacyId, 'one')
+    assert.strictEqual(saved[0].quantity, 5, 'the quantity that was changed was not the one stored')
+    opened.db.close()
+})
+
+test('the save button is on the review queue, where the report came from', async () => {
+    const opened = bulkPoolStore()
+    /*  sale=all because the queue opens on auctions and every row in this
+        fixture is a Buy-It-Now - on the auction tab all three sections are
+        empty, so there is no form and no bar, and this would fail for a
+        reason that has nothing to do with the button. */
+    const path = '/review?sale=all'
+    const body = (await fetchAll(opened, [path]))[path].body
+    const bar = body.split('class="bulkbar"')[1].split('</div>')[0]
+    assert.match(bar, /name="save"/,
+        'the review queue offers no way to save the edits you just made')
+    opened.db.close()
+})
 
 test('a batch that fails partway leaves nothing behind it', async () => {
     /*
