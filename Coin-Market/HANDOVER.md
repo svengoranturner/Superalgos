@@ -807,7 +807,59 @@ transaction now and no checkpoint is forced.
   but **four orphaned `instrument` rows** - a real case. The three cleanup
   statements cost 0.09s together.
 
-### The bigger win still on the table
+### The bigger win, taken
+
+Chunking made the full rebuild survivable. It did not make it necessary, and
+the three buttons no longer run one.
+
+A learned rule's entire effect is gated on a title match - every branch in
+`LEARNED.compile` is `entry.test.test(title)`, and nothing it returns is an
+aggregate over the rule set (`size` is exported and never read). So adding or
+deleting a rule with phrase P cannot change the outcome of any listing whose
+title does not match P. `screenLocation` is narrower still: it reads nothing
+but the country and the allowed list.
+
+Measured on the live corpus, 30,191 titles:
+
+| | listings | rebuild |
+|---|---|---|
+| full rebuild | 30,822 | **19.80s** |
+| `"proof"` | 1,783 | **1.43s** |
+| `"harrington & byrne"` | 8 | **0.10s** |
+| `"krugerrand"` | 2 | 0.10s |
+
+**The set is built with `LEARNED.phrasePattern` and nothing else.** The pattern
+lowercases, collapses whitespace runs to `\s+`, and adds word boundaries only
+where the phrase starts or ends with a word character - so
+`title.includes(phrase)` misses `GOLD   PROOF` for the phrase `gold proof`,
+and a listing the rule reaches but the rebuild skipped keeps a classification
+its own rules disagree with, silently, for ever. Use the same function the rule
+is compiled with, or none.
+
+**The country set asks `screenLocation` itself, twice, rather than
+reimplementing it.** The empty list means "no filtering" rather than "allow
+nothing", so narrowing and widening are not mirror images, and a listing with
+no country is never excluded under any list. All three fall out of calling the
+function. A mutant that reasoned the cases out by hand passes the narrowing
+test and fails the widening one.
+
+**What the tests assert is not "the right rows changed"** - it is that a FULL
+rebuild afterwards changes nothing. Any listing the scope missed appears the
+moment the full pass visits it. One per button.
+
+Two preconditions worth knowing:
+
+- A scoped rebuild moves the store from one filter to another. It cannot
+  repair a store classified under a filter nobody recorded, so `/countries`
+  reads through `allowedCountries` - the absent case is then the same
+  `DEFAULT_COUNTRIES` the rest of the app classifies under.
+- `dropped` on `/rule` is now counted over what the phrase reaches, not
+  globally. The global version was honest only while the rebuild was atomic
+  and nothing else could commit during it; both have changed.
+
+The chunked full rebuild stays underneath, for the CLI and as the repair path.
+
+### Still on the table
 
 Chunking made the full rebuild survivable. It did not make it **necessary**.
 
