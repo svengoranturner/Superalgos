@@ -857,7 +857,40 @@ Two preconditions worth knowing:
   globally. The global version was honest only while the rebuild was atomic
   and nothing else could commit during it; both have changed.
 
-The chunked full rebuild stays underneath, for the CLI and as the repair path.
+The chunked full rebuild stays underneath, and now has a door of its own:
+**"Rebuild everything" on `/rules`**. That is not decoration. The three buttons
+were doing two jobs, and only one was obvious - applying the rule, and quietly
+repairing the whole store against whatever the tool's own parsing had learned
+to do since anyone last clicked. A change to `exclusions.js`, to a series
+recogniser or to a `fineOz` constant reaches listings no phrase matches and no
+country moved; after scoping, nothing else would ever visit them.
+
+### Three ways this went quietly wrong before it was right
+
+An adversarial review of the shipped scoped rebuild found three defects. All
+three measured **zero on the live store**. All three are silent and permanent
+when they bite.
+
+- **Selecting through `titleCorpus`.** It is `MIN(title) GROUP BY legacy_id` -
+  one title per coin, for a *preview*. A rebuild runs per browse row against
+  that row's own title, and where a relist appended words `MIN` is the SHORTER
+  one - so a rule about the appended junk tests the title without it and skips
+  the row that has it. `titleCorpus`'s own note records 16 of 23,740 legacy ids
+  disagreeing when it was written.
+- **Selecting by `legacy_id` at all.** It is nullable, and `legacy_id IN (...)`
+  never matches NULL. `run` reaches those rows; a legacy-keyed `some` never
+  could.
+- **Losing the full-rebuild path**, above.
+
+The first two are fixed by the same change: `some` takes **browse ids**, and
+the scope comes from `repository.listingTitles()` - one row per listing, no
+`WHERE`. Use that, never `titleCorpus`, for anything that decides what a
+rebuild visits.
+
+**The fixture is what makes these real.** `ruleScopeStore` now holds a relist
+whose two browse rows disagree, with `MIN(title)` deliberately the row WITHOUT
+the phrase, and a listing with no legacy id. Both were absent before, which is
+why three tests passed against three bugs.
 
 ### Still on the table
 
