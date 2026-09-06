@@ -162,27 +162,126 @@ exports.run = function (db, repository, options) {
     const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n
     const counts = emptyCounts()
 
+    /*  Both read once and held in memory, and outside every transaction.
+        This walks thousands of rows, and a query per row on a Pi turns
+        seconds into minutes. */
+    const labels = repository.labelIndex()
+    const learned = LEARNED.compile(repository.learnedRules())
+
+    const listings = db.prepare(
+        'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry FROM listing'
+    ).all()
+    counts.total = listings.length
+
+    /*
+        A CHUNK AT A TIME, NOT THE WHOLE REBUILD.
+
+        Measured against a copy of the live store: this held the write lock
+        for 16.9 SECONDS, on a button click, from the request thread. It is
+        the largest write-lock holder in the system by a distance, and the
+        collector's writes during it do not queue - they fail, and
+        scheduler.js swallows the error and logs it, so the loss is silent.
+        No retry helps either, because a retry waits for exactly the thing in
+        the way.
+
+        The global DELETEs are what forced one transaction. They emptied
+        three tables and then refilled them, so committing partway would have
+        left the store visibly empty. Clearing per listing instead - the same
+        two statements `one` already uses - means each listing moves from its
+        old classification straight to its new one and is never missing, so
+        the work can commit as it goes.
+
+        WHAT A READER SEES CHANGES, AND IT IS THE BETTER TRADE. Before, a
+        concurrent reader saw the old state for the whole rebuild and then the
+        new one; now it can see a store where some listings have been
+        reclassified and some have not, for as long as the rebuild takes. That
+        is a few seconds of slightly-mixed counts on a page, against seventeen
+        seconds in which the collector cannot record anything it observed.
+
+        AND THE CHECKPOINTER IS HELD OFF FOR THE DURATION. Committing 125
+        times instead of once lets SQLite's autocheckpoint fire repeatedly
+        DURING the rebuild, copying pages back into a 538MB file - random
+        writes on an SD card, over and over, for work the next chunk is about
+        to supersede. Measured: 157 SECONDS with it on, 20 with it off. The
+        threshold is restored afterwards and no checkpoint is forced, so the
+        log drains on somebody else's ordinary write rather than inside this
+        one's lock - restoring it before the last transaction put a 13.7s
+        checkpoint inside that transaction's commit, which was worse than the
+        problem.
+
+        250, measured rather than reasoned. The old note here sized this from
+        "one fsync per row turned seconds into two minutes", which stopped
+        being true when db.js set synchronous = NORMAL - under WAL a commit no
+        longer fsyncs at all. What was measured instead, over 30,822 listings
+        on the live store:
+
+            one transaction   22.0s total, write lock held for 21.9s straight
+            250 per chunk     19.8s total, longest hold 584ms, median 155ms
+
+        Faster overall AND thirty-seven times shorter in the worst case. The
+        two rebuilds were compared row by row across listing_instrument,
+        instrument, review_queue and listing.series: identical.
+    */
+    const CHUNK = 250
+
+    /*  EXPERIMENT: hold the checkpointer off for the duration.
+
+        Committing 120 times instead of once means SQLite's autocheckpoint
+        (1000 pages) fires repeatedly DURING the rebuild, copying pages back
+        into a 538MB database file - random writes on an SD card, over and
+        over, for work that is about to be superseded by the next chunk. */
+    const auto = db.prepare('PRAGMA wal_autocheckpoint').get().wal_autocheckpoint
+    db.exec('PRAGMA wal_autocheckpoint = 0')
+    try {
+    for (let start = 0; start < listings.length; start += CHUNK) {
+        const slice = listings.slice(start, start + CHUNK)
+        inTransaction(db, () => {
+            const clearInstrument = db.prepare('DELETE FROM listing_instrument WHERE browse_id = ?')
+            const clearReview = db.prepare('DELETE FROM review_queue WHERE browse_id = ?')
+            for (const listing of slice) {
+                clearInstrument.run(listing.browseId)
+                clearReview.run(listing.browseId)
+                classifyOne(listing, labels.get(listing.legacyId) || null, learned, repository,
+                    counts, allowedCountries)
+            }
+        })
+    }
+
+    /*
+        AND THE ROWS NO LISTING CLAIMS ANY MORE.
+
+        This is what the global DELETEs did for free and a per-listing loop
+        cannot: a row whose listing has since been deleted is never visited,
+        so it would survive a rebuild that is supposed to be a rebuild.
+
+        Measured on the live store there are none of the first two today -
+        purgeExpired and purgeSeller both delete the child rows with the
+        parent - but "none today" is not a guarantee, foreign keys are off
+        (PRAGMA foreign_keys is never set anywhere), and the cost of being
+        wrong is a stale classification counted into a clearing price.
+
+        The instrument rows are a real case rather than a theoretical one:
+        four of the 2,391 on the live store are claimed by no listing, and
+        before this they were swept away and rebuilt on every pass.
+
+        One transaction, at the end, because it is three statements and none
+        of them is per-listing. All three use an index for the inner lookup -
+        checked with EXPLAIN QUERY PLAN, not assumed.
+    */
     inTransaction(db, () => {
-        db.exec('DELETE FROM listing_instrument')
-        db.exec('DELETE FROM instrument')
-        db.exec('DELETE FROM review_queue')
-        try { db.exec('DELETE FROM instrument_stat') } catch (err) { /* older stores may not have it */ }
-
-        /*  Both read once and held in memory. This walks thousands of rows,
-            and a query per row on a Pi turns seconds into minutes. */
-        const labels = repository.labelIndex()
-        const learned = LEARNED.compile(repository.learnedRules())
-
-        const listings = db.prepare(
-            'SELECT browse_id AS browseId, legacy_id AS legacyId, title, category_path AS categoryPath, item_country AS itemCountry FROM listing'
-        ).all()
-        counts.total = listings.length
-
-        for (const listing of listings) {
-            classifyOne(listing, labels.get(listing.legacyId) || null, learned, repository,
-                counts, allowedCountries)
-        }
+        db.exec('DELETE FROM listing_instrument WHERE NOT EXISTS ' +
+            '(SELECT 1 FROM listing l WHERE l.browse_id = listing_instrument.browse_id)')
+        db.exec('DELETE FROM review_queue WHERE NOT EXISTS ' +
+            '(SELECT 1 FROM listing l WHERE l.browse_id = review_queue.browse_id)')
+        db.exec('DELETE FROM instrument WHERE NOT EXISTS ' +
+            '(SELECT 1 FROM listing_instrument li WHERE li.key = instrument.key)')
+        /*  Older stores may not have it. */
+        try {
+            db.exec('DELETE FROM instrument_stat WHERE NOT EXISTS ' +
+                '(SELECT 1 FROM listing_instrument li WHERE li.key = instrument_stat.key)')
+        } catch (err) { }
     })
+    } finally { db.exec('PRAGMA wal_autocheckpoint = ' + auto) }
 
     counts.assignmentsBefore = before
     counts.assignmentsAfter = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n

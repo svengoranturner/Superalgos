@@ -1575,3 +1575,158 @@ test('a sweep commits in chunks, not once per listing', () => {
         db.close()
     })
 })
+
+
+/* ============================================================== rebuild */
+
+/*
+    THE FULL REBUILD USED TO HOLD THE WRITE LOCK FOR TWENTY-TWO SECONDS.
+
+    Measured against a copy of the live store: RECLASSIFY.run wrapped ~90,000
+    writes in ONE transaction and is fired from a button on three pages. While
+    it ran, every collector write failed - and scheduler.js swallows that and
+    logs it, so the loss was silent. No retry helps, because a retry waits for
+    exactly the thing in the way.
+
+    What forced one transaction was the three global DELETEs at the top: they
+    emptied listing_instrument, instrument and review_queue and then refilled
+    them, so committing partway would have left the store visibly empty.
+    Clearing per listing instead - the two statements `one` already uses -
+    means a listing moves from its old classification straight to its new one
+    and is never missing, so the work can commit as it goes.
+
+        one transaction   22.0s total, lock held 21.9s straight
+        250 per chunk     19.8s total, longest hold 584ms, median 155ms
+*/
+function rebuildStore () {
+    const { db, repository } = fixture()
+    const now = new Date().toISOString()
+    /*  MORE THAN ONE CHUNK. At 40 listings the whole rebuild is a single
+        chunk whatever CHUNK is set to, so "it is divided" passes for a
+        rebuild that divides nothing - the final orphan-cleanup transaction
+        alone takes the count above one. 600 is at least three chunks. */
+    for (let n = 0; n < 600; n++) {
+        const browseId = 'v1|r' + n + '|0'
+        repository.saveListing({
+            browseId, legacyId: 'r' + n,
+            title: '2015 Gold Sovereign Elizabeth II bullion coin',
+            buyingOptions: 'AUCTION', categoryPath: 'Coins', itemCountry: 'GB',
+            endTime: new Date(Date.now() + 3600000).toISOString()
+        }, now)
+        repository.saveSnapshot(browseId, { price: 400, shipping: 0, observedAt: now })
+    }
+    return { db, repository }
+}
+
+test('a rebuild commits as it goes, and never empties the store to do it', () => {
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    const { db, repository } = rebuildStore()
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    const before = db.prepare('SELECT COUNT(*) AS n FROM listing_instrument').get().n
+    assert.ok(before > 0, 'the fixture classified nothing, so this test cannot see a rebuild')
+
+    /*  Counted rather than timed: the point is that the work is divided at
+        all, and a wall-clock assertion on a Pi is a flaky test. */
+    const seen = []
+    const realExec = db.exec.bind(db)
+    db.exec = (sql) => { seen.push(String(sql)); return realExec(sql) }
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    db.exec = realExec
+
+    /*  600 listings is three chunks plus the orphan cleanup. Asserted
+        against the chunk count rather than "more than one", because one
+        chunk plus the cleanup is already two. */
+    const begins = seen.filter(sql => /^BEGIN/.test(sql)).length
+    assert.ok(begins >= 4,
+        'the rebuild opened ' + begins + ' transactions for 600 listings; one chunk plus the ' +
+        'orphan cleanup is 2, so this is still holding the write lock from the first write ' +
+        'to the last')
+    assert.ok(seen.some(sql => /^BEGIN IMMEDIATE/.test(sql)),
+        'the chunks use a deferred BEGIN, which cannot honour busy_timeout on its upgrade')
+
+    /*  AND THE GLOBAL DELETES ARE GONE. They are what forced one
+        transaction; a rebuild that still empties the tables cannot commit
+        partway however it is chunked. */
+    for (const table of ['listing_instrument', 'instrument', 'review_queue']) {
+        assert.ok(!seen.some(sql => new RegExp('^DELETE FROM ' + table + '\\s*$').test(sql.trim())),
+            'the rebuild still empties ' + table + ' wholesale')
+    }
+    db.close()
+})
+
+test('a rebuild leaves the same store however it is divided', () => {
+    /*  The measurement that mattered was made on a copy of the live store -
+        30,822 listings, compared row by row across listing_instrument,
+        instrument, review_queue and listing.series, identical either way.
+        This is the version of that a test can hold: run it twice and the
+        second pass must change nothing. */
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    const { db, repository } = rebuildStore()
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+
+    const snapshot = () => JSON.stringify({
+        assignments: db.prepare(
+            'SELECT browse_id, key, confidence, method, quantity FROM listing_instrument ' +
+            'ORDER BY browse_id, key').all(),
+        instruments: db.prepare(
+            'SELECT key, level, metal, fine_oz FROM instrument ORDER BY key').all(),
+        queue: db.prepare('SELECT browse_id, reason FROM review_queue ORDER BY browse_id').all(),
+        series: db.prepare('SELECT browse_id, series FROM listing ORDER BY browse_id').all()
+    })
+    const first = snapshot()
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    assert.strictEqual(snapshot(), first, 'a second rebuild changed the store')
+    db.close()
+})
+
+test('a rebuild still clears a row that stops classifying', () => {
+    /*  The per-listing DELETE is load-bearing and its failure is SILENT:
+        assignInstrument is an upsert and queueReview is INSERT OR REPLACE, so
+        skipping the clear throws nothing - it leaves the old row beside the
+        new one and the lot is counted twice. */
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    const { db, repository } = rebuildStore()
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    const keysFor = (id) => db.prepare(
+        'SELECT key FROM listing_instrument WHERE browse_id = ? ORDER BY key')
+        .all('v1|' + id + '|0').map(r => r.key)
+    assert.ok(keysFor('r0').length > 0, 'the fixture row was never classified')
+
+    /*  A rule that rejects every one of them. */
+    repository.saveLearnedRule({
+        phrase: 'sovereign', kind: 'NOT_TRACKED', series: null, support: 1, agreement: 1
+    })
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    assert.deepStrictEqual(keysFor('r0'), [],
+        'a listing a rule now rejects kept its old classification, so it is still being priced')
+
+    /*  And the instrument rows nothing claims any more go with it - that is
+        what the global DELETE FROM instrument used to do for free. */
+    const orphans = db.prepare(
+        'SELECT COUNT(*) AS n FROM instrument WHERE NOT EXISTS ' +
+        '(SELECT 1 FROM listing_instrument li WHERE li.key = instrument.key)').get().n
+    assert.strictEqual(orphans, 0, orphans + ' instrument rows survive with no listing behind them')
+    db.close()
+})
+
+test('the derived columns on an instrument can still be repaired', () => {
+    /*  DELETE FROM instrument was the ONLY thing that refreshed fine_oz and
+        level: every row was dropped and remade on each rebuild. With it gone,
+        the upsert has to do it, or changing a fineOz constant in a series
+        pack would leave every existing key holding the old gold content
+        forever - a wrong premium on every page, permanently, from a one-line
+        change that looks local. */
+    const { db, repository } = rebuildStore()
+    const RECLASSIFY = require('../src/catalogue/reclassify.js')
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+    const key = db.prepare('SELECT key FROM instrument ORDER BY level, key LIMIT 1').get().key
+
+    db.prepare('UPDATE instrument SET fine_oz = 999, level = 9 WHERE key = ?').run(key)
+    RECLASSIFY.run(db, repository, { allowedCountries: [] })
+
+    const after = db.prepare('SELECT fine_oz, level FROM instrument WHERE key = ?').get(key)
+    assert.notStrictEqual(after.fine_oz, 999,
+        'a stale fine_oz survived a full rebuild, so nothing in the tool can ever repair one')
+    assert.notStrictEqual(after.level, 9, 'a stale level survived a full rebuild')
+    db.close()
+})

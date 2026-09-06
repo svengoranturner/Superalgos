@@ -169,11 +169,32 @@ exports.newRepository = function (db, options) {
                 stale one would be a wrong premium that looks entirely
                 plausible.
 
+                fine_oz AND level ARE REFRESHED TOO, and that is new.
+
+                They did not need to be while a full rebuild began with
+                DELETE FROM instrument: every row was dropped and remade, so
+                the derived columns were repaired on every pass whether or not
+                this statement touched them. That DELETE is gone - it is what
+                forced the whole rebuild into one transaction, and one
+                transaction is what held the write lock for twenty-two seconds
+                at a time - so this became the only thing that can repair
+                them.
+
+                Without it, changing a fineOz constant in a series pack would
+                leave every existing key holding the old gold content forever,
+                and nothing in the tool would ever fix it: a wrong premium on
+                every page, permanently, from a one-line change that looks
+                local. fine_oz is a pure function of the key (fineOzFor reads
+                the denomination, and the denomination is a key segment), so
+                refreshing it is always correct and never a race between two
+                listings writing the same key.
+
                 display_name is deliberately NOT refreshed. scripts/golden.js
                 compares stored names against freshly computed ones to detect
                 exactly that drift, and updating it here would silently
                 answer the question that check exists to ask. */
-            ON CONFLICT(key) DO UPDATE SET metal = excluded.metal
+            ON CONFLICT(key) DO UPDATE SET metal = excluded.metal,
+                fine_oz = excluded.fine_oz, level = excluded.level
         `),
         queueReview: db.prepare(`
             INSERT OR REPLACE INTO review_queue (browse_id, reason, best_guess, confidence, queued_at)
