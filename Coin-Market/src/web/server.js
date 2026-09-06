@@ -3078,8 +3078,22 @@ function reviewPage (opened, url) {
         this names that coin rather than the mixed wording the front page
         needs. `chosen` is the series id, or null on the unattributed tab -
         where the mixed wording is exactly right. */
+    /*
+        THE SENTENCE HAS TO MATCH THE BUTTONS IT SITS BESIDE.
+
+        It said "Tick down the left, then one click. Anything you have not
+        ticked is untouched." - which was true of the tick and the cross, and
+        was written when they were the only two controls here. Save changes
+        went in immediately to its left, and the whole point of that button is
+        that you do NOT tick anything. So the instruction next to the new
+        control told you to do the thing it exists to save you from, which is
+        the same confusion in a new place.
+
+        Two clauses, one per gesture, in the order the controls sit.
+    */
     const bar = (where) => bulkBar(chosen, where === 'top'
-        ? 'Tick down the left, then one click. Anything you have not ticked is untouched.'
+        ? 'Save changes applies every dropdown you have edited. The tick and cross act on ' +
+          'the rows you have ticked down the left.'
         : '')
 
     /*
@@ -3156,16 +3170,20 @@ function reviewPage (opened, url) {
         What stays on the face of the page is what VARIES: the counts, which
         tab you are on, and how many of the rows below are already settled.
     */
+    /*  A clause, not a card. Wrapping one short line in a bordered box with
+        20px of padding spends more of the screen on the frame than on the
+        fact - which is the thing the owner was objecting to when the prose
+        came off this page, arriving back in a different shape. */
     const settledNote = settled > 0
-        ? '<p class="thin" style="margin:0"><strong>' + settled + '</strong> of the rows below ' +
-          'are already settled.</p>'
+        ? '<p class="thin"><strong>' + settled + '</strong> of the rows below are already ' +
+          'settled.</p>'
         : ''
 
     return RENDER.page('Needs review - Coin Market', `
 <h1 title="Listings the classifier would not price without a human decision. Every statistic in this tool is computed over what survives this filter, so it is shown rather than hidden.">Needs review</h1>
 ${seriesTabs}
 ${applied}
-${settledNote === '' ? '' : '<div class="card">' + settledNote + '</div>'}
+${settledNote}
 
 <div class="card">
   ${saleTabs('/review', sale, chosen === null ? {} : { coin: chosen }, queueSaleCounts)}
@@ -4882,9 +4900,9 @@ function listingsPage (opened, url) {
     /*  The sentence /review has always carried, plus the half that is new
         here. A control nobody is told about is a control nobody uses, and the
         empty hint on this page is most of why the batch looked missing. */
-    const bar = bulkBar(key, 'Tick down the left, set the kind once if they share one, then ' +
-        'one click. Anything you have not ticked is untouched. If the coin is real but filed ' +
-        'wrong, correct it and mark it genuine rather than dismissing it.', bulkFields)
+    const bar = bulkBar(key, 'Save changes applies every dropdown you have edited. The tick ' +
+        'and cross act on the rows you have ticked down the left, and the kind can be set ' +
+        'once for all of them.', bulkFields)
 
     /*  whereYouAre, not a rebuilt URL. This was assembled from key and sale
         alone, so a decision made after searching or re-sorting threw both

@@ -3159,9 +3159,17 @@ test('the coin-type page offers the bar control, and says what it does', async (
     assert.match(bar, /name="bulk_pool"/,
         'the bar has no kind control, so setting one for the batch is still ten dropdowns')
     /*  And the sentence, which is most of why the batch looked missing: this
-        page passed an empty hint while every other list explains itself. */
-    assert.match(bar, /Tick down the left/,
-        'the bar still explains nothing, which is how a working batch reads as a broken one')
+        page passed an empty hint while every other list explains itself.
+
+        Both gestures named, not one. The sentence used to say only "tick
+        down the left, then one click" - true of the tick and cross, and
+        written when they were the only controls here. With Save changes
+        beside them it told you to do the thing that button exists to save
+        you from. */
+    assert.match(bar, /Save changes applies every dropdown you have edited/,
+        'the bar does not say what its primary button does')
+    assert.match(bar, /ticked down the left/,
+        'the bar no longer explains the tick and cross, which still need ticks')
     opened.db.close()
 })
 
