@@ -1877,17 +1877,17 @@ function marketPage (opened, url, reference) {
           }, 8, n => 'Show the other ' + n + ' offer' + (n === 1 ? '' : 's')) +
           '</form>'
 
-    const opportunityVerdict = newPlausibilityCell(opened.spotAt)
-    const opportunityHtml = shown.length === 0
-        ? '<p class="thin">No live auction is currently at or near the spot value of its metal. ' +
-          considered + ' were checked.</p>'
-        : '<form method="post" action="/apply">' +
-          '<input type="hidden" name="back" value="' + escapeHtml(whereYouAre(url)) + '">' +
-          bulkBar(shown, 'Tick anything that is not what it says it is; it leaves this ' +
-              'panel and every statistic at once.') +
-          cappedQueue(shown, row => queueRow(row, opportunityVerdict(row)), 10,
-              n => 'Show the other ' + n + ' auction' + (n === 1 ? '' : 's')) +
-          '</form>'
+    /*  ONLY THE EMPTY CASE. This used to carry a second arm rendering the
+        near-spot lots as queue cards, and it was unreachable: VIEW_BODIES
+        consults it only when `shown` is empty, and reaches for scanTable
+        otherwise. The card list, the bulk bar it built and the plausibility
+        cell it fed had not been on a screen since the scanner became a table.
+
+        Counted over what the page read rather than what is live, and it says
+        so - the two differ by the fetch cap, and the strip above already
+        distinguishes them. */
+    const opportunityHtml = '<p class="thin">No live auction is currently at or near the ' +
+        'spot value of its metal, among the ' + considered + ' this page read.</p>'
 
 
     /*
